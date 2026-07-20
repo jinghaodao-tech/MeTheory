@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS self_beliefs (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     statement TEXT NOT NULL,
-    source_kind TEXT NOT NULL,
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('user', 'import', 'ai_structured')),
     active_flag INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL
 );
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS hypotheses (
     self_belief_id TEXT REFERENCES self_beliefs(id) ON DELETE SET NULL,
     template_key TEXT NOT NULL,
     statement TEXT NOT NULL,
-    status TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('proposed', 'tracking', 'supported', 'challenged', 'inconclusive', 'archived')),
     rule_version TEXT,
     created_at TEXT NOT NULL
 );
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS checkin_events (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     hypothesis_id TEXT REFERENCES hypotheses(id) ON DELETE SET NULL,
-    kind TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('random', 'hypothesis', 'follow_up', 'manual')),
     question_json TEXT NOT NULL,
     scheduled_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,

@@ -19,6 +19,8 @@ Preference Mirror treats self-beliefs as hypotheses to test through lightweight 
 - `backend/core.py`: dependency-free MVP domain and persistence layer.
 - `backend/server.py`: local HTTP API for the first hypothesis update loop.
 - `tools/test_mvp.py`: deterministic core tests.
+- `docs/domain-language.md`: canonical domain vocabulary and state lifecycle.
+- `docs/architecture-research.md`: architecture comparison, ADRs, API, AI, privacy, and migration plan.
 
 ## Validate
 

@@ -67,7 +67,7 @@ class Store:
         self.connection.execute(
             """
             INSERT INTO hypotheses(id, user_id, self_belief_id, template_key, statement, status, rule_version, created_at)
-            VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+            VALUES (?, ?, ?, ?, ?, 'tracking', ?, ?)
             """,
             (hypothesis_id, user_id, belief_id, template_key, statement, RULE_VERSION, now_iso()),
         )

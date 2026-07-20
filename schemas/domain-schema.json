@@ -8,7 +8,7 @@
         "id": "string",
         "statement": "string",
         "created_at": "datetime",
-        "status": ["active", "paused", "archived"]
+        "status": ["proposed", "tracking", "supported", "challenged", "inconclusive", "archived"]
       }
     },
     "hypothesis": {
@@ -19,7 +19,7 @@
         "template_key": ["state_to_choice", "state_to_start", "state_to_completion", "belief_vs_observation", "interaction"],
         "statement": "string",
         "target_fields": "string[]",
-        "status": ["draft", "active", "supported", "contradicted", "insufficient", "archived"],
+        "status": ["proposed", "tracking", "supported", "challenged", "inconclusive", "archived"],
         "created_at": "datetime"
       }
     },
@@ -29,7 +29,7 @@
         "id": "string",
         "timestamp_local": "datetime",
         "timezone": "string",
-        "source": ["controlled_random", "hypothesis_driven", "follow_up", "manual"],
+        "source": ["random", "hypothesis", "follow_up", "manual"],
         "response_status": ["answered", "snoozed", "skipped", "expired"],
         "observations": "observation[]"
       }
@@ -56,4 +56,3 @@
     }
   }
 }
-
