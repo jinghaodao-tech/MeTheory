@@ -21,3 +21,10 @@ Run:
 python tools\validate_spec.py
 ```
 
+JSON仕様をSQLiteへ移行する:
+
+```powershell
+python tools\migrate_json_to_sqlite.py
+```
+
+生成先は `data/preference_mirror.sqlite3`。移行元JSONはそのまま残し、DBは実行時に参照する正規化済みコピーとして扱う。
