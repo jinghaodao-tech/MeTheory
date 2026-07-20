@@ -1,0 +1,59 @@
+{
+  "schema_name": "pm_domain_schema_v1",
+  "version": "1.0.0",
+  "entities": {
+    "self_belief": {
+      "required": ["id", "statement", "created_at", "status"],
+      "fields": {
+        "id": "string",
+        "statement": "string",
+        "created_at": "datetime",
+        "status": ["active", "paused", "archived"]
+      }
+    },
+    "hypothesis": {
+      "required": ["id", "self_belief_id", "template_key", "statement", "status", "created_at"],
+      "fields": {
+        "id": "string",
+        "self_belief_id": "string",
+        "template_key": ["state_to_choice", "state_to_start", "state_to_completion", "belief_vs_observation", "interaction"],
+        "statement": "string",
+        "target_fields": "string[]",
+        "status": ["draft", "active", "supported", "contradicted", "insufficient", "archived"],
+        "created_at": "datetime"
+      }
+    },
+    "checkin": {
+      "required": ["id", "timestamp_local", "source", "response_status"],
+      "fields": {
+        "id": "string",
+        "timestamp_local": "datetime",
+        "timezone": "string",
+        "source": ["controlled_random", "hypothesis_driven", "follow_up", "manual"],
+        "response_status": ["answered", "snoozed", "skipped", "expired"],
+        "observations": "observation[]"
+      }
+    },
+    "observation": {
+      "required": ["field", "value", "certainty", "source"],
+      "fields": {
+        "field": "string",
+        "value": ["string", "number", "boolean", "null"],
+        "certainty": ["high", "medium", "low"],
+        "source": ["user_confirmed", "ai_inferred", "system"],
+        "source_span": "string"
+      }
+    },
+    "notification_preference": {
+      "required": ["allowed_time_ranges", "quiet_ranges", "max_per_day", "notification_permission"],
+      "fields": {
+        "allowed_time_ranges": "time_range[]",
+        "quiet_ranges": "time_range[]",
+        "max_per_day": "integer",
+        "notification_permission": ["granted", "denied", "unknown"],
+        "channel_importance_preference": ["LOW", "DEFAULT"]
+      }
+    }
+  }
+}
+

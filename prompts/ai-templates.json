@@ -1,0 +1,213 @@
+{
+  "package_name": "preference_mirror_ai_templates",
+  "version": "1.0.0",
+  "locale": "ja-JP",
+  "templates": [
+    {
+      "template_name": "pm_nl_structurer_v1",
+      "purpose": "自由記述を観測候補へ構造化する",
+      "developer_instructions": [
+        "自由記述を観測候補へ構造化することだけを行う。",
+        "原文にない事実を確定しない。",
+        "推定が必要な場合は certainty='low' とし、needs_confirmation=true を付ける。",
+        "診断、性格断定、原因推論、助言を出力しない。",
+        "allowed_taxonomies にないカテゴリは other を使い、raw_span を残す。",
+        "構造化不能な場合は status='unparsable' を返す。"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": ["locale", "raw_text", "allowed_taxonomies", "context"],
+        "properties": {
+          "locale": { "type": "string", "enum": ["ja-JP"] },
+          "raw_text": { "type": "string", "minLength": 1 },
+          "allowed_taxonomies": {
+            "type": "object",
+            "required": ["activity_categories", "outcome_labels", "state_fields"],
+            "properties": {
+              "activity_categories": { "type": "array", "items": { "type": "string" } },
+              "outcome_labels": { "type": "array", "items": { "type": "string" } },
+              "state_fields": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "context": {
+            "type": "object",
+            "required": ["timestamp_local", "user_timezone"],
+            "properties": {
+              "timestamp_local": { "type": "string" },
+              "user_timezone": { "type": "string" },
+              "recent_plans": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["status", "observations", "ambiguities"],
+        "properties": {
+          "status": { "type": "string", "enum": ["ok", "needs_confirmation", "unparsable"] },
+          "observations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["field", "value", "source_span", "certainty"],
+              "properties": {
+                "field": { "type": "string" },
+                "value": { "type": ["string", "number", "boolean", "null"] },
+                "source_span": { "type": "string" },
+                "certainty": { "type": "string", "enum": ["high", "medium", "low"] },
+                "needs_confirmation": { "type": "boolean" }
+              }
+            }
+          },
+          "ambiguities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["question", "reason"],
+              "properties": {
+                "question": { "type": "string" },
+                "reason": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "template_name": "pm_hypothesis_generator_v1",
+      "purpose": "観測事実から最大3件の仮説候補を生成する",
+      "developer_instructions": [
+        "観測事実の言い換えではなく、検証可能な仮説候補を返す。",
+        "候補は最大3件にする。",
+        "各候補は allowed_templates のいずれか1つへ必ずマッピングする。",
+        "医学的、心理学的な診断名を導入しない。",
+        "原因を断定せず、可能性、関連、現時点の記録では、の範囲に留める。"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": ["locale", "facts", "self_beliefs", "allowed_templates", "allowed_fields"],
+        "properties": {
+          "locale": { "type": "string", "enum": ["ja-JP"] },
+          "facts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["fact_id", "fact_type", "statement", "numbers"],
+              "properties": {
+                "fact_id": { "type": "string" },
+                "fact_type": { "type": "string", "enum": ["difference", "mismatch", "exception", "data_gap"] },
+                "statement": { "type": "string" },
+                "numbers": { "type": "array", "items": { "type": "number" } }
+              }
+            }
+          },
+          "self_beliefs": { "type": "array", "items": { "type": "string" } },
+          "allowed_templates": { "type": "array", "items": { "type": "string" } },
+          "allowed_fields": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["status", "hypotheses"],
+        "properties": {
+          "status": { "type": "string", "enum": ["ok", "no_candidate", "needs_more_data"] },
+          "hypotheses": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+              "type": "object",
+              "required": ["template_key", "statement", "required_observations", "alternative_explanation", "validation_condition"],
+              "properties": {
+                "template_key": { "type": "string" },
+                "statement": { "type": "string" },
+                "required_observations": { "type": "array", "items": { "type": "string" } },
+                "alternative_explanation": { "type": "string" },
+                "validation_condition": { "type": "string" },
+                "risk_notes": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "template_name": "pm_next_question_suggester_v1",
+      "purpose": "検証に必要な単一チェックイン質問を提案する",
+      "developer_instructions": [
+        "質問は1つだけ返す。",
+        "回答時間が10秒以下になる形式を優先する。",
+        "通知タイミング、頻度、重要度は決めない。",
+        "センシティブな文言や診断的な表現を避ける。"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": ["locale", "hypothesis", "missing_fields", "allowed_question_types"],
+        "properties": {
+          "locale": { "type": "string", "enum": ["ja-JP"] },
+          "hypothesis": { "type": "string" },
+          "missing_fields": { "type": "array", "items": { "type": "string" } },
+          "allowed_question_types": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["single_choice", "yes_no", "number", "scale"] }
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["status", "question"],
+        "properties": {
+          "status": { "type": "string", "enum": ["ok", "no_safe_question"] },
+          "question": {
+            "type": "object",
+            "required": ["question_text", "question_type", "field", "options"],
+            "properties": {
+              "question_text": { "type": "string" },
+              "question_type": { "type": "string" },
+              "field": { "type": "string" },
+              "options": { "type": "array", "items": { "type": "string" } },
+              "privacy_note": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "template_name": "pm_safe_explanation_renderer_v1",
+      "purpose": "検証結果を安全で読みやすい説明文に変換する",
+      "developer_instructions": [
+        "入力された統計値や検証結果だけを説明する。",
+        "原因、病名、性格、能力を断定しない。",
+        "unsupported や insufficient の場合も、次に集めるデータを具体化する。",
+        "医療、治療、緊急対応の助言をしない。"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": ["locale", "hypothesis", "evaluation", "evidence"],
+        "properties": {
+          "locale": { "type": "string", "enum": ["ja-JP"] },
+          "hypothesis": { "type": "string" },
+          "evaluation": { "type": "string", "enum": ["supported", "contradicted", "mixed", "insufficient"] },
+          "evidence": {
+            "type": "object",
+            "required": ["sample_size", "summary"],
+            "properties": {
+              "sample_size": { "type": "integer" },
+              "summary": { "type": "string" },
+              "limitations": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["status", "explanation", "safety_flags"],
+        "properties": {
+          "status": { "type": "string", "enum": ["ok", "fallback_required"] },
+          "explanation": { "type": "string" },
+          "safety_flags": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  ]
+}
+
