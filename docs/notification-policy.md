@@ -53,6 +53,12 @@ flowchart TD
 - `notification_permission`
 - `channel_importance_preference`
 
+The user controls the collection scope and permission. The system chooses the
+concrete minute, question, notification kind, cooldown, and budget outcome.
+Exact daily notification times are never user-configured. Use `random`,
+`hypothesis`, and `follow_up` in storage; product copy may label them
+`RANDOM_CHECK_IN`, `HYPOTHESIS_CHECK_IN`, and `FOLLOW_UP_CHECK_IN`.
+
 ## UX Rules
 
 - Ask one question per check-in.
@@ -61,4 +67,3 @@ flowchart TD
 - Use free text only as supplemental MVP input.
 - Provide three response actions: answer now, snooze 10 minutes, skip this time.
 - Avoid sensitive notification text on lock screens. Use wording such as `1件のチェックインがあります`.
-

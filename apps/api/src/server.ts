@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { evaluateEvidence, directionForObservation, RULE_VERSION, type ObservationInput } from "../../../packages/domain/src/index.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
-const databasePath = process.env.METHEORY_DB ?? resolve(root, "data", "metheory-ts.sqlite3");
+const databasePath = process.env.METHEORY_DB ?? resolve(root, "data", "metheory.sqlite3");
 const db = new DatabaseSync(databasePath);
 db.exec(readFileSync(resolve(root, "db", "ts_mvp_schema.sql"), "utf8"));
 
@@ -53,8 +53,8 @@ function saveResponse(checkinId: string, input: Record<string, unknown>): Record
   const payload = JSON.stringify(input);
   db.exec("BEGIN IMMEDIATE");
   try {
-    db.prepare("INSERT INTO responses(id, checkin_id, idempotency_key, client_created_at, server_received_at, payload_json, missing_reason) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(responseId, checkinId, input.idempotencyKey as string, (input.clientCreatedAt as string | undefined) ?? now(), now(), payload, input.missingReason ?? null);
+    db.prepare("INSERT INTO responses(id, checkin_id, idempotency_key, client_created_at, server_received_at, payload_json, missing_reason, capture_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(responseId, checkinId, input.idempotencyKey as string, (input.clientCreatedAt as string | undefined) ?? now(), now(), payload, input.missingReason ?? null, "momentary_observation");
     const observation: ObservationInput = {
       field: checkin.kind === "random" ? "activity_type" : "outcome",
       value: (input.outcome as string | undefined) ?? (input.activityType as string | undefined) ?? null,
@@ -95,7 +95,7 @@ function latestInsight(hypothesisId: string): Record<string, unknown> | null {
 const server = createServer(async (request, response) => {
   const parts = pathParts(request);
   try {
-    if (request.method === "GET" && parts.join("/") === "healthz") return json(response, 200, { status: "ok", service: "metheory-ts-api" });
+    if (request.method === "GET" && parts.join("/") === "healthz") return json(response, 200, { status: "ok", service: "metheory-api" });
     if (request.method === "POST" && parts.join("/") === "v1/users") {
       const input = await body(request); const userId = id("usr");
       db.prepare("INSERT INTO users(id, auth_subject, locale, timezone, created_at) VALUES (?, ?, ?, ?, ?)").run(userId, input.authSubject ?? "local-user", input.locale ?? "ja-JP", input.timezone ?? "Asia/Tokyo", now());

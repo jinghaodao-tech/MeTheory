@@ -1,5 +1,8 @@
 data/me_theory_mvp.sqlite3
 data/metheory-ts.sqlite3
+data/metheory.sqlite3
+data/metheory-spec.sqlite3
+data/metheory-python.sqlite3
 __pycache__/
 backend/__pycache__/
 tools/__pycache__/

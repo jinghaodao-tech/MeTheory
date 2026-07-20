@@ -10,6 +10,28 @@ export const HYPOTHESIS_STATUSES = [
 export type HypothesisStatus = (typeof HYPOTHESIS_STATUSES)[number];
 export type EvidenceDirection = "supports" | "challenges" | "insufficient";
 export type ObservationSource = "user_confirmed" | "ai_inferred" | "system";
+export type CaptureMode = "momentary_observation" | "retrospective_entry";
+
+export interface ObservationRecord extends ObservationInput {
+  captureMode: CaptureMode;
+  responseId: string;
+}
+
+export interface InsightPresentation {
+  observedFact: string;
+  boundedInterpretation: string | null;
+  hypothesisCandidate: string | null;
+}
+
+export const FORBIDDEN_AI_TERMS = [
+  "diagnosis",
+  "diagnosed",
+  "personality type",
+  "proven",
+  "因果",
+  "診断",
+  "性格",
+] as const;
 
 export interface ObservationInput {
   field: string;
@@ -96,4 +118,47 @@ export function chooseQuestion(candidates: QuestionCandidate[]): QuestionCandida
       candidate.informationGainProxy * candidate.hypothesisPriority * candidate.novelty - candidate.burden;
     return score(right) - score(left) || left.field.localeCompare(right.field);
   })[0];
+}
+
+export interface TimeWindow {
+  startMinute: number;
+  endMinute: number;
+}
+
+export interface NotificationPolicyInput {
+  candidateMinutes: number[];
+  allowedWindows: TimeWindow[];
+  quietWindows: TimeWindow[];
+  sentToday: number;
+  maxPerDay: number;
+  lastSentMinute: number | null;
+  minimumIntervalMinutes: number;
+}
+
+function inWindow(minute: number, window: TimeWindow): boolean {
+  if (window.startMinute <= window.endMinute) return minute >= window.startMinute && minute <= window.endMinute;
+  return minute >= window.startMinute || minute <= window.endMinute;
+}
+
+export function chooseNotificationMinute(input: NotificationPolicyInput): number | null {
+  if (input.sentToday >= input.maxPerDay) return null;
+  return [...input.candidateMinutes].sort((a, b) => a - b).find((minute) => {
+    const allowed = input.allowedWindows.some((window) => inWindow(minute, window));
+    const quiet = input.quietWindows.some((window) => inWindow(minute, window));
+    const intervalOk = input.lastSentMinute === null || minute - input.lastSentMinute >= input.minimumIntervalMinutes;
+    return allowed && !quiet && intervalOk;
+  }) ?? null;
+}
+
+export function validateAiCandidate(candidate: unknown): { ok: true } | { ok: false; reason: string } {
+  if (!candidate || typeof candidate !== "object") return { ok: false, reason: "candidate must be an object" };
+  const value = candidate as Record<string, unknown>;
+  if (typeof value.statement !== "string" || value.statement.trim() === "") return { ok: false, reason: "statement is required" };
+  const lower = value.statement.toLowerCase();
+  const forbidden = FORBIDDEN_AI_TERMS.find((term) => lower.includes(term.toLowerCase()));
+  if (forbidden) return { ok: false, reason: `forbidden term: ${forbidden}` };
+  if ("status" in value || "evidenceStrength" in value || "notificationMinute" in value) return { ok: false, reason: "system-owned fields are not allowed" };
+  const allowedKeys = new Set(["statement", "alternativeExplanation", "validationCondition", "requiredObservations"]);
+  if (Object.keys(value).some((key) => !allowedKeys.has(key))) return { ok: false, reason: "unknown field" };
+  return { ok: true };
 }

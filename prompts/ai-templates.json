@@ -1,5 +1,5 @@
 {
-  "package_name": "preference_mirror_ai_templates",
+  "package_name": "metheory_ai_templates",
   "version": "1.0.0",
   "locale": "ja-JP",
   "templates": [
@@ -210,4 +210,3 @@
     }
   ]
 }
-

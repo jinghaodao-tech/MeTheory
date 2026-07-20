@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chooseQuestion, evaluateEvidence, transitionHypothesis } from "../packages/domain/src/index.ts";
+import { chooseNotificationMinute, chooseQuestion, evaluateEvidence, transitionHypothesis, validateAiCandidate } from "../packages/domain/src/index.ts";
 
 test("missing observations never become challenges", () => {
   const result = evaluateEvidence([
@@ -23,4 +23,25 @@ test("adaptive question selection is deterministic", () => {
     { field: "outcome", burden: 1, novelty: 2, informationGainProxy: 2, hypothesisPriority: 1, recentlyAsked: false },
   ]);
   assert.equal(result?.field, "outcome");
+});
+
+test("notification policy respects windows, quiet hours, budget, and interval", () => {
+  const base = {
+    candidateMinutes: [480, 600, 720],
+    allowedWindows: [{ startMinute: 420, endMinute: 800 }],
+    quietWindows: [{ startMinute: 540, endMinute: 630 }],
+    sentToday: 1,
+    maxPerDay: 3,
+    lastSentMinute: 450,
+    minimumIntervalMinutes: 90,
+  } as const;
+  assert.equal(chooseNotificationMinute(base), 720);
+  assert.equal(chooseNotificationMinute({ ...base, sentToday: 3 }), null);
+  assert.equal(chooseNotificationMinute({ ...base, allowedWindows: [{ startMinute: 900, endMinute: 1000 }] }), null);
+});
+
+test("AI candidates cannot set system-owned fields or use diagnostic language", () => {
+  assert.deepEqual(validateAiCandidate({ statement: "A different start condition may be worth testing" }), { ok: true });
+  assert.equal(validateAiCandidate({ statement: "This is a diagnosis" }).ok, false);
+  assert.equal(validateAiCandidate({ statement: "A candidate", status: "supported" }).ok, false);
 });

@@ -1,8 +1,8 @@
-# Preference Mirror Design Spec
+# MeTheory Design Spec
 
 ## Core Loop
 
-Preference Mirror does not store self-beliefs as fixed profile facts. It converts them into testable hypotheses, collects lightweight observations, evaluates evidence, and updates the user's self-model only when evidence is sufficient.
+MeTheory does not store self-beliefs as fixed profile facts. It converts them into testable hypotheses, collects lightweight observations, evaluates evidence, and updates the user's self-model only when evidence is sufficient.
 
 ```mermaid
 flowchart LR
@@ -33,14 +33,13 @@ flowchart LR
 
 ## Safety Positioning
 
-Preference Mirror is a self-observation and reflection app. It is not intended for medical diagnosis, treatment, emergency response, or psychological assessment.
+MeTheory is a self-observation and reflection app. It is not intended for medical diagnosis, treatment, emergency response, or psychological assessment.
 
 Recommended disclaimer:
 
 ```text
-Preference Mirrorは、日常の自己観察と振り返りを支援するアプリです。
+MeTheoryは、日常の自己観察と振り返りを支援するアプリです。
 医学的・心理学的な診断、治療、緊急時対応を目的としたものではありません。
 表示される内容は、あなたの記録に基づく仮説や傾向の提示であり、原因や病名を断定するものではありません。
 不調が強い場合や安全に関わる懸念がある場合は、医療機関や適切な相談先に連絡してください。
 ```
-

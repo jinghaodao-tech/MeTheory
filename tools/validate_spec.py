@@ -65,7 +65,7 @@ def main() -> None:
     assert_template_package(prompts)
     assert_domain_schema(domain_schema)
 
-    print("Preference Mirror spec validation passed.")
+    print("MeTheory spec validation passed.")
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DB = ROOT / "data" / "me_theory_mvp.sqlite3"
+DEFAULT_DB = ROOT / "data" / "metheory-python.sqlite3"
 RULE_VERSION = "evidence-v1"
 
 

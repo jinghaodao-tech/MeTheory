@@ -52,7 +52,8 @@ CREATE TABLE IF NOT EXISTS responses (
   client_created_at TEXT NOT NULL,
   server_received_at TEXT NOT NULL,
   payload_json TEXT NOT NULL,
-  missing_reason TEXT
+  missing_reason TEXT,
+  capture_mode TEXT NOT NULL CHECK (capture_mode IN ('momentary_observation', 'retrospective_entry'))
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS observations (

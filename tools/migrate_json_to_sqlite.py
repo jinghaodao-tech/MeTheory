@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sqlite3
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DB = ROOT / "data" / "preference_mirror.sqlite3"
+DEFAULT_DB = ROOT / "data" / "metheory-spec.sqlite3"
+LEGACY_DB = ROOT / "data" / "preference_mirror.sqlite3"
 
 
 def load_json(path: Path) -> dict:
@@ -23,6 +25,8 @@ def migrate(database_path: Path, prompts_path: Path, domain_schema_path: Path) -
     prompts = load_json(prompts_path)
     domain_schema = load_json(domain_schema_path)
     database_path.parent.mkdir(parents=True, exist_ok=True)
+    if database_path == DEFAULT_DB and not database_path.exists() and LEGACY_DB.exists():
+        shutil.copy2(LEGACY_DB, database_path)
 
     with sqlite3.connect(database_path) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
@@ -99,7 +103,7 @@ def migrate(database_path: Path, prompts_path: Path, domain_schema_path: Path) -
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Migrate Preference Mirror JSON specs to SQLite")
+    parser = argparse.ArgumentParser(description="Migrate MeTheory JSON specs to SQLite")
     parser.add_argument("--database", type=Path, default=DEFAULT_DB)
     parser.add_argument("--prompts", type=Path, default=ROOT / "prompts" / "ai-templates.json")
     parser.add_argument("--domain-schema", type=Path, default=ROOT / "schemas" / "domain-schema.json")
