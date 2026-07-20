@@ -12,6 +12,10 @@ Preference Mirror treats self-beliefs as hypotheses to test through lightweight 
 - `docs/notification-policy.md`: notification scheduling and UX constraints.
 - `docs/mvp-metrics.md`: MVP scope and success indicators.
 - `tools/validate_spec.py`: local validator for JSON syntax and required template/schema structure.
+- `docs/technical-architecture.md`: accepted MVP stack, runtime flow, and module boundaries.
+- `docs/privacy-retention.md`: retention, consent, erasure, and AI safety baseline.
+- `docs/implementation-roadmap.md`: phased implementation and beta exit criteria.
+- `db/postgresql_schema.sql`: PostgreSQL/pgvector baseline for the runtime data model.
 
 ## Validate
 
