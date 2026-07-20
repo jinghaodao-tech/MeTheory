@@ -22,7 +22,10 @@ CREATE TABLE IF NOT EXISTS hypotheses (
   self_belief_id TEXT REFERENCES self_beliefs(id) ON DELETE SET NULL,
   template_key TEXT NOT NULL,
   statement TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'tracking' CHECK (state IN ('proposed', 'tracking', 'paused', 'archived')),
   status TEXT NOT NULL CHECK (status IN ('proposed', 'tracking', 'supported', 'challenged', 'inconclusive', 'archived')),
+  spec_json TEXT,
+  spec_version TEXT,
   rule_version TEXT NOT NULL,
   created_at TEXT NOT NULL
 ) STRICT;
@@ -80,6 +83,16 @@ CREATE TABLE IF NOT EXISTS evidence_links (
 CREATE TABLE IF NOT EXISTS hypothesis_evaluations (
   id TEXT PRIMARY KEY,
   hypothesis_id TEXT NOT NULL REFERENCES hypotheses(id) ON DELETE CASCADE,
+  hypothesis_spec_version TEXT NOT NULL DEFAULT '1',
+  evaluator_version TEXT NOT NULL DEFAULT 'comparison-v1',
+  evaluated_at TEXT NOT NULL DEFAULT '',
+  window_start TEXT NOT NULL DEFAULT '',
+  window_end TEXT NOT NULL DEFAULT '',
+  result TEXT NOT NULL DEFAULT 'inconclusive' CHECK (result IN ('insufficient_data', 'supports', 'challenges', 'inconclusive')),
+  cohort_metrics_json TEXT NOT NULL DEFAULT '[]',
+  observed_effect REAL,
+  required_effect REAL NOT NULL DEFAULT 0,
+  data_quality_json TEXT NOT NULL DEFAULT '[]',
   rule_version TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('supported', 'challenged', 'inconclusive')),
   support_count INTEGER NOT NULL,
@@ -92,3 +105,13 @@ CREATE TABLE IF NOT EXISTS hypothesis_evaluations (
 CREATE INDEX IF NOT EXISTS observations_response_idx ON observations(response_id);
 CREATE INDEX IF NOT EXISTS evidence_hypothesis_idx ON evidence_links(hypothesis_id, created_at);
 CREATE INDEX IF NOT EXISTS evaluations_hypothesis_idx ON hypothesis_evaluations(hypothesis_id, created_at);
+
+CREATE TABLE IF NOT EXISTS hypothesis_evaluation_samples (
+  evaluation_id TEXT NOT NULL REFERENCES hypothesis_evaluations(id) ON DELETE CASCADE,
+  response_id TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+  cohort_key TEXT,
+  included INTEGER NOT NULL CHECK (included IN (0, 1)),
+  outcome_json TEXT,
+  exclusion_reason TEXT,
+  PRIMARY KEY (evaluation_id, response_id)
+) STRICT;

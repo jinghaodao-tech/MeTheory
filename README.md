@@ -13,6 +13,7 @@ notification timing, hypothesis status, or Self Model updates.
 
 - `docs/design-spec.md`: core loop and safety position.
 - `docs/domain-language.md`: canonical entities and hypothesis lifecycle.
+- `docs/hypothesis-evaluation.md`: versioned comparison evaluation and audit model.
 - `docs/collection-responsibility.md`: collection ownership and three-layer presentation model.
 - `docs/architecture-research.md`: target architecture and migration plan.
 - `docs/technical-architecture.md`: module boundaries and runtime flow.
@@ -24,6 +25,7 @@ notification timing, hypothesis status, or Self Model updates.
 - `db/mvp_schema.sql`: Python reference SQLite schema.
 - `db/ts_mvp_schema.sql`: TypeScript runtime SQLite schema with Observation and Evidence.
 - `packages/domain/src/index.ts`: TypeScript pure rules for evidence, transitions, notification policy, and AI candidate validation.
+- `packages/domain/src/hypothesis/`: typed HypothesisSpec, episode construction, conditions, and deterministic evaluators.
 - `packages/contracts/src/index.ts`: shared TypeScript request contracts.
 - `apps/api/src/server.ts`: TypeScript Node MVP API.
 - `backend/core.py`: Python reference implementation kept during migration.

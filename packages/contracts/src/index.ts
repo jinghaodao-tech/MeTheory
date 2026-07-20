@@ -14,6 +14,7 @@ export interface CreateHypothesisRequest {
   selfBeliefId?: string;
   statement: string;
   templateKey: string;
+  spec?: unknown;
 }
 
 export interface ResponseRequest {

@@ -22,9 +22,11 @@ stateDiagram-v2
     inconclusive --> archived
 ```
 
-`proven` and `diagnosed` are intentionally not valid states. A status is an
-evaluation of available evidence under a named rule version, not a fact about
-the person.
+`proven` and `diagnosed` are intentionally not valid states. Management state
+(`proposed`, `tracking`, `paused`, `archived`) is separate from the latest
+evaluation result (`insufficient_data`, `supports`, `challenges`,
+`inconclusive`). An evaluation is a comparison of multiple observation
+episodes under a versioned rule, not a fact about the person.
 
 ## Core vocabulary
 
@@ -38,9 +40,9 @@ the person.
 | QuestionDefinition | Value object | One allowed question and response shape | policy bundle |
 | Response | Entity | Raw user answer, append-only | responses |
 | Observation | Entity | Structured fact linked to a response | observations |
-| EvidenceLink | Entity | Supports/challenges/insufficient relation | evidence_links |
+| EvidenceLink | Legacy entity | Compatibility relation for earlier data | evidence_links |
 | EvidenceSummary | Value object | Deterministic aggregate for one hypothesis | derived summary |
-| HypothesisEvaluation | Entity | Historical evaluation under rule version | evaluation_history |
+| HypothesisEvaluation | Entity | Historical comparison evaluation under spec/evaluator versions | hypothesis_evaluations |
 | SelfModel | Aggregate root | User-visible revision of evaluated hypotheses | self_models |
 | Recommendation | Entity | Fit, explore, test, or challenge action | recommendations |
 | NotificationPreference | Value object | Permission, quiet hours, and budget | preferences |
@@ -50,7 +52,8 @@ the person.
 ## Aggregate rules
 
 - A Hypothesis references a SelfBelief by ID; it does not embed the belief.
-- An EvidenceLink references a Hypothesis and an Observation by ID.
+- New evaluations do not create an EvidenceLink for an individual Observation.
+- A HypothesisEvaluation references included and excluded ObservationEpisodes by response ID.
 - A Response owns the raw payload and may have many Observations.
 - AI-inferred Observations never overwrite user-confirmed Observations.
 - Missing responses have a missing reason and cannot create a challenge link.
@@ -64,7 +67,7 @@ the person.
 | User Observation | User-confirmed structured value | No; supersede with a new record |
 | AI Observation | Candidate inferred from text | No; confirmation creates a user observation |
 | System Observation | Deterministic value such as elapsed time | No |
-| EvidenceLink | Relation to a hypothesis under a rule version | Recomputed, history retained |
+| EvidenceLink | Legacy relation to a hypothesis under a rule version | Recomputed, history retained |
 
 The MVP uses append-only source events plus ordinary derived tables. Full event
 sourcing is rejected because command replay, projections, and event versioning
