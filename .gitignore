@@ -6,4 +6,6 @@ data/metheory-python.sqlite3
 __pycache__/
 backend/__pycache__/
 tools/__pycache__/
+node_modules/
+.expo/
 *.py[cod]

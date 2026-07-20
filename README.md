@@ -67,3 +67,25 @@ Run the Python compatibility tests:
 ```powershell
 python -m unittest tools.test_mvp -v
 ```
+
+## Smartphone MVP
+
+The MeTheory smartphone app lives at `apps/mobile`. It keeps Self Beliefs,
+Hypotheses, Check-ins, Observations, evaluation history, and notification
+settings in the device's `metheory.sqlite` database. Onboarding creates a
+separate Self Belief and a `time_of_day_productivity` HypothesisSpec for
+day-versus-night observations.
+
+```powershell
+npm install
+npm run dev:mobile
+npm run typecheck
+npm run test:mobile
+npm run verify
+```
+
+Expo Go can exercise onboarding, local SQLite, check-ins, deterministic
+evaluation, Evidence, and Self Model. Notification permission and scheduled
+delivery require a physical device; notification behavior can require an Expo
+development build depending on the SDK and platform. API authentication,
+cloud sync, AI, and store distribution are outside this MVP.

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateHypothesis, type ObservationEpisode } from '../../packages/domain/src/hypothesis/index.ts';
-import type { HypothesisSpec } from '../../packages/domain/src/hypothesis/spec.ts';
+import { evaluateHypothesis, type ObservationEpisode } from '../../../packages/domain/src/hypothesis/index.ts';
+import type { HypothesisSpec } from '../../../packages/domain/src/hypothesis/spec.ts';
 
 const spec: HypothesisSpec = {
   schemaVersion: '1', unit: 'response', scope: [{ field: 'context', operator: 'equals', value: 'free_time' }],

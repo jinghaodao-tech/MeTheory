@@ -1,5 +1,6 @@
 {
-  "name": "methory-smartphone",
+  "name": "metheory-mobile",
+  "type": "module",
   "version": "0.1.0",
   "private": true,
   "main": "expo-router/entry",

@@ -1,0 +1,6 @@
+import type { NotificationSettings } from '@/storage/repositories/settingsRepository';
+
+function minutes(value: string) { const [hour, minute] = value.split(':').map(Number); return hour * 60 + minute; }
+function inRange(value: number, start: number, end: number) { return start <= end ? value >= start && value <= end : value >= start || value <= end; }
+export function isAllowedMinute(value: number, settings: NotificationSettings) { const start = minutes(settings.window_start); const end = minutes(settings.window_end); if (!inRange(value, start, end)) return false; return !settings.quiet_periods.some((period) => inRange(value, minutes(period.start), minutes(period.end))); }
+export function chooseFutureMinute(seed: number, now: Date, settings: NotificationSettings, occupied: number[]) { const candidates: number[] = []; const start = Math.max(minutes(settings.window_start), now.getHours() * 60 + now.getMinutes() + settings.minimum_interval_minutes); const end = minutes(settings.window_end); for (let offset = 0; offset <= 24 * 60; offset += 15) { const value = (start + offset) % (24 * 60); if (isAllowedMinute(value, settings) && !occupied.some((item) => Math.abs(item - value) < settings.minimum_interval_minutes)) candidates.push(value); if (value === end) break; } return candidates.length ? candidates[Math.abs(seed) % candidates.length] : null; }
