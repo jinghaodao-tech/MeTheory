@@ -16,6 +16,9 @@ Preference Mirror treats self-beliefs as hypotheses to test through lightweight 
 - `docs/privacy-retention.md`: retention, consent, erasure, and AI safety baseline.
 - `docs/implementation-roadmap.md`: phased implementation and beta exit criteria.
 - `db/postgresql_schema.sql`: PostgreSQL/pgvector baseline for the runtime data model.
+- `backend/core.py`: dependency-free MVP domain and persistence layer.
+- `backend/server.py`: local HTTP API for the first hypothesis update loop.
+- `tools/test_mvp.py`: deterministic core tests.
 
 ## Validate
 
@@ -32,3 +35,17 @@ python tools\migrate_json_to_sqlite.py
 ```
 
 生成先は `data/preference_mirror.sqlite3`。移行元JSONはそのまま残し、DBは実行時に参照する正規化済みコピーとして扱う。
+
+MVP APIを起動する:
+
+```powershell
+python -m backend.server
+```
+
+APIは `http://127.0.0.1:8000` で起動する。`GET /healthz`、ユーザー・Self Belief・仮説・check-in・回答・insightsの最小APIを含む。
+
+MVPコアを検証する:
+
+```powershell
+python -m unittest tools.test_mvp -v
+```

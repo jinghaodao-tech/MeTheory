@@ -1,0 +1,5 @@
+data/me_theory_mvp.sqlite3
+__pycache__/
+backend/__pycache__/
+tools/__pycache__/
+*.py[cod]
