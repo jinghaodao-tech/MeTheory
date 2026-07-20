@@ -61,7 +61,7 @@ export function evaluateHypothesis(hypothesisId: string, spec: HypothesisSpec, e
     const values = cohortValues.get(cohort.key)!;
     const metricValue = spec.outcome.metric === "binary_rate_difference"
       ? values.filter((value) => spec.outcome.positiveValues!.some((positive) => positive === value)).length / (values.length || 1)
-      : values.reduce((sum, value) => sum + (value as number), 0) / (values.length || 1);
+      : values.reduce<number>((sum, value) => sum + (value as number), 0) / (values.length || 1);
     return { cohortKey: cohort.key, eligibleSamples: values.length, metricValue: values.length ? metricValue : null, missingSamples: missing.get(cohort.key)! };
   });
   const flags: string[] = [];

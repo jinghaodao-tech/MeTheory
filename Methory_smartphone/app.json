@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "Methory",
+    "slug": "methory-smartphone",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "methory",
+    "userInterfaceStyle": "light",
+    "plugins": ["expo-router", "expo-sqlite", "expo-notifications"],
+    "experiments": { "typedRoutes": true },
+    "ios": { "supportsTablet": true },
+    "android": { "package": "com.jinghaodao.methory" }
+  }
+}

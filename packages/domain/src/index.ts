@@ -59,7 +59,7 @@ export function transitionHypothesis(
   if (current === "archived") {
     throw new Error("archived hypotheses cannot transition");
   }
-  if (next === "proposed" || next === "tracking" || next === "archived") {
+  if (next === "proposed" || next === "tracking") {
     return next;
   }
   if (current !== "tracking" && next !== "archived") {
