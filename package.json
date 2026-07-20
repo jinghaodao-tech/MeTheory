@@ -1,0 +1,14 @@
+{
+  "name": "metheory",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:api": "node --experimental-strip-types apps/api/src/server.ts",
+    "test:domain": "node --experimental-strip-types --test test/domain.test.ts",
+    "test": "npm run test:domain",
+    "check": "node --check apps/api/src/server.ts && node --check packages/domain/src/index.ts"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}

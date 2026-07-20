@@ -1,0 +1,25 @@
+export interface CreateUserRequest {
+  authSubject: string;
+  locale?: string;
+  timezone?: string;
+}
+
+export interface CreateBeliefRequest {
+  userId: string;
+  statement: string;
+}
+
+export interface CreateHypothesisRequest {
+  userId: string;
+  selfBeliefId?: string;
+  statement: string;
+  templateKey: string;
+}
+
+export interface ResponseRequest {
+  idempotencyKey: string;
+  clientCreatedAt?: string;
+  outcome?: string;
+  activityType?: string;
+  missingReason?: string;
+}

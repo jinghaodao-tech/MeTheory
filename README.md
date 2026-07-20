@@ -21,6 +21,11 @@ Preference Mirror treats self-beliefs as hypotheses to test through lightweight 
 - `tools/test_mvp.py`: deterministic core tests.
 - `docs/domain-language.md`: canonical domain vocabulary and state lifecycle.
 - `docs/architecture-research.md`: architecture comparison, ADRs, API, AI, privacy, and migration plan.
+- `packages/domain/src/index.ts`: TypeScript pure domain rules and evidence evaluator.
+- `packages/contracts/src/index.ts`: shared TypeScript request contracts.
+- `apps/api/src/server.ts`: TypeScript Node MVP API with normalized Observation/Evidence tables.
+- `db/ts_mvp_schema.sql`: TypeScript MVP SQLite schema.
+- `test/domain.test.ts`: Node built-in domain contract tests.
 
 ## Validate
 
@@ -51,3 +56,11 @@ MVPコアを検証する:
 ```powershell
 python -m unittest tools.test_mvp -v
 ```
+
+TypeScript MVP APIを起動する:
+
+```powershell
+npm.cmd run dev:api
+```
+
+APIは `http://127.0.0.1:8100` で起動する。TypeScriptドメインテストは `npm.cmd test` で実行する。
