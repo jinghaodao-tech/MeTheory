@@ -3,12 +3,12 @@
   "version": "1.0.0",
   "entities": {
     "self_belief": {
-      "required": ["id", "statement", "created_at", "status"],
+      "required": ["id", "statement", "created_at", "active_flag"],
       "fields": {
         "id": "string",
         "statement": "string",
         "created_at": "datetime",
-        "status": ["proposed", "tracking", "supported", "challenged", "inconclusive", "archived"]
+        "active_flag": "boolean"
       }
     },
     "hypothesis": {
@@ -35,13 +35,14 @@
       }
     },
     "observation": {
-      "required": ["field", "value", "certainty", "source"],
+      "required": ["field", "value", "certainty", "source", "capture_mode"],
       "fields": {
         "field": "string",
         "value": ["string", "number", "boolean", "null"],
         "certainty": ["high", "medium", "low"],
         "source": ["user_confirmed", "ai_inferred", "system"],
-        "source_span": "string"
+        "source_span": "string",
+        "capture_mode": ["momentary_observation", "retrospective_entry"]
       }
     },
     "notification_preference": {
