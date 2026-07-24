@@ -18,7 +18,10 @@ unique index prevents re-importing the same transformed value. Raw external
 fields are not stored in `parameter_values`.
 
 `exportAiSnapshot` and `queryAiParameterAggregates` are read-only local APIs.
+The Node API exposes the same boundary at GET /v1/ai/* and POST
+/v1/ai/aggregates/query with an allowlisted client ID.
 They require both the parameter policy and the user's `external_ai_enabled`
 setting, return aggregate data only, enforce a 90-day window, and write every
-request to `ai_access_audit_logs`. No OpenAI, OAuth, calendar, health, or cloud
-request is made.
+request to `ai_access_audit_logs` or the API audit table. OpenAI access is
+optional and runtime-only; OAuth, calendar, health, and cloud integrations
+still require a platform bridge and are not enabled by default.

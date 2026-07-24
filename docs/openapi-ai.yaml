@@ -1,41 +1,71 @@
 openapi: 3.0.3
 info:
   title: MeTheory Read-only AI API
-  version: 1.0.0
-  description: Read-only aggregate access. No write or raw-record operation is exposed.
+  version: 1.1.0
+  description: Read-only, aggregate-first access. All requests require an allowlisted client and user context.
+servers:
+  - url: http://127.0.0.1:8100
 paths:
   /v1/ai/parameters:
     get:
-      summary: List allowed parameter definitions
-      responses: { '200': { description: OK } }
+      summary: List observed parameter definitions
+      parameters: [{ $ref: '#/components/parameters/UserId' }, { $ref: '#/components/parameters/ClientId' }, { $ref: '#/components/parameters/ClientType' }]
+      responses: { '200': { description: OK }, '403': { description: Client is not allowlisted } }
+  /v1/ai/parameters/{parameterId}:
+    get:
+      summary: Get one parameter summary
+      parameters: [{ $ref: '#/components/parameters/UserId' }, { $ref: '#/components/parameters/ClientId' }, { $ref: '#/components/parameters/ClientType' }, { name: parameterId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '404': { description: Not found } }
   /v1/ai/self-model:
     get:
-      summary: Get the readable self model
+      summary: Get user self beliefs
+      parameters: [{ $ref: '#/components/parameters/UserId' }, { $ref: '#/components/parameters/ClientId' }, { $ref: '#/components/parameters/ClientType' }]
       responses: { '200': { description: OK } }
   /v1/ai/hypotheses:
     get:
-      summary: List readable tracking hypotheses
+      summary: List tracking hypotheses
+      parameters: [{ $ref: '#/components/parameters/UserId' }, { $ref: '#/components/parameters/ClientId' }, { $ref: '#/components/parameters/ClientType' }]
+      responses: { '200': { description: OK } }
+  /v1/ai/hypotheses/{id}:
+    get:
+      summary: Get hypothesis summary and latest evaluation
+      parameters: [{ $ref: '#/components/parameters/UserId' }, { $ref: '#/components/parameters/ClientId' }, { $ref: '#/components/parameters/ClientType' }, { name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK } }
+  /v1/ai/hypotheses/{id}/evidence:
+    get:
+      summary: Get redacted evidence summaries
+      parameters: [{ $ref: '#/components/parameters/UserId' }, { $ref: '#/components/parameters/ClientId' }, { $ref: '#/components/parameters/ClientType' }, { name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK } }
+  /v1/ai/hypotheses/{id}/missing-parameters:
+    get:
+      summary: Get missing hypothesis parameters
+      parameters: [{ $ref: '#/components/parameters/UserId' }, { $ref: '#/components/parameters/ClientId' }, { $ref: '#/components/parameters/ClientType' }, { name: id, in: path, required: true, schema: { type: string } }]
       responses: { '200': { description: OK } }
   /v1/ai/aggregates/query:
     post:
       summary: Query aggregate parameter values
-      requestBody:
-        required: true
-        content: { application/json: { schema: { $ref: '#/components/schemas/AggregateQuery' } } }
-      responses: { '200': { description: Aggregate-only response } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AggregateQuery' } } } }
+      responses: { '200': { description: Aggregate-only response }, '403': { description: Client is not allowlisted } }
   /v1/ai/snapshot:
     get:
       summary: Export an allowed aggregate snapshot
-      responses: { '200': { description: OK } }
+      parameters: [{ $ref: '#/components/parameters/UserId' }, { $ref: '#/components/parameters/ClientId' }, { $ref: '#/components/parameters/ClientType' }]
+      responses: { '200': { description: Aggregate-only snapshot } }
 components:
+  parameters:
+    UserId: { name: userId, in: query, required: true, schema: { type: string } }
+    ClientId: { name: clientId, in: query, required: true, schema: { type: string } }
+    ClientType: { name: clientType, in: query, required: true, schema: { type: string, enum: [custom_gpt, mcp, openai_api, other] } }
   schemas:
     AggregateQuery:
       type: object
-      required: [clientId, purpose, parameterIds, startAt, endAt]
+      required: [userId, clientId, clientType, purpose, parameterIds, startAt, endAt]
       properties:
+        userId: { type: string }
         clientId: { type: string }
-        purpose: { type: string }
-        parameterIds: { type: array, maxItems: 10, items: { type: string } }
+        clientType: { type: string, enum: [custom_gpt, mcp, openai_api, other] }
+        purpose: { type: string, minLength: 1 }
+        parameterIds: { type: array, minItems: 1, maxItems: 10, items: { type: string, pattern: '^[a-z][a-z0-9_]{1,63}$' } }
         startAt: { type: string, format: date-time }
         endAt: { type: string, format: date-time }
         groupBy: { type: string, enum: [day, time_period] }

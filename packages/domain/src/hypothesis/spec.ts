@@ -43,15 +43,15 @@ export function validateHypothesisSpec(input: unknown): HypothesisSpec {
   if (!Array.isArray(value.cohorts) || value.cohorts.length !== 2) throw new Error("exactly two cohorts are required");
   const keys = value.cohorts.map((cohort: any) => cohort?.key);
   if (keys.some((key: unknown) => typeof key !== "string" || key.length === 0) || new Set(keys).size !== 2) throw new Error("cohort keys must be unique and non-empty");
-  const validateConditions = (conditions: unknown, label: string) => {
-    if (!Array.isArray(conditions) || conditions.length === 0) throw new Error(`${label} conditions are required`);
+  const validateConditions = (conditions: unknown, label: string, allowEmpty = false) => {
+    if (!Array.isArray(conditions) || (!allowEmpty && conditions.length === 0)) throw new Error(`${label} conditions are required`);
     for (const condition of conditions) {
       if (!condition || typeof condition.field !== "string" || !condition.field) throw new Error(`${label} condition field is required`);
       if (!CONDITION_OPERATORS.includes(condition.operator)) throw new Error(`unknown condition operator: ${condition.operator}`);
       if (["in", "not_in"].includes(condition.operator) && !Array.isArray(condition.value)) throw new Error(`${condition.operator} requires an array value`);
     }
   };
-  validateConditions(value.scope, "scope");
+  validateConditions(value.scope, "scope", true);
   value.cohorts.forEach((cohort: any, index: number) => validateConditions(cohort.conditions, `cohort ${index}`));
   if (!value.outcome?.field || !["binary_rate_difference", "numeric_mean_difference"].includes(value.outcome.metric)) throw new Error("unsupported outcome metric or empty outcome field");
   if (value.outcome.metric === "binary_rate_difference" && !Array.isArray(value.outcome.positiveValues)) throw new Error("binary rate requires positiveValues");

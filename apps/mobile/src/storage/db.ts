@@ -3,7 +3,7 @@ import { seedParameterDefinitions } from './parameterSeed';
 import { migrateLegacyObservations } from './parameterMigration';
 
 export const dbPromise = SQLite.openDatabaseAsync('metheory.sqlite');
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 const migrations: Record<number, string> = {
   1: `CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY NOT NULL, value_json TEXT NOT NULL);
@@ -39,6 +39,7 @@ const migrations: Record<number, string> = {
       CREATE TABLE IF NOT EXISTS ai_access_audit_logs (id TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL, client_id TEXT NOT NULL, client_type TEXT NOT NULL, purpose TEXT NOT NULL, requested_parameter_ids_json TEXT NOT NULL, allowed_parameter_ids_json TEXT NOT NULL, denied_parameter_ids_json TEXT NOT NULL, requested_start_at TEXT NOT NULL, requested_end_at TEXT NOT NULL, access_level TEXT NOT NULL, raw_records_requested INTEGER NOT NULL DEFAULT 0, raw_records_returned INTEGER NOT NULL DEFAULT 0, returned_record_count INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL CHECK (status IN ('allowed','partially_allowed','denied','failed')), denial_reason_codes_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS idx_external_import_batches_user_time ON external_import_batches(user_id,created_at); CREATE INDEX IF NOT EXISTS idx_external_import_items_record ON external_import_items(provider_key,external_record_id); CREATE INDEX IF NOT EXISTS idx_ai_access_audit_user_time ON ai_access_audit_logs(user_id,created_at); CREATE UNIQUE INDEX IF NOT EXISTS idx_parameter_values_external_unique ON parameter_values(source_provider,external_record_id,parameter_id,transformation_version) WHERE source_type='external_app' AND external_record_id IS NOT NULL;`,
   9: `CREATE TABLE IF NOT EXISTS parameter_governance (parameter_id TEXT PRIMARY KEY NOT NULL, domain TEXT NOT NULL CHECK (domain IN ('time','activity','physical','sleep','emotion','cognition','motivation','social','environment','schedule','digital','outcome','quality','sensitive')), aliases_ja_json TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL CHECK (status IN ('draft','active','deprecated','archived')), replaced_by_parameter_id TEXT, comparable_parameter_ids_json TEXT NOT NULL DEFAULT '[]', conflicting_parameter_ids_json TEXT NOT NULL DEFAULT '[]', minimum_observation_interval_minutes INTEGER, governance_version TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY (parameter_id) REFERENCES parameter_definitions(id) ON DELETE CASCADE, FOREIGN KEY (replaced_by_parameter_id) REFERENCES parameter_definitions(id) ON DELETE SET NULL); CREATE INDEX IF NOT EXISTS idx_parameter_governance_domain_status ON parameter_governance(domain,status);`,
+  10: `CREATE INDEX IF NOT EXISTS idx_parameter_values_observed_episode ON parameter_values(observed_at,episode_id,parameter_id);`,
 };
 
 export async function migrate() {

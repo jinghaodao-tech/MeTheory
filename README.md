@@ -26,7 +26,9 @@ notification timing, hypothesis status, or Self Model updates.
 - `db/ts_mvp_schema.sql`: TypeScript runtime SQLite schema with Observation and Evidence.
 - `packages/domain/src/index.ts`: TypeScript pure rules for evidence, transitions, notification policy, and AI candidate validation.
 - `packages/domain/src/hypothesis/`: typed HypothesisSpec, episode construction, conditions, and deterministic evaluators.
-- `packages/contracts/src/index.ts`: shared TypeScript request contracts.
+ - `packages/contracts/src/index.ts`: shared TypeScript request contracts.
+ - `docs/openapi-ai.yaml`: read-only AI HTTP contract.
+ - `docs/mcp-tools.md`: read-only MCP tool boundary.
 - `apps/api/src/server.ts`: TypeScript Node MVP API.
 - `backend/core.py`: Python reference implementation kept during migration.
 
@@ -96,7 +98,9 @@ Expo Go can exercise onboarding, local SQLite, check-ins, deterministic
 evaluation, Evidence, and Self Model. Notification permission and scheduled
 delivery require a physical device; notification behavior can require an Expo
 development build depending on the SDK and platform. API authentication,
-cloud sync, AI, and store distribution are outside this MVP. To reset local
+cloud sync, and store distribution are outside this MVP. The local API has an
+allowlisted, aggregate-only AI read surface; production authentication and
+deployment remain separate concerns. To reset local
 development data, remove the app's `metheory.sqlite` database from the Expo
 SQLite storage and relaunch the app; production migration paths do not delete
 existing data.
@@ -138,3 +142,36 @@ eligible outcome parameters, scored for effect and data quality, and stored in
 `hypothesis_candidates`. A user may dismiss or adopt a candidate. Adoption
 creates a tracking hypothesis and requirements; question targets are selected
 from shortages and cooldown rules, then generated from parameter metadata.
+
+## Completion engineering
+
+Candidate evaluation uses non-overlapping numeric cohorts, explicit
+positiveValues for binary and choice outcomes, and a first-half/second-half
+temporal stability check. Discovery, validation, and replication remain
+separate periods so discovery observations are not silently counted as
+validation evidence.
+
+Question selection applies daily, hourly, per-hypothesis, cooldown, quiet-hour,
+and consecutive-skip budgets. A blocked budget returns a reason code instead
+of creating a notification or question.
+
+OpenAiProvider is optional. It receives structured input only, uses an
+in-memory TTL cache, and returns usage metadata. API keys are runtime-only and
+are never written to SQLite. Invalid output is rejected and can fall back to
+the deterministic provider. The Node API exposes read-only /v1/ai routes with
+an allowlisted client ID, user scoping, aggregate-only responses, and audit
+logs. It does not expose raw records or SQL.
+
+## Benchmark and verification
+
+The verification suite includes domain, mobile, API acceptance, migration,
+synthetic, OpenAPI contract, and benchmark smoke tests.
+
+Commands: npm.cmd run verify, npm.cmd run benchmark:small,
+npm.cmd run benchmark:medium, npm.cmd run benchmark:large, and
+npm.cmd run benchmark.
+
+SQLite benchmark results are written to the ignored artifacts directory and
+include insert/query timings and EXPLAIN QUERY PLAN output. The large profile
+uses 500,000 parameter_values; adjust the profile argument for a larger local
+dataset.
