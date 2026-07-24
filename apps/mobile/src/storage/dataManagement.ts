@@ -1,48 +1,14 @@
-import { dbPromise } from './db';
+import { dbPromise, SCHEMA_VERSION } from './db';
 
-const DATA_TABLES = ['app_settings', 'self_beliefs', 'hypotheses', 'checkins', 'responses', 'observations', 'hypothesis_evaluations', 'hypothesis_evaluation_samples', 'notification_schedules', 'user_parameter_settings', 'observation_episodes', 'parameter_values', 'hypothesis_parameter_requirements', 'generated_questions', 'hypothesis_candidates', 'external_import_batches', 'external_import_items', 'ai_access_audit_logs'] as const;
+const DATA_TABLES = ['app_settings', 'schema_migrations', 'parameter_definitions', 'parameter_allowed_values', 'parameter_source_definitions', 'parameter_question_metadata', 'parameter_ai_access_policies', 'parameter_governance', 'self_beliefs', 'hypotheses', 'checkins', 'responses', 'observations', 'hypothesis_evaluations', 'hypothesis_evaluation_samples', 'notification_schedules', 'user_parameter_settings', 'observation_episodes', 'parameter_values', 'hypothesis_parameter_requirements', 'generated_questions', 'hypothesis_candidates', 'external_import_batches', 'external_import_items', 'ai_access_audit_logs'] as const;
+const PERSONAL_TABLES = new Set(['app_settings', 'self_beliefs', 'hypotheses', 'checkins', 'responses', 'observations', 'hypothesis_evaluations', 'hypothesis_evaluation_samples', 'notification_schedules', 'user_parameter_settings', 'observation_episodes', 'parameter_values', 'hypothesis_parameter_requirements', 'generated_questions', 'hypothesis_candidates', 'external_import_batches', 'external_import_items', 'ai_access_audit_logs']);
 
-export async function exportLocalData() {
-  const db = await dbPromise;
-  const data: Record<string, unknown[]> = {};
-  for (const table of DATA_TABLES) data[table] = await db.getAllAsync(`SELECT * FROM ${table}`);
-  return JSON.stringify({ exportedAt: new Date().toISOString(), schema: 'metheory-mobile-v1', data }, null, 2);
-}
+async function rowsForTable(table: string, userId?: string) { const db = await dbPromise; if (!userId || !PERSONAL_TABLES.has(table)) return db.getAllAsync(`SELECT * FROM ${table}`); const columns = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`); if (columns.some((column) => column.name === 'user_id')) return db.getAllAsync(`SELECT * FROM ${table} WHERE user_id=?`, userId); return db.getAllAsync(`SELECT * FROM ${table}`); }
+export async function exportLocalData(input: { userId?: string; appVersion?: string } = {}) { const data: Record<string, unknown[]> = {}; for (const table of DATA_TABLES) data[table] = await rowsForTable(table, input.userId); return JSON.stringify({ schemaVersion: SCHEMA_VERSION, exportFormatVersion: '2', exportedAt: new Date().toISOString(), appVersion: input.appVersion ?? 'unknown', data }, null, 2); }
 
-export async function deleteParameterData(input: { userId: string; parameterIds: string[] }) {
-  const db = await dbPromise;
-  if (!input.parameterIds.length) return;
-  const placeholders = input.parameterIds.map(() => '?').join(',');
-  await db.withTransactionAsync(async () => {
-    await db.runAsync(`DELETE FROM generated_questions WHERE user_id=? AND parameter_id IN (${placeholders})`, input.userId, ...input.parameterIds);
-    await db.runAsync(`DELETE FROM user_parameter_settings WHERE user_id=? AND parameter_id IN (${placeholders})`, input.userId, ...input.parameterIds);
-    await db.runAsync(`DELETE FROM parameter_values WHERE parameter_id IN (${placeholders}) AND episode_id IN (SELECT id FROM observation_episodes WHERE user_id=?)`, ...input.parameterIds, input.userId);
-    await db.runAsync('DELETE FROM observation_episodes WHERE user_id=? AND NOT EXISTS (SELECT 1 FROM parameter_values WHERE episode_id=observation_episodes.id)', input.userId);
-  });
-}
+export async function exportAiSafeData(input: { userId: string; parameterIds?: string[]; startAt?: string; endAt?: string }) { const db = await dbPromise; const startAt = input.startAt ?? new Date(Date.now() - 30 * 86400000).toISOString(); const endAt = input.endAt ?? new Date().toISOString(); if (new Date(startAt) >= new Date(endAt) || new Date(endAt).getTime() - new Date(startAt).getTime() > 90 * 86400000) throw new Error('invalid_period'); const ids = input.parameterIds ?? []; const clauses = ['oe.user_id=?', 'pv.observed_at>=?', 'pv.observed_at<?', 'pv.is_missing=0', "pd.sensitivity <> 'sensitive'", 'pa.external_ai_allowed=1', "pa.access_level <> 'none'", 'ups.external_ai_enabled=1', 'ups.cloud_sync_enabled=1']; const args: (string | number)[] = [input.userId, startAt, endAt]; if (ids.length) { clauses.push(`pv.parameter_id IN (${ids.map(() => '?').join(',')})`); args.push(...ids); } const rows = await db.getAllAsync<{ parameter_id: string; integer_value: number | null; number_value: number | null; boolean_value: number | null; is_missing: number }>(`SELECT pv.parameter_id,pv.integer_value,pv.number_value,pv.boolean_value,pv.is_missing FROM parameter_values pv JOIN observation_episodes oe ON oe.id=pv.episode_id JOIN parameter_definitions pd ON pd.id=pv.parameter_id JOIN parameter_ai_access_policies pa ON pa.parameter_id=pv.parameter_id JOIN user_parameter_settings ups ON ups.parameter_id=pv.parameter_id AND ups.user_id=oe.user_id WHERE ${clauses.join(' AND ')}`, ...args); const groups = [...new Set(rows.map((row) => row.parameter_id))].map((parameterId) => { const values = rows.filter((row) => row.parameter_id === parameterId).map((row) => row.integer_value ?? row.number_value ?? (row.boolean_value === null ? null : Number(row.boolean_value))).filter((value): value is number => typeof value === 'number'); return { parameterId, sampleCount: values.length, mean: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null, minimum: values.length ? Math.min(...values) : null, maximum: values.length ? Math.max(...values) : null }; }); return { schemaVersion: SCHEMA_VERSION, exportFormatVersion: 'ai-safe-1', exportedAt: new Date().toISOString(), accessLevel: 'aggregate_only', period: { startAt, endAt }, selfModel: [], aggregates: groups }; }
 
-export async function deleteDataByPeriod(input: { userId: string; startAt: string; endAt: string }) {
-  if (new Date(input.startAt) >= new Date(input.endAt)) throw new Error('invalid_period');
-  const db = await dbPromise;
-  await db.withTransactionAsync(async () => {
-    await db.runAsync('DELETE FROM parameter_values WHERE observed_at>=? AND observed_at<? AND episode_id IN (SELECT id FROM observation_episodes WHERE user_id=?)', input.startAt, input.endAt, input.userId);
-    await db.runAsync('DELETE FROM generated_questions WHERE user_id=? AND created_at>=? AND created_at<?', input.userId, input.startAt, input.endAt);
-    await db.runAsync('DELETE FROM observation_episodes WHERE user_id=? AND observed_at>=? AND observed_at<? AND NOT EXISTS (SELECT 1 FROM parameter_values WHERE episode_id=observation_episodes.id)', input.userId, input.startAt, input.endAt);
-  });
-}
-
-export async function disconnectExternalSources(userId: string) {
-  const db = await dbPromise;
-  await db.withTransactionAsync(async () => {
-    await db.runAsync("UPDATE user_parameter_settings SET cloud_sync_enabled=0, external_ai_enabled=0, raw_value_access_enabled=0, updated_at=? WHERE user_id=?", new Date().toISOString(), userId);
-    await db.runAsync('DELETE FROM external_import_items WHERE batch_id IN (SELECT id FROM external_import_batches WHERE user_id=?)', userId);
-    await db.runAsync('DELETE FROM external_import_batches WHERE user_id=?', userId);
-  });
-}
-
-export async function clearLocalData() {
-  const db = await dbPromise;
-  await db.withTransactionAsync(async () => {
-    for (const table of [...DATA_TABLES].reverse()) await db.runAsync(`DELETE FROM ${table}`);
-  });
-}
+export async function deleteParameterData(input: { userId: string; parameterIds: string[] }) { const db = await dbPromise; if (!input.parameterIds.length) return; const placeholders = input.parameterIds.map(() => '?').join(','); await db.withTransactionAsync(async () => { await db.runAsync(`DELETE FROM generated_questions WHERE user_id=? AND parameter_id IN (${placeholders})`, input.userId, ...input.parameterIds); await db.runAsync(`DELETE FROM user_parameter_settings WHERE user_id=? AND parameter_id IN (${placeholders})`, input.userId, ...input.parameterIds); await db.runAsync(`DELETE FROM parameter_values WHERE parameter_id IN (${placeholders}) AND episode_id IN (SELECT id FROM observation_episodes WHERE user_id=?)`, ...input.parameterIds, input.userId); await db.runAsync(`DELETE FROM hypothesis_candidates WHERE user_id=? AND (condition_parameter_id IN (${placeholders}) OR outcome_parameter_id IN (${placeholders}))`, input.userId, ...input.parameterIds, ...input.parameterIds); await db.runAsync(`DELETE FROM hypothesis_evaluation_samples WHERE evaluation_id IN (SELECT he.id FROM hypothesis_evaluations he JOIN hypothesis_parameter_requirements hpr ON hpr.hypothesis_id=he.hypothesis_id WHERE hpr.parameter_id IN (${placeholders}))`, ...input.parameterIds); await db.runAsync(`DELETE FROM hypothesis_evaluations WHERE hypothesis_id IN (SELECT hypothesis_id FROM hypothesis_parameter_requirements WHERE parameter_id IN (${placeholders}))`, ...input.parameterIds); await db.runAsync('DELETE FROM observation_episodes WHERE user_id=? AND NOT EXISTS (SELECT 1 FROM parameter_values WHERE episode_id=observation_episodes.id)', input.userId); }); }
+export async function deleteDataByPeriod(input: { userId: string; startAt: string; endAt: string }) { if (new Date(input.startAt) >= new Date(input.endAt)) throw new Error('invalid_period'); const db = await dbPromise; await db.withTransactionAsync(async () => { await db.runAsync('DELETE FROM parameter_values WHERE observed_at>=? AND observed_at<? AND episode_id IN (SELECT id FROM observation_episodes WHERE user_id=?)', input.startAt, input.endAt, input.userId); await db.runAsync('DELETE FROM generated_questions WHERE user_id=? AND created_at>=? AND created_at<?', input.userId, input.startAt, input.endAt); await db.runAsync('DELETE FROM observation_episodes WHERE user_id=? AND observed_at>=? AND observed_at<? AND NOT EXISTS (SELECT 1 FROM parameter_values WHERE episode_id=observation_episodes.id)', input.userId, input.startAt, input.endAt); }); }
+export async function disconnectExternalSources(userId: string) { const db = await dbPromise; await db.withTransactionAsync(async () => { await db.runAsync("UPDATE user_parameter_settings SET cloud_sync_enabled=0, external_ai_enabled=0, raw_value_access_enabled=0, updated_at=? WHERE user_id=?", new Date().toISOString(), userId); await db.runAsync('DELETE FROM external_import_items WHERE batch_id IN (SELECT id FROM external_import_batches WHERE user_id=?)', userId); await db.runAsync('DELETE FROM external_import_batches WHERE user_id=?', userId); }); }
+export async function clearLocalData() { const db = await dbPromise; await db.withTransactionAsync(async () => { for (const table of [...DATA_TABLES].reverse()) await db.runAsync(`DELETE FROM ${table}`); }); }

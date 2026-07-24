@@ -52,7 +52,7 @@ export async function saveResponseParametersInTransaction(db: SQLite.SQLiteDatab
   await db.runAsync('INSERT OR IGNORE INTO observation_episodes (id,user_id,checkin_id,hypothesis_id,episode_type,capture_mode,observed_at,source_context_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)', episodeId, 'local-user', input.checkinId, input.hypothesisId ?? null, 'momentary_checkin', 'momentary_observation', input.observedAt, '{}', input.observedAt);
   const candidates: Array<{ parameterId: string; value: ParameterValueInput }> = [];
   const add = (parameterId: string, value: ParameterValueInput) => candidates.push({ parameterId, value });
-  if (typeof input.payload.energy === 'number') add('energy_level', { valueType: 'number', value: input.payload.energy });
+  if (typeof input.payload.energy === 'number') add('energy_level', { valueType: 'ordinal', value: input.payload.energy });
   if (typeof input.payload.activity_type === 'string') add('activity_category', { valueType: 'single_choice', value: input.payload.activity_type });
   if (typeof input.payload.started === 'boolean') add('start_status', { valueType: 'single_choice', value: input.payload.started ? 'started' : 'not_started' });
   if (typeof input.payload.completed === 'boolean') add('completion_status', { valueType: 'single_choice', value: input.payload.completed ? 'completed' : 'not_completed' });

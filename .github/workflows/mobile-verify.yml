@@ -16,5 +16,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run verify
+      - run: npm run test:synthetic
+      - run: npm run benchmark:small
       - run: npx expo-doctor
         working-directory: apps/mobile

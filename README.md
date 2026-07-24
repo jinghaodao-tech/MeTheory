@@ -160,7 +160,10 @@ in-memory TTL cache, and returns usage metadata. API keys are runtime-only and
 are never written to SQLite. Invalid output is rejected and can fall back to
 the deterministic provider. The Node API exposes read-only /v1/ai routes with
 an allowlisted client ID, user scoping, aggregate-only responses, and audit
-logs. It does not expose raw records or SQL.
+logs. It does not expose raw records or SQL. Without an external authentication
+middleware, this API is development-only; set METHEORY_API_AUTH_MODE=production
+and provide x-metheory-authenticated-user-id through a trusted gateway before
+exposing it outside localhost. Self Model text is denied by default.
 
 ## Benchmark and verification
 
