@@ -74,7 +74,14 @@ The MeTheory smartphone app lives at `apps/mobile`. It keeps Self Beliefs,
 Hypotheses, Check-ins, Observations, evaluation history, and notification
 settings in the device's `metheory.sqlite` database. Onboarding creates a
 separate Self Belief and a `time_of_day_productivity` HypothesisSpec for
-day-versus-night observations.
+day-versus-night observations. The MVP selects one of two fixed templates;
+the hypothesis evaluator uses completed rate only. Started rate may be shown
+as reference information, but never affects Supported or Challenged.
+
+The app chooses notification times inside the user's enabled window, quiet
+periods, daily limit, and minimum interval. It reserves the day's eligible
+notifications together with their Check-ins; this MVP tracks all scheduled
+notifications as `hypothesis` Check-ins.
 
 ```powershell
 npm install
@@ -82,10 +89,52 @@ npm run dev:mobile
 npm run typecheck
 npm run test:mobile
 npm run verify
+npm --workspace apps/mobile run build:preview
 ```
 
 Expo Go can exercise onboarding, local SQLite, check-ins, deterministic
 evaluation, Evidence, and Self Model. Notification permission and scheduled
 delivery require a physical device; notification behavior can require an Expo
 development build depending on the SDK and platform. API authentication,
-cloud sync, AI, and store distribution are outside this MVP.
+cloud sync, AI, and store distribution are outside this MVP. To reset local
+development data, remove the app's `metheory.sqlite` database from the Expo
+SQLite storage and relaunch the app; production migration paths do not delete
+existing data.
+
+The mobile app now keeps a rolling thirty-day local notification schedule. The
+Settings screen can share a JSON export or delete all local user data after
+confirmation. Store builds use `apps/mobile/eas.json`; configure the EAS project
+and platform credentials before running the production build or submit command.
+
+## Parameter dictionary and dynamic questions
+
+The mobile database uses an EAV model for observations. Parameters are
+definition records rather than SQLite columns, so adding a parameter does not
+require changing the table schema. `observation_episodes` groups one check-in
+or activity, while `parameter_values` stores typed values and distinguishes
+missing values from `false`.
+
+Definitions are divided into `base`, `hypothesis_dependent`, and `sensitive`
+layers. Source definitions, question metadata, AI access policy, and per-user
+collection settings are separate records. A saved hypothesis creates parameter
+requirements from its scope, cohorts, and outcome; missing askable parameters
+can then produce deterministic questions at runtime. Questions are validated
+against the parameter type and allowed values before being stored.
+
+Legacy `observations` are migrated idempotently into the EAV tables by schema
+migration 6. Existing tables remain available during the compatibility period.
+The migration records its completion and uses deterministic IDs, so rerunning
+startup does not duplicate values. See `docs/parameter-eav.md` for table
+responsibilities, source adapters, AI access controls, and extension guidance.
+
+Source Adapter implementations and the local AI read-only Snapshot boundary
+are documented in `docs/source-adapters.md`. The initial providers are
+`system_clock`, `test_fixture`, and `manual_import`; external OAuth/API
+integrations remain out of scope.
+
+Candidate discovery is local and deterministic. Recent typed parameter values
+are grouped by boolean, choice, or numeric cohort rules, compared against
+eligible outcome parameters, scored for effect and data quality, and stored in
+`hypothesis_candidates`. A user may dismiss or adopt a candidate. Adoption
+creates a tracking hypothesis and requirements; question targets are selected
+from shortages and cooldown rules, then generated from parameter metadata.

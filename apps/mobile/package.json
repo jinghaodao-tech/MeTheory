@@ -8,20 +8,26 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
+    "build:preview": "npx eas-cli build --profile preview",
+    "build:production": "npx eas-cli build --profile production",
+    "submit:production": "npx eas-cli submit --profile production",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.ts"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.1.0",
     "expo": "^53.0.0",
+    "expo-constants": "~17.1.8",
+    "expo-font": "~13.3.2",
+    "expo-linking": "~7.1.7",
     "expo-notifications": "~0.31.4",
     "expo-router": "~5.1.0",
     "expo-sqlite": "~15.2.14",
     "expo-status-bar": "~2.2.3",
     "react": "19.0.0",
-    "react-native": "0.79.2",
+    "react-native": "^0.79.6",
     "react-native-safe-area-context": "5.4.0",
-    "react-native-screens": "~4.10.0"
+    "react-native-screens": "~4.11.1"
   },
   "devDependencies": {
     "@types/react": "~19.0.10",

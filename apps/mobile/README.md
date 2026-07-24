@@ -14,6 +14,10 @@ Expo + React Native + TypeScriptで端末内の観察ループを提供します
 作成します。Evidenceは比較結果、データ品質、各Check-in記録を表示し、Self Modelは
 評価履歴から派生する暫定表示です。
 
+評価対象は活動の完了率のみです。開始率を表示する場合も参考情報であり、評価結果には
+使用しません。通知は設定された時間帯と上限の中からアプリが一日分を選びます。
+MVPの予約通知種別は `hypothesis` に固定しています。
+
 ## Structure
 
 - `app/`: Expo Router screens

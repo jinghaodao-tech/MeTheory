@@ -1,0 +1,41 @@
+openapi: 3.0.3
+info:
+  title: MeTheory Read-only AI API
+  version: 1.0.0
+  description: Read-only aggregate access. No write or raw-record operation is exposed.
+paths:
+  /v1/ai/parameters:
+    get:
+      summary: List allowed parameter definitions
+      responses: { '200': { description: OK } }
+  /v1/ai/self-model:
+    get:
+      summary: Get the readable self model
+      responses: { '200': { description: OK } }
+  /v1/ai/hypotheses:
+    get:
+      summary: List readable tracking hypotheses
+      responses: { '200': { description: OK } }
+  /v1/ai/aggregates/query:
+    post:
+      summary: Query aggregate parameter values
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AggregateQuery' } } }
+      responses: { '200': { description: Aggregate-only response } }
+  /v1/ai/snapshot:
+    get:
+      summary: Export an allowed aggregate snapshot
+      responses: { '200': { description: OK } }
+components:
+  schemas:
+    AggregateQuery:
+      type: object
+      required: [clientId, purpose, parameterIds, startAt, endAt]
+      properties:
+        clientId: { type: string }
+        purpose: { type: string }
+        parameterIds: { type: array, maxItems: 10, items: { type: string } }
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+        groupBy: { type: string, enum: [day, time_period] }

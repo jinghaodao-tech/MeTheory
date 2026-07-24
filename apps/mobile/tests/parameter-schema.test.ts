@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { PARAMETER_SEEDS } from '../src/storage/parameterSeed.ts';
+import { fallbackQuestionText, validateParameterValue, type ParameterDefinition } from '../src/domain/parameters.ts';
+
+const definition = (valueType: ParameterDefinition['value_type'], min: number | null = null, max: number | null = null): ParameterDefinition => ({ id: 'x', name_ja: 'エネルギー', description_ja: '', value_type: valueType, minimum_value: min, maximum_value: max, unit: null, parameter_layer: 'base', temporal_type: 'momentary', askable: 1, usable_as_condition: 1, usable_as_outcome: 1, usable_as_explanation: 1, sensitivity: 'normal', enabled_by_default: 1, is_active: 1, definition_version: 'v1' });
+
+test('parameter seeds contain the requested groups without duplicate ids', () => { assert.ok(PARAMETER_SEEDS.length > 70); assert.equal(new Set(PARAMETER_SEEDS.map((item) => item.id)).size, PARAMETER_SEEDS.length); assert.equal(PARAMETER_SEEDS.find((item) => item.id === 'precise_location')?.sensitive, true); });
+test('parameter values validate ranges, choices and typed values', () => { assert.throws(() => validateParameterValue(definition('percentage', 0, 100), { valueType: 'percentage', value: 101 })); assert.throws(() => validateParameterValue(definition('single_choice'), { valueType: 'single_choice', value: 'x' }, [{ parameter_id: 'x', value_key: 'a', label_ja: 'A', sort_order: 0, numeric_value: null, is_active: 1, definition_version: 'v1' }])); assert.doesNotThrow(() => validateParameterValue(definition('boolean'), { valueType: 'boolean', value: false })); });
+test('fallback question is neutral and deterministic', () => { const text = fallbackQuestionText(definition('single_choice'), [{ parameter_id: 'x', value_key: 'a', label_ja: '低い', sort_order: 0, numeric_value: null, is_active: 1, definition_version: 'v1' }]); assert.match(text, /エネルギー/); assert.doesNotMatch(text, /仮説/); });

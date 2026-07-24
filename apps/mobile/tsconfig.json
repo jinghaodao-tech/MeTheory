@@ -3,7 +3,17 @@
   "compilerOptions": {
     "strict": true,
     "allowImportingTsExtensions": true,
-    "paths": { "@/*": ["./src/*"] }
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    }
   },
-  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "../../packages/domain/src/**/*.ts"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".expo/types/**/*.ts",
+    "../../packages/domain/src/**/*.ts",
+    "expo-env.d.ts"
+  ]
 }

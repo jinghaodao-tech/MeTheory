@@ -1,10 +1,44 @@
 import * as Notifications from 'expo-notifications';
 import { createCheckin } from '@/storage/repositories/checkinRepository';
 import { trackingHypothesis } from '@/storage/repositories/hypothesisRepository';
-import { saveNotificationSchedule, todaySchedules } from '@/storage/repositories/notificationRepository';
+import { saveNotificationSchedule, scheduledSchedules, cancelScheduledRecords } from '@/storage/repositories/notificationRepository';
 import { getNotificationSettings } from '@/storage/repositories/settingsRepository';
-import { chooseFutureMinute } from './policy';
+import { chooseDailyMinutes } from './policy';
+import { expoNotificationAdapter, type NotificationAdapter } from './adapter';
 
 Notifications.setNotificationHandler({ handleNotification: async () => ({ shouldPlaySound: false, shouldSetBadge: false, shouldShowBanner: true, shouldShowList: true }) });
-export async function scheduleNextCheckin(seed = Date.now()) { const settings = await getNotificationSettings(); if (!settings.notification_enabled) return null; const permission = await Notifications.requestPermissionsAsync(); if (!permission.granted) return null; const existing = await todaySchedules(); if (existing.length >= settings.daily_limit) return null; const occupied = existing.map((item) => { const date = new Date(item.scheduled_at); return date.getHours() * 60 + date.getMinutes(); }); const minute = chooseFutureMinute(seed, new Date(), settings, occupied); if (minute === null) return null; const hypothesis = await trackingHypothesis(); const checkin = await createCheckin('hypothesis', hypothesis?.id ?? null); const scheduledAt = new Date(); scheduledAt.setHours(Math.floor(minute / 60), minute % 60, 0, 0); if (scheduledAt <= new Date()) scheduledAt.setDate(scheduledAt.getDate() + 1); const notificationId = await Notifications.scheduleNotificationAsync({ content: { title: 'MeTheory', body: '今の観察を短く記録しませんか？', data: { route: '/checkin', checkinId: checkin.id, hypothesisId: checkin.hypothesisId, kind: checkin.kind, expiresAt: checkin.expiresAt } }, trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: scheduledAt } }); await saveNotificationSchedule({ checkinId: checkin.id, hypothesisId: checkin.hypothesisId, kind: checkin.kind, scheduledAt: scheduledAt.toISOString(), expiresAt: checkin.expiresAt, notificationId }); return notificationId; }
-export async function cancelMeTheoryNotifications() { await Notifications.cancelAllScheduledNotificationsAsync(); }
+function dayBounds(date = new Date()) { const start = new Date(date); start.setHours(0, 0, 0, 0); const end = new Date(start); end.setDate(end.getDate() + 1); return { start, end }; }
+const SCHEDULE_HORIZON_DAYS = 30;
+export async function scheduleDailyCheckins(seed = Date.now(), adapter: NotificationAdapter = expoNotificationAdapter) {
+  const settings = await getNotificationSettings();
+  if (!settings.notification_enabled || settings.daily_limit === 0) return [];
+  if (!(await adapter.requestPermission())) return [];
+  const now = new Date();
+  const horizonEnd = dayBounds(new Date(now.getTime() + SCHEDULE_HORIZON_DAYS * 24 * 60 * 60 * 1000)).end;
+  const existing = await scheduledSchedules(now.toISOString(), horizonEnd.toISOString());
+  const hypothesis = await trackingHypothesis();
+  const ids: string[] = [];
+  for (let day = 0; day < SCHEDULE_HORIZON_DAYS; day += 1) {
+    const { start, end } = dayBounds(new Date(now.getTime() + day * 24 * 60 * 60 * 1000));
+    const dayExisting = existing.filter((item) => item.scheduled_at >= start.toISOString() && item.scheduled_at < end.toISOString());
+    if (dayExisting.length >= settings.daily_limit) continue;
+    const occupied = dayExisting.map((item) => { const date = new Date(item.scheduled_at); return date.getHours() * 60 + date.getMinutes(); });
+    const dates = chooseDailyMinutes(start, settings, seed + day, occupied).filter((date) => date > now);
+    for (const scheduledAt of dates) {
+      const checkin = await createCheckin({ kind: 'hypothesis', hypothesisId: hypothesis?.id ?? null, scheduledAt: scheduledAt.toISOString() });
+      try {
+        const notificationId = await adapter.schedule({ title: 'MeTheory', body: 'Record a short observation.', data: { route: '/checkin', checkinId: checkin.id, hypothesisId: checkin.hypothesisId, kind: checkin.kind, expiresAt: checkin.expiresAt }, date: scheduledAt });
+        await saveNotificationSchedule({ checkinId: checkin.id, hypothesisId: checkin.hypothesisId, kind: checkin.kind, scheduledAt: checkin.scheduledAt, expiresAt: checkin.expiresAt, notificationId });
+        ids.push(notificationId);
+      } catch (error) {
+        const { setCheckinStatus } = await import('@/storage/repositories/checkinRepository');
+        await setCheckinStatus(checkin.id, 'cancelled', 'notification_schedule_failed');
+        throw error;
+      }
+    }
+  }
+  return ids;
+}
+export async function requestMeTheoryNotificationPermission(adapter: NotificationAdapter = expoNotificationAdapter) { return adapter.requestPermission(); }
+export async function scheduleNextCheckin(seed = Date.now()) { return scheduleDailyCheckins(seed); }
+export async function cancelMeTheoryNotifications(adapter: NotificationAdapter = expoNotificationAdapter) { const scheduled = await adapter.listScheduled(); for (const notification of scheduled) if (notification.title === 'MeTheory') await adapter.cancel(notification.identifier); await cancelScheduledRecords(); }

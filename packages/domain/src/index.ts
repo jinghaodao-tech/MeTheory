@@ -150,6 +150,13 @@ export function chooseNotificationMinute(input: NotificationPolicyInput): number
   }) ?? null;
 }
 
+export * from './sourceAdapters.ts';
+export * from './questionBudget.ts';
+export * from './syntheticData.ts';
+export * from './replication.ts';
+export * from './aiProvider.ts';
+export * from './externalProviders.ts';
+
 export function validateAiCandidate(candidate: unknown): { ok: true } | { ok: false; reason: string } {
   if (!candidate || typeof candidate !== "object") return { ok: false, reason: "candidate must be an object" };
   const value = candidate as Record<string, unknown>;

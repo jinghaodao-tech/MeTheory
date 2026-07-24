@@ -8,4 +8,5 @@ backend/__pycache__/
 tools/__pycache__/
 node_modules/
 .expo/
+apps/mobile/dist/
 *.py[cod]

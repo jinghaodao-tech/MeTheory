@@ -24,3 +24,4 @@ export interface ResponseRequest {
   activityType?: string;
   missingReason?: string;
 }
+export * from './ai.ts';

@@ -6,9 +6,30 @@
     "orientation": "portrait",
     "scheme": "metheory",
     "userInterfaceStyle": "light",
-    "plugins": ["expo-router", "expo-sqlite", "expo-notifications"],
-    "experiments": { "typedRoutes": true },
-    "ios": { "supportsTablet": true },
-    "android": { "package": "com.jinghaodao.metheory" }
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      "expo-notifications"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.jinghaodao.metheory",
+      "buildNumber": "1",
+      "infoPlist": { "ITSAppUsesNonExemptEncryption": false }
+    },
+    "android": {
+      "package": "com.jinghaodao.metheory",
+      "versionCode": 1
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "c7ea5edc-2b86-4f1f-a1a1-963f88f9d5dc"
+      }
+    },
+    "owner": "jing-tech"
   }
 }
