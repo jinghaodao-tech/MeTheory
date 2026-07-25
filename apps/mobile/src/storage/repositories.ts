@@ -14,6 +14,8 @@ export async function getHomeData(): Promise<HomeData> { const db = await dbProm
 export async function createCheckin() { return createManualDemoCheckin(); }
 export async function saveResponse(checkinId: string, payload: Record<string, unknown>, missingReason?: string) { await saveResponseAndObservations(checkinId, payload, missingReason); return evaluateTrackingHypothesis(new Date().toISOString(), await checkinHypothesisId(checkinId)); }
 export { listEvaluations, latestEvaluation, evaluationSamples };
+export { getEntry, listEntries, saveEntry, archiveEntry } from './repositories/entryRepository';
+export { indexEntrySearchDocument, removeSearchDocument, rebuildEntrySearchDocuments, searchLocalDocuments } from './repositories/searchDocumentRepository';
 export {
   getParameterDefinition, listParameterDefinitions, listAllowedValues,
   getParameterGovernance, searchParameterDefinitions, setParameterGovernance,

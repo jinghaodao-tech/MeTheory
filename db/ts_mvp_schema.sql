@@ -180,3 +180,39 @@ CREATE TABLE IF NOT EXISTS parameter_values (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS parameter_values_user_time_idx ON parameter_values(parameter_id, observed_at);
 CREATE INDEX IF NOT EXISTS observation_episodes_user_time_idx ON observation_episodes(user_id, observed_at);
+
+-- Entries are human-readable records. They deliberately remain distinct from
+-- observation episodes, which are typed values collected for experiments.
+CREATE TABLE IF NOT EXISTS entries (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  template_id TEXT,
+  episode_id TEXT REFERENCES observation_episodes(id) ON DELETE SET NULL,
+  external_source TEXT,
+  external_source_id TEXT,
+  title TEXT NOT NULL CHECK (length(trim(title)) > 0),
+  body TEXT NOT NULL,
+  recorded_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  archived_at TEXT,
+  CHECK ((external_source IS NULL AND external_source_id IS NULL) OR (external_source IS NOT NULL AND external_source_id IS NOT NULL))
+) STRICT;
+CREATE INDEX IF NOT EXISTS entries_user_recorded_idx ON entries(user_id, recorded_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS entries_external_identity_idx ON entries(user_id, external_source, external_source_id) WHERE external_source IS NOT NULL AND external_source_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS search_documents (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  source_kind TEXT NOT NULL CHECK (source_kind IN ('entry', 'hypothesis', 'evidence', 'parameter_value')),
+  source_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  search_text TEXT NOT NULL,
+  tags_json TEXT NOT NULL DEFAULT '[]',
+  tokens_json TEXT NOT NULL,
+  doc_length INTEGER NOT NULL CHECK (doc_length >= 0),
+  recorded_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (user_id, source_kind, source_id)
+) STRICT;
+CREATE INDEX IF NOT EXISTS search_documents_user_source_idx ON search_documents(user_id, source_kind, recorded_at DESC);

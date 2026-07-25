@@ -1,8 +1,8 @@
 # MeTheory
 
-MeTheory is a local-first self-observation app. It turns self-beliefs into
-testable hypotheses, collects lightweight observations, evaluates evidence
-deterministically, and presents provisional self-model updates.
+MeTheory is a local-first personal information foundation. It can keep free
+form records, later structure selected information, and use the existing
+deterministic hypothesis system when a user wants to test a self-belief.
 
 The product boundary is explicit: the user chooses the scope of collection,
 the system chooses when and what to collect, and AI may only propose bounded
@@ -16,6 +16,7 @@ notification timing, hypothesis status, or Self Model updates.
 - `docs/hypothesis-evaluation.md`: versioned comparison evaluation and audit model.
 - `docs/collection-responsibility.md`: collection ownership and three-layer presentation model.
 - `docs/architecture-research.md`: target architecture and migration plan.
+- `docs/integration-architecture.md`: Entry, Obsidian, experiments, and future search boundaries.
 - `docs/technical-architecture.md`: module boundaries and runtime flow.
 - `docs/privacy-retention.md`: retention, consent, erasure, and AI safety baseline.
 - `docs/implementation-roadmap.md`: phased implementation and beta criteria.
@@ -30,6 +31,8 @@ notification timing, hypothesis status, or Self Model updates.
  - `docs/openapi-ai.yaml`: read-only AI HTTP contract.
  - `docs/mcp-tools.md`: read-only MCP tool boundary.
 - `apps/api/src/server.ts`: TypeScript Node MVP API.
+- `apps/obsidian-plugin/`: minimal local Obsidian Entry registration plugin.
+- `packages/records/src/`: platform-neutral Entry types and validation.
 - `backend/core.py`: Python reference implementation kept during migration.
 
 ## Commands
@@ -63,6 +66,34 @@ npm.cmd run dev:api
 ```
 
 The API listens on `http://127.0.0.1:8100`.
+
+## Free records and Obsidian
+
+Phase 1 adds `entries` as the structured reference to free-form records.
+Entries are deliberately separate from `observation_episodes` and
+`parameter_values`: an Entry is a human-readable record, while an Observation
+is a typed value used by an experiment. The mobile SQLite migration is
+idempotent and adds the Entry table without removing existing data. Mobile JSON
+exports include Entries.
+
+For Obsidian, install `apps/obsidian-plugin` as a local plugin, configure the
+local API URL, then run `Register current note as MeTheory Entry`. On first
+use the plugin creates or reuses a local user and stores its ID in plugin
+settings.
+The plugin stores only `metheory_entry_id` in frontmatter. Re-registering a
+note updates the Entry rather than duplicating it. See
+`docs/integration-architecture.md` for the current architecture, API surface,
+and the planned search boundary.
+
+## Local record search
+
+Entry text is indexed into the derived `search_documents` table when it is
+saved. The local API provides `GET /v1/search?userId=...&q=...` and returns a
+BM25-ranked list with source references, snippets, matched terms, and recorded
+timestamps. Existing Entries can be indexed with
+`POST /v1/search-documents/rebuild`. Search documents are not authoritative and
+can be rebuilt from Entries; hypothesis, Evidence, and parameter-value search
+builders remain future work.
 
 Run the Python compatibility tests:
 

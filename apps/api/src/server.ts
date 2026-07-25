@@ -7,13 +7,18 @@ import { evaluateEvidence, directionForObservation, RULE_VERSION, type Observati
 import { buildEpisodes } from "../../../packages/domain/src/hypothesis/episodes.ts";
 import { evaluateHypothesis } from "../../../packages/domain/src/hypothesis/evaluators.ts";
 import { validateHypothesisSpec } from "../../../packages/domain/src/hypothesis/spec.ts";
+import type { EntryWriteInput } from "../../../packages/records/src/index.ts";
 import { createAiQueryService } from "./aiQueryService.ts";
+import { SqliteEntryRepository } from "./entryRepository.ts";
+import { SqliteSearchDocumentRepository } from "./searchDocumentRepository.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.METHEORY_DB ?? resolve(root, "data", "metheory.sqlite3");
 const db = new DatabaseSync(databasePath);
 db.exec(readFileSync(resolve(root, "db", "ts_mvp_schema.sql"), "utf8"));
 const aiQueryService = createAiQueryService(db);
+const entryRepository = new SqliteEntryRepository(db);
+const searchDocumentRepository = new SqliteSearchDocumentRepository(db);
 
 function ensureColumn(table: string, column: string, definition: string): void {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<Record<string, unknown>>;
@@ -49,6 +54,28 @@ async function body(request: IncomingMessage): Promise<Record<string, unknown>> 
   const chunks: Buffer[] = [];
   for await (const chunk of request) chunks.push(Buffer.from(chunk));
   return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function entryWriteInput(input: Record<string, unknown>, entryId?: string): EntryWriteInput {
+  return {
+    id: entryId ?? optionalString(input.id),
+    userId: optionalString(input.userId) ?? "",
+    templateId: optionalString(input.templateId),
+    episodeId: optionalString(input.episodeId),
+    externalSource: optionalString(input.externalSource),
+    externalSourceId: optionalString(input.externalSourceId),
+    title: optionalString(input.title) ?? "",
+    body: optionalString(input.body) ?? "",
+    recordedAt: optionalString(input.recordedAt),
+  };
+}
+
+function includeArchived(url: URL): boolean {
+  return ["1", "true"].includes(url.searchParams.get("includeArchived") ?? "");
 }
 
 function pathParts(request: IncomingMessage): string[] {
@@ -193,9 +220,63 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "POST" && parts.join("/") === "v1/ai/aggregates/query") return json(response, 200, aiAggregate(await body(request), request));
     if (request.method === "POST" && parts.join("/") === "v1/users") {
-      const input = await body(request); const userId = id("usr");
-      db.prepare("INSERT INTO users(id, auth_subject, locale, timezone, created_at) VALUES (?, ?, ?, ?, ?)").run(userId, input.authSubject ?? "local-user", input.locale ?? "ja-JP", input.timezone ?? "Asia/Tokyo", now());
+      const input = await body(request); const authSubject = String(input.authSubject ?? "local-user");
+      const existing = db.prepare("SELECT id FROM users WHERE auth_subject=?").get(authSubject) as { id: string } | undefined;
+      if (existing) return json(response, 200, { id: existing.id, existing: true });
+      const userId = id("usr");
+      db.prepare("INSERT INTO users(id, auth_subject, locale, timezone, created_at) VALUES (?, ?, ?, ?, ?)").run(userId, authSubject, input.locale ?? "ja-JP", input.timezone ?? "Asia/Tokyo", now());
       return json(response, 201, { id: userId });
+    }
+    if (request.method === "POST" && parts.join("/") === "v1/entries") {
+      const input = entryWriteInput(await body(request));
+      if (!userExists(input.userId)) return json(response, 404, { error: "user_not_found" });
+      const result = entryRepository.save(input);
+      await searchDocumentRepository.indexEntry(result.entry);
+      return json(response, result.created ? 201 : 200, result);
+    }
+    if (request.method === "PUT" && parts.length === 3 && parts[0] === "v1" && parts[1] === "entries") {
+      const input = entryWriteInput(await body(request), parts[2]);
+      if (!userExists(input.userId)) return json(response, 404, { error: "user_not_found" });
+      const result = entryRepository.save(input);
+      await searchDocumentRepository.indexEntry(result.entry);
+      return json(response, 200, result);
+    }
+    if (request.method === "GET" && parts.join("/") === "v1/exports/entries") {
+      const userId = requestUrl.searchParams.get("userId") ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      return json(response, 200, entryRepository.export(userId));
+    }
+    if (request.method === "GET" && parts.length === 2 && parts[0] === "v1" && parts[1] === "entries") {
+      const userId = requestUrl.searchParams.get("userId") ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      return json(response, 200, { items: entryRepository.list(userId, includeArchived(requestUrl)) });
+    }
+    if (request.method === "GET" && parts.length === 3 && parts[0] === "v1" && parts[1] === "entries") {
+      const userId = requestUrl.searchParams.get("userId") ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      const entry = entryRepository.get(userId, parts[2], includeArchived(requestUrl));
+      return entry ? json(response, 200, entry) : json(response, 404, { error: "entry_not_found" });
+    }
+    if (request.method === "DELETE" && parts.length === 3 && parts[0] === "v1" && parts[1] === "entries") {
+      const userId = requestUrl.searchParams.get("userId") ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      const entry = entryRepository.archive(userId, parts[2]);
+      searchDocumentRepository.remove(userId, "entry", entry.id);
+      return json(response, 200, entry);
+    }
+    if (request.method === "POST" && parts.join("/") === "v1/search-documents/rebuild") {
+      const input = await body(request); const userId = String(input.userId ?? "");
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      const indexed = await searchDocumentRepository.rebuildEntries(entryRepository.list(userId));
+      return json(response, 200, { indexed });
+    }
+    if (request.method === "GET" && parts.join("/") === "v1/search") {
+      const userId = requestUrl.searchParams.get("userId") ?? "";
+      const query = requestUrl.searchParams.get("q")?.trim() ?? "";
+      const limit = Number(requestUrl.searchParams.get("limit") ?? "20");
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (!query) return json(response, 400, { error: "search_query_required" });
+      return json(response, 200, { items: await searchDocumentRepository.search(userId, query, Number.isFinite(limit) ? limit : 20) });
     }
     if (request.method === "POST" && parts.length === 2 && parts[0] === "v1" && parts[1] === "self-beliefs") {
       const input = await body(request); if (!userExists(input.userId as string)) return json(response, 404, { error: "user_not_found" });
