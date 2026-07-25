@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ManualImportAdapter, SourceProviderRegistry, SystemClockAdapter, TestFixtureAdapter, validateSourceFetchInput } from '../packages/domain/src/sourceAdapters.ts';
+import { CalendarAdapter, FixtureProviderBridge } from '../packages/domain/src/externalProviders.ts';
 
 const input = { userId: 'u1', startAt: '2026-07-24T00:00:00.000Z', endAt: '2026-07-24T12:00:00.000Z', requestedParameterIds: ['time_period'], reason: 'user_requested' as const };
 test('source registry registers and resolves adapters', () => { const registry = new SourceProviderRegistry(); const adapter = new TestFixtureAdapter([]); registry.register(adapter); assert.equal(registry.get('test_fixture'), adapter); assert.throws(() => registry.register(adapter), /provider_already_registered/); });
 test('clock adapter creates deterministic normalized source records', async () => { const result = await new SystemClockAdapter().fetch(input); assert.equal(result.records.length, 1); assert.equal(result.records[0].providerKey, 'system_clock'); assert.ok(result.records[0].rawFields.time_period); });
 test('manual import accepts only JSON arrays and validates periods', () => { assert.equal(ManualImportAdapter.parseJson('[]').length, 0); assert.throws(() => ManualImportAdapter.parseJson('{}'), /requires_array/); assert.throws(() => validateSourceFetchInput({ ...input, endAt: input.startAt }), /invalid_fetch_period/); });
+test('calendar bridge keeps permission and fixture filtering at the adapter boundary', async () => { const bridge = new FixtureProviderBridge([{ providerKey: 'calendar', externalRecordId: 'event-1', externalType: 'event', observedAt: '2026-07-24T09:00:00.000Z', rawFields: { title: 'private title' }, importedAt: '2026-07-24T09:00:00.000Z' }]); const adapter = new CalendarAdapter(bridge); assert.equal(await adapter.getPermissionStatus(), 'granted'); const result = await adapter.fetch(input); assert.equal(result.records[0].externalRecordId, 'event-1'); assert.equal((await adapter.listSupportedParameterMappings()).some((mapping) => mapping.parameterId === 'schedule_density'), true); });

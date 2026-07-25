@@ -115,3 +115,68 @@ CREATE TABLE IF NOT EXISTS hypothesis_evaluation_samples (
   exclusion_reason TEXT,
   PRIMARY KEY (evaluation_id, response_id)
 ) STRICT;
+
+-- The AI read surface uses the EAV tables below. Legacy observations remain for
+-- compatibility with the HTTP MVP, but are not the AI data source.
+CREATE TABLE IF NOT EXISTS parameter_definitions (
+  id TEXT PRIMARY KEY,
+  name_ja TEXT NOT NULL,
+  description_ja TEXT NOT NULL,
+  value_type TEXT NOT NULL,
+  minimum_value REAL,
+  maximum_value REAL,
+  unit TEXT,
+  parameter_layer TEXT NOT NULL,
+  temporal_type TEXT NOT NULL,
+  sensitivity TEXT NOT NULL,
+  definition_version TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 1
+) STRICT;
+CREATE TABLE IF NOT EXISTS parameter_allowed_values (
+  parameter_id TEXT NOT NULL REFERENCES parameter_definitions(id) ON DELETE CASCADE,
+  value_key TEXT NOT NULL,
+  label_ja TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (parameter_id, value_key)
+) STRICT;
+CREATE TABLE IF NOT EXISTS parameter_ai_access_policies (
+  parameter_id TEXT PRIMARY KEY REFERENCES parameter_definitions(id) ON DELETE CASCADE,
+  external_ai_allowed INTEGER NOT NULL DEFAULT 0,
+  access_level TEXT NOT NULL DEFAULT 'none',
+  individual_consent_required INTEGER NOT NULL DEFAULT 0,
+  maximum_reference_days INTEGER
+) STRICT;
+CREATE TABLE IF NOT EXISTS user_parameter_settings (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  parameter_id TEXT NOT NULL REFERENCES parameter_definitions(id) ON DELETE CASCADE,
+  collection_enabled INTEGER NOT NULL DEFAULT 0,
+  cloud_sync_enabled INTEGER NOT NULL DEFAULT 0,
+  external_ai_enabled INTEGER NOT NULL DEFAULT 0,
+  raw_value_access_enabled INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, parameter_id)
+) STRICT;
+CREATE TABLE IF NOT EXISTS parameter_governance (
+  parameter_id TEXT PRIMARY KEY REFERENCES parameter_definitions(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'active'
+) STRICT;
+CREATE TABLE IF NOT EXISTS observation_episodes (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  observed_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS parameter_values (
+  id TEXT PRIMARY KEY,
+  episode_id TEXT NOT NULL REFERENCES observation_episodes(id) ON DELETE CASCADE,
+  parameter_id TEXT NOT NULL REFERENCES parameter_definitions(id) ON DELETE RESTRICT,
+  boolean_value INTEGER,
+  integer_value INTEGER,
+  number_value REAL,
+  text_value TEXT,
+  datetime_value TEXT,
+  json_value TEXT,
+  observed_at TEXT NOT NULL,
+  is_missing INTEGER NOT NULL DEFAULT 0,
+  eligible_for_evaluation INTEGER NOT NULL DEFAULT 1
+) STRICT;
+CREATE INDEX IF NOT EXISTS parameter_values_user_time_idx ON parameter_values(parameter_id, observed_at);
+CREATE INDEX IF NOT EXISTS observation_episodes_user_time_idx ON observation_episodes(user_id, observed_at);

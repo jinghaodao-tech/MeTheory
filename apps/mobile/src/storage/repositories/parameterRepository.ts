@@ -57,6 +57,7 @@ export async function saveResponseParametersInTransaction(db: SQLite.SQLiteDatab
   if (typeof input.payload.started === 'boolean') add('start_status', { valueType: 'single_choice', value: input.payload.started ? 'started' : 'not_started' });
   if (typeof input.payload.completed === 'boolean') add('completion_status', { valueType: 'single_choice', value: input.payload.completed ? 'completed' : 'not_completed' });
   add('time_period', { valueType: 'single_choice', value: classifyTimePeriod(new Date(input.observedAt)) });
+  const dynamic = input.payload.parameter_values; if (dynamic && typeof dynamic === 'object' && !Array.isArray(dynamic)) for (const [parameterId, value] of Object.entries(dynamic as Record<string, unknown>)) { if (value && typeof value === 'object' && 'valueType' in value && 'value' in value) candidates.push({ parameterId, value: value as ParameterValueInput }); }
   for (const item of candidates) { try { await insertValue(db, { episodeId, parameterId: item.parameterId, value: item.value, observedAt: input.observedAt, sourceType: item.parameterId === 'time_period' ? 'system' : 'user', certainty: 'high', userConfirmed: item.parameterId !== 'time_period' }); } catch (error) { if (!String(error).includes('unknown allowed value')) throw error; } }
 }
 

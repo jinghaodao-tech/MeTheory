@@ -14,6 +14,7 @@
     "test:completion": "node --experimental-strip-types --test test/completion-engine.test.ts",
     "test:benchmark": "node --experimental-strip-types --test test/performance-benchmark.test.ts",
     "test:api": "node --experimental-strip-types --test test/api-ai.test.ts",
+    "test:ai-service": "node --experimental-strip-types --test test/ai-query-service.test.ts",
     "check:openapi": "node --experimental-strip-types tools/validate-openapi.ts",
     "benchmark:small": "node --experimental-strip-types tools/benchmark-sqlite.ts small",
     "benchmark:medium": "node --experimental-strip-types tools/benchmark-sqlite.ts medium",
@@ -22,12 +23,12 @@
     "seed:synthetic": "node --experimental-strip-types tools/synthetic-scenarios.ts seed",
     "test:synthetic": "npm run seed:synthetic && node --experimental-strip-types tools/synthetic-scenarios.ts test",
     "reset:synthetic": "node --experimental-strip-types tools/synthetic-scenarios.ts reset",
-    "test": "npm run test:domain && npm run test:hypothesis && npm run test:candidates && npm run test:source-adapters && npm run test:completion && npm run test:benchmark && npm run test:api",
+    "test": "npm run test:domain && npm run test:hypothesis && npm run test:candidates && npm run test:source-adapters && npm run test:completion && npm run test:benchmark && npm run test:ai-service && npm run test:api",
     "test:mobile": "npm --workspace apps/mobile run test",
     "typecheck:mobile": "npm --workspace apps/mobile run typecheck",
     "typecheck": "npm run typecheck:mobile",
     "check": "node --check apps/api/src/server.ts && node --check packages/domain/src/index.ts && npm run check:openapi",
-    "verify": "npm run typecheck && npm run test && npm run test:mobile && npm run check"
+    "verify": "npm run typecheck && npm run test && npm run test:mobile && npm run test:synthetic && npm run check"
   },
   "engines": {
     "node": ">=24.0.0"

@@ -1,5 +1,13 @@
 import type { ExternalParameterMapping, ExternalSourceRecord, SourceAdapter, SourceFetchInput, SourceFetchResult, SourcePermissionStatus } from './sourceAdapters.ts';
 export type ProviderBridge = { getPermissionStatus(): Promise<SourcePermissionStatus>; requestPermission?(): Promise<SourcePermissionStatus>; fetch(input: SourceFetchInput): Promise<ExternalSourceRecord[]> };
+export class FixtureProviderBridge implements ProviderBridge {
+  private readonly records: ExternalSourceRecord[];
+  private readonly permission: SourcePermissionStatus;
+  constructor(records: ExternalSourceRecord[] = [], permission: SourcePermissionStatus = 'granted') { this.records = records; this.permission = permission; }
+  async getPermissionStatus() { return this.permission; }
+  async requestPermission() { return this.permission; }
+  async fetch(input: SourceFetchInput) { return this.records.filter((record) => new Date(record.observedAt) >= new Date(input.startAt) && new Date(record.observedAt) <= new Date(input.endAt)).slice(0, input.maximumRecords ?? 1000); }
+}
 export class CalendarAdapter implements SourceAdapter {
   readonly providerKey = 'calendar' as const;
   readonly capabilities = ['read_events', 'read_current_state'] as const;

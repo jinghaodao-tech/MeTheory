@@ -110,6 +110,14 @@ Settings screen can share a JSON export or delete all local user data after
 confirmation. Store builds use `apps/mobile/eas.json`; configure the EAS project
 and platform credentials before running the production build or submit command.
 
+The implemented mobile flow is onboarding -> local Self Belief and tracking
+hypothesis -> home -> candidate review/adoption -> dynamic check-in questions
+-> deterministic evaluation -> Evidence -> user-reviewed Self Model. Candidate
+cards are suggestions only; adopting one creates a normal tracking hypothesis.
+Generated questions are attached to the check-in and their typed answers are
+stored in `parameter_values` in the same response transaction. The existing
+fixed activity check-in remains the fallback when no dynamic question is ready.
+
 ## Parameter dictionary and dynamic questions
 
 The mobile database uses an EAV model for observations. Parameters are
@@ -164,6 +172,23 @@ logs. It does not expose raw records or SQL. Without an external authentication
 middleware, this API is development-only; set METHEORY_API_AUTH_MODE=production
 and provide x-metheory-authenticated-user-id through a trusted gateway before
 exposing it outside localhost. Self Model text is denied by default.
+
+The Node AI routes now use `apps/api/src/aiQueryService.ts`. Its parameter list,
+single-parameter response, and aggregate query read only EAV definitions,
+`parameter_values`, policy rows, governance status, and per-user settings.
+`observations` remains only for the legacy write/evaluation compatibility API.
+The allowed `groupBy` values are `time_period`, `day_of_week`, `day_type`,
+`activity_category`, and `is_alone`; arbitrary SQL or arbitrary fields are
+rejected. `FixtureProviderBridge` and `CalendarAdapter` provide the testable
+provider boundary. An Expo calendar SDK bridge is planned because the current
+mobile MVP does not ship an external calendar permission integration.
+
+Implementation status: local SQLite/EAV, deterministic candidate generation,
+dynamic questions, aggregate AI policy checks, fixture adapters, notification
+budgeting, privacy deletion, and verification are implemented. OpenAI network
+calls, cloud sync, authentication middleware, Expo calendar permissions, and
+store distribution are development-only or planned; they are not production
+integrations.
 
 ## Benchmark and verification
 

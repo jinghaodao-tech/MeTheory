@@ -1,0 +1,34 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
+import { createAiQueryService } from '../apps/api/src/aiQueryService.ts';
+
+test('AI query service reads EAV values and applies per-parameter policy', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE parameter_definitions (id TEXT PRIMARY KEY,name_ja TEXT,description_ja TEXT,value_type TEXT,minimum_value REAL,maximum_value REAL,unit TEXT,parameter_layer TEXT,temporal_type TEXT,sensitivity TEXT,definition_version TEXT,is_active INTEGER); CREATE TABLE parameter_ai_access_policies (parameter_id TEXT PRIMARY KEY,external_ai_allowed INTEGER,access_level TEXT,individual_consent_required INTEGER,maximum_reference_days INTEGER); CREATE TABLE user_parameter_settings (user_id TEXT,parameter_id TEXT,collection_enabled INTEGER,cloud_sync_enabled INTEGER,external_ai_enabled INTEGER,raw_value_access_enabled INTEGER,PRIMARY KEY(user_id,parameter_id)); CREATE TABLE parameter_governance (parameter_id TEXT PRIMARY KEY,status TEXT); CREATE TABLE observation_episodes (id TEXT PRIMARY KEY,user_id TEXT,observed_at TEXT); CREATE TABLE parameter_values (id TEXT PRIMARY KEY,episode_id TEXT,parameter_id TEXT,boolean_value INTEGER,integer_value INTEGER,number_value REAL,text_value TEXT,datetime_value TEXT,json_value TEXT,observed_at TEXT,is_missing INTEGER,eligible_for_evaluation INTEGER);`);
+  db.prepare('INSERT INTO parameter_definitions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run('energy_level', 'エネルギー', '状態', 'ordinal', 1, 5, 'point', 'base', 'momentary', 'normal', 'v3', 1);
+  db.prepare('INSERT INTO parameter_definitions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run('private_signal', '個人値', '非公開', 'number', 0, 10, 'point', 'sensitive', 'momentary', 'sensitive', 'v3', 1);
+  db.prepare('INSERT INTO parameter_definitions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run('time_period', '時間帯', '観測時間帯', 'single_choice', null, null, null, 'base', 'momentary', 'normal', 'v3', 1);
+  db.prepare('INSERT INTO parameter_ai_access_policies VALUES (?,?,?,?,?)').run('energy_level', 1, 'aggregate_only', 0, 30);
+  db.prepare('INSERT INTO parameter_ai_access_policies VALUES (?,?,?,?,?)').run('private_signal', 1, 'aggregate_only', 0, 30);
+  db.prepare('INSERT INTO parameter_ai_access_policies VALUES (?,?,?,?,?)').run('time_period', 1, 'aggregate_only', 0, 30);
+  db.prepare('INSERT INTO user_parameter_settings VALUES (?,?,?,?,?,?)').run('u1', 'energy_level', 1, 1, 1, 0);
+  db.prepare('INSERT INTO user_parameter_settings VALUES (?,?,?,?,?,?)').run('u1', 'private_signal', 1, 1, 0, 0);
+  db.prepare('INSERT INTO user_parameter_settings VALUES (?,?,?,?,?,?)').run('u1', 'time_period', 1, 1, 1, 0);
+  db.prepare('INSERT INTO parameter_governance VALUES (?,?)').run('energy_level', 'active');
+  db.prepare('INSERT INTO parameter_governance VALUES (?,?)').run('private_signal', 'active');
+  db.prepare('INSERT INTO parameter_governance VALUES (?,?)').run('time_period', 'active');
+  db.prepare('INSERT INTO observation_episodes VALUES (?,?,?)').run('episode-1', 'u1', '2026-07-24T10:00:00.000Z');
+  db.prepare('INSERT INTO parameter_values VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run('value-1', 'episode-1', 'energy_level', null, null, 4, null, null, null, '2026-07-24T10:00:00.000Z', 0, 1);
+  const service = createAiQueryService(db);
+  const context = { userId: 'u1', clientId: 'test', clientType: 'mcp', purpose: 'read_only_ai' };
+  const listed = service.listReadableParameters(context);
+  assert.equal(listed.items.some((item) => item.parameterId === 'energy_level'), true);
+  assert.equal(listed.items.some((item) => item.parameterId === 'private_signal'), false);
+  const aggregate = service.queryAggregates({ ...context, parameterIds: ['energy_level', 'private_signal'], startAt: '2026-07-24T00:00:00.000Z', endAt: '2026-07-25T00:00:00.000Z', groupBy: 'time_period' });
+  assert.equal(aggregate.accessLevel, 'aggregate_only');
+  assert.equal(aggregate.groups[0].sampleCount, 1);
+  assert.equal(aggregate.groups[0].mean, 4);
+  assert.deepEqual(aggregate.deniedParameterIds, ['private_signal']);
+  db.close();
+});

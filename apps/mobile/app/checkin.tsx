@@ -1,16 +1,26 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Button } from '@/components/Button';
 import { Screen, Section, Label } from '@/components/Screen';
-import { createCheckin, saveResponse } from '@/storage/repositories';
-import { setCheckinStatus } from '@/storage/repositories/checkinRepository';
+import { createCheckin, saveResponse, generateNextQuestions, listGeneratedQuestions } from '@/storage/repositories';
+import { checkinHypothesisId, setCheckinStatus } from '@/storage/repositories/checkinRepository';
 import { colors } from '@/theme';
 
+const USER_ID = 'local-user';
 const choices = ['work', 'rest', 'move', 'eat', 'other'];
+type Question = { id: string; parameter_id: string; generated_text: string; answer_schema_json: string };
+type Schema = { valueType: string; allowedValues?: string[] };
+
+function parseSchema(question: Question): Schema { try { return JSON.parse(question.answer_schema_json) as Schema; } catch { return { valueType: 'short_text' }; } }
+function typedValue(schema: Schema, raw: unknown) { if (schema.valueType === 'boolean') return { valueType: 'boolean', value: raw === true || raw === 'true' } as const; if (['number', 'integer', 'ordinal', 'duration_minutes', 'percentage'].includes(schema.valueType)) { const value = Number(raw); return Number.isFinite(value) ? { valueType: schema.valueType, value } as { valueType: 'number' | 'integer' | 'ordinal' | 'duration_minutes' | 'percentage'; value: number } : null; } if (schema.valueType === 'single_choice') return typeof raw === 'string' && raw ? { valueType: 'single_choice', value: raw } as const : null; if (schema.valueType === 'multi_choice' || schema.valueType === 'tag_set') return Array.isArray(raw) ? { valueType: schema.valueType, value: raw.filter((item): item is string => typeof item === 'string') } as { valueType: 'multi_choice' | 'tag_set'; value: string[] } : null; return typeof raw === 'string' && raw.trim() ? { valueType: 'short_text', value: raw.trim() } as const : null; }
 
 export default function Checkin() {
   const { checkinId } = useLocalSearchParams<{ checkinId?: string }>();
+  const [activeCheckinId, setActiveCheckinId] = useState(checkinId ?? '');
+  const [hypothesisId, setHypothesisId] = useState<string | null>(null);
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [activity, setActivity] = useState('');
   const [started, setStarted] = useState<boolean | null>(null);
   const [completed, setCompleted] = useState<boolean | null>(null);
@@ -18,37 +28,12 @@ export default function Checkin() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
 
-  async function submit() {
-    if (!activity || started === null || completed === null || saving) return;
-    setSaving(true);
-    setMessage('');
-    try {
-      const checkin = checkinId ? { id: checkinId } : await createCheckin();
-      await saveResponse(checkin.id, { activity_type: activity, started, completed, energy });
-      router.replace('/evidence');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Could not save this check-in.');
-    } finally {
-      setSaving(false);
-    }
-  }
+  useEffect(() => { let mounted = true; (async () => { const checkin = checkinId ? { id: checkinId, hypothesisId: await checkinHypothesisId(checkinId) } : await createCheckin(); if (!mounted) return; setActiveCheckinId(checkin.id); setHypothesisId(checkin.hypothesisId ?? null); if (checkin.hypothesisId) { await generateNextQuestions({ userId: USER_ID, hypothesisId: checkin.hypothesisId, checkinId: checkin.id, limit: 3 }); const generated = await listGeneratedQuestions({ userId: USER_ID, limit: 20 }); if (mounted) setQuestions(generated.filter((item) => String(item.checkin_id) === checkin.id) as unknown as Question[]); } })().catch((error) => { if (mounted) setMessage(error instanceof Error ? error.message : '質問を読み込めませんでした'); }); return () => { mounted = false; }; }, [checkinId]);
 
-  async function skip() {
-    if (saving) return;
-    setSaving(true);
-    setMessage('');
-    try {
-      const checkin = checkinId ? { id: checkinId } : await createCheckin();
-      await setCheckinStatus(checkin.id, 'skipped', 'user_skipped');
-      router.replace('/home');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Could not skip this check-in.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return <Screen eyebrow="CHECK-IN" title="短く記録する"><Section>{message ? <Text style={styles.message}>{message}</Text> : null}<Label>今の活動</Label><View style={styles.choices}>{choices.map((choice) => <Pressable key={choice} onPress={() => setActivity(choice)} style={[styles.choice, activity === choice && styles.selected]}><Text style={activity === choice ? styles.selectedText : styles.choiceText}>{choice}</Text></Pressable>)}</View><Label>活動を始めた？</Label><View style={styles.row}><Button label="はい" onPress={() => setStarted(true)} secondary={started !== true} /><Button label="いいえ" onPress={() => setStarted(false)} secondary={started !== false} /></View><Label>終えられた？</Label><View style={styles.row}><Button label="はい" onPress={() => setCompleted(true)} secondary={completed !== true} /><Button label="いいえ" onPress={() => setCompleted(false)} secondary={completed !== false} /></View><Label>エネルギー {energy}/5</Label><View style={styles.row}>{[1,2,3,4,5].map((value) => <Pressable key={value} onPress={() => setEnergy(value)} style={[styles.energy, energy === value && styles.energySelected]}><Text>{value}</Text></Pressable>)}</View><Button label="保存して評価する" onPress={submit} /><Button label="今回はスキップ" onPress={skip} secondary /></Section></Screen>;
+  async function submit() { if (!activity || started === null || completed === null || saving) return; setSaving(true); setMessage(''); try { const parameterValues: Record<string, unknown> = {}; for (const question of questions) { const value = typedValue(parseSchema(question), answers[question.parameter_id]); if (value) parameterValues[question.parameter_id] = value; } await saveResponse(activeCheckinId || (await createCheckin()).id, { activity_type: activity, started, completed, energy, parameter_values: parameterValues }); router.replace('/evidence'); } catch (error) { setMessage(error instanceof Error ? error.message : 'チェックインを保存できませんでした'); } finally { setSaving(false); } }
+  async function skip() { if (saving) return; setSaving(true); try { const id = activeCheckinId || (await createCheckin()).id; await setCheckinStatus(id, 'skipped', 'user_skipped'); router.replace('/home'); } catch (error) { setMessage(error instanceof Error ? error.message : 'スキップできませんでした'); } finally { setSaving(false); } }
+  function renderQuestion(question: Question) { const schema = parseSchema(question); const value = answers[question.parameter_id]; if (schema.valueType === 'single_choice') return <View style={styles.dynamicChoices}>{(schema.allowedValues ?? []).map((option) => <Pressable key={option} onPress={() => setAnswers((current) => ({ ...current, [question.parameter_id]: option }))} style={[styles.choice, value === option && styles.selected]}><Text style={value === option ? styles.selectedText : styles.choiceText}>{option}</Text></Pressable>)}</View>; if (schema.valueType === 'boolean') return <View style={styles.row}><Button label="はい" onPress={() => setAnswers((current) => ({ ...current, [question.parameter_id]: true }))} secondary={value !== true} /><Button label="いいえ" onPress={() => setAnswers((current) => ({ ...current, [question.parameter_id]: false }))} secondary={value !== false} /></View>; return <TextInput value={typeof value === 'string' || typeof value === 'number' ? String(value) : ''} onChangeText={(next) => setAnswers((current) => ({ ...current, [question.parameter_id]: next }))} keyboardType={['number', 'integer', 'ordinal', 'duration_minutes', 'percentage'].includes(schema.valueType) ? 'numeric' : 'default'} placeholder="回答を入力" placeholderTextColor={colors.muted} style={styles.input} />; }
+  return <Screen eyebrow="CHECK-IN" title="今日の観測"><Section>{message ? <Text style={styles.message}>{message}</Text> : null}<Label>活動</Label><View style={styles.choices}>{choices.map((choice) => <Pressable key={choice} onPress={() => setActivity(choice)} style={[styles.choice, activity === choice && styles.selected]}><Text style={activity === choice ? styles.selectedText : styles.choiceText}>{choice}</Text></Pressable>)}</View><Label>活動を開始しましたか？</Label><View style={styles.row}><Button label="はい" onPress={() => setStarted(true)} secondary={started !== true} /><Button label="いいえ" onPress={() => setStarted(false)} secondary={started !== false} /></View><Label>完了しましたか？</Label><View style={styles.row}><Button label="はい" onPress={() => setCompleted(true)} secondary={completed !== true} /><Button label="いいえ" onPress={() => setCompleted(false)} secondary={completed !== false} /></View><Label>エネルギー {energy}/5</Label><View style={styles.row}>{[1, 2, 3, 4, 5].map((value) => <Pressable key={value} onPress={() => setEnergy(value)} style={[styles.energy, energy === value && styles.energySelected]}><Text>{value}</Text></Pressable>)}</View>{questions.length ? <><Label>追加の質問</Label>{questions.map((question) => <View key={question.id} style={styles.dynamic}><Text style={styles.question}>{question.generated_text}</Text>{renderQuestion(question)}</View>)}</> : null}<Button label="保存して評価する" onPress={() => void submit()} /><Button label="今回はスキップ" onPress={() => void skip()} secondary /></Section></Screen>;
 }
 
-const styles = StyleSheet.create({ choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, choice: { paddingVertical: 12, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface }, selected: { backgroundColor: colors.teal, borderColor: colors.teal }, choiceText: { color: colors.ink }, selectedText: { color: '#FFF', fontWeight: '800' }, row: { flexDirection: 'row', gap: 8 }, energy: { flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.line, borderRadius: 8, backgroundColor: colors.surface }, energySelected: { backgroundColor: colors.amberSoft, borderColor: colors.amber }, message: { color: colors.amber, fontWeight: '700' } });
+const styles = StyleSheet.create({ choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, dynamicChoices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, choice: { paddingVertical: 12, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface }, selected: { backgroundColor: colors.teal, borderColor: colors.teal }, choiceText: { color: colors.ink }, selectedText: { color: '#FFF', fontWeight: '800' }, row: { flexDirection: 'row', gap: 8 }, energy: { flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.line, borderRadius: 8, backgroundColor: colors.surface }, energySelected: { backgroundColor: colors.amberSoft, borderColor: colors.amber }, dynamic: { gap: 8, paddingVertical: 8 }, question: { color: colors.ink, fontWeight: '700', lineHeight: 22 }, input: { minHeight: 48, borderWidth: 1, borderColor: colors.line, borderRadius: 8, paddingHorizontal: 14, color: colors.ink, backgroundColor: colors.surface }, message: { color: colors.amber, fontWeight: '700' } });
