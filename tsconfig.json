@@ -6,7 +6,15 @@
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "types": ["node"]
   },
-  "include": ["apps/**/*.ts", "packages/**/*.ts", "test/**/*.ts"]
+  "include": [
+    "apps/api/**/*.ts",
+    "packages/domain/**/*.ts",
+    "packages/contracts/**/*.ts",
+    "packages/records/**/*.ts",
+    "packages/search-core/**/*.ts",
+    "test/**/*.ts"
+  ]
 }

@@ -79,11 +79,21 @@ exports include Entries.
 For Obsidian, install `apps/obsidian-plugin` as a local plugin, configure the
 local API URL, then run `Register current note as MeTheory Entry`. On first
 use the plugin creates or reuses a local user and stores its ID in plugin
-settings.
-The plugin stores only `metheory_entry_id` in frontmatter. Re-registering a
-note updates the Entry rather than duplicating it. See
-`docs/integration-architecture.md` for the current architecture, API surface,
-and the planned search boundary.
+settings. The plugin stores only `metheory_entry_id` when it creates an Entry.
+Re-registering the same note preserves the existing Entry's `recordedAt` and
+updates `sourceUpdatedAt` from the Obsidian file modification time.
+
+For a new note, `recordedAt` is selected in this order: an explicit
+`recorded_at` frontmatter value, a `date` frontmatter value, a daily filename
+in `YYYY-MM-DD` or `YYYY-MM-DD.md` form, then the file creation timestamp.
+Existing Entries keep their stored `recordedAt`. Invalid explicit or
+daily-file dates stop registration instead of silently becoming the current
+time. The plugin source of truth is
+`apps/obsidian-plugin/src/main.ts`; `main.js` is the generated, tracked
+Obsidian artifact. Build it with `npm run build:obsidian`.
+
+See `docs/integration-architecture.md` for the current architecture, API
+surface, timestamp semantics, and the planned search boundary.
 
 ## Local record search
 
@@ -91,9 +101,13 @@ Entry text is indexed into the derived `search_documents` table when it is
 saved. The local API provides `GET /v1/search?userId=...&q=...` and returns a
 BM25-ranked list with source references, snippets, matched terms, and recorded
 timestamps. Existing Entries can be indexed with
-`POST /v1/search-documents/rebuild`. Search documents are not authoritative and
-can be rebuilt from Entries; hypothesis, Evidence, and parameter-value search
-builders remain future work.
+`POST /v1/search-documents/rebuild`, which transactionally removes all Entry
+documents for that user and rebuilds only current, unarchived Entries. Its
+response includes `{ sourceKind: "entry", deleted, indexed }`; `removed` is
+also returned as a compatibility alias for callers that used the earlier
+rebuild response. Search documents are not authoritative and can be rebuilt
+from Entries; hypothesis, Evidence, and parameter-value search builders remain
+future work.
 
 Run the Python compatibility tests:
 
@@ -119,7 +133,11 @@ notifications as `hypothesis` Check-ins.
 ```powershell
 npm install
 npm run dev:mobile
+npm run typecheck:root
+npm run typecheck:mobile
+npm run typecheck:obsidian
 npm run typecheck
+npm run build:obsidian
 npm run test:mobile
 npm run verify
 npm --workspace apps/mobile run build:preview

@@ -23,9 +23,12 @@ action and domain validation.
 ## Implemented foundation
 
 `entries` exists in both runtime SQLite schemas. The mobile database applies
-the table as migration 11. The Node API applies the idempotent runtime schema
-on startup. Both schemas retain all existing experiment tables and add no
-destructive migration.
+the table as migration 11 and adds `source_updated_at` through migration 14.
+The Node API applies the idempotent runtime schema on startup and also adds
+the column to a database created by an earlier runtime. If an intermediate
+development schema contains `source_modified_at`, its values are copied into
+the new column without deleting the old column. Both schemas retain all
+existing experiment tables and add no destructive migration.
 
 The Entry repository lives behind two platform adapters:
 
@@ -42,6 +45,15 @@ the returned `metheory_entry_id` in frontmatter. Later registrations use that
 ID, update the existing Entry, and clear any archive marker instead of creating
 a duplicate.
 
+`recordedAt` and `sourceUpdatedAt` have separate meanings. `recordedAt` is
+the Entry's occurrence time and never changes during an upsert. A new Entry
+uses this deterministic priority: `recorded_at` frontmatter, `date`
+frontmatter, a `YYYY-MM-DD` or `YYYY-MM-DD.md` filename, then the file
+creation timestamp. Existing Entries keep their stored `recordedAt` even when
+the note is edited. `sourceUpdatedAt` records the Obsidian file mtime and may
+change on every registration. Invalid explicit or filename dates are rejected
+rather than silently falling back to the current time.
+
 The Node API exposes local development endpoints:
 
 * `POST /v1/entries` creates or upserts a source-backed Entry.
@@ -57,12 +69,25 @@ and sensitive values are not written to logs.
 ## Obsidian integration
 
 `apps/obsidian-plugin` is a directly loadable minimal plugin. Its one command
-registers the active note by calling the local API. It sends the file basename,
-note body without frontmatter, note path, and modification time. It uses
-Obsidian's `processFrontMatter` API to save only `metheory_entry_id`; it never
-reformats the body. The API URL is configured in plugin settings. On its first
-registration, the plugin creates or reuses the local `obsidian-local` user and
-stores the returned ID locally; an explicit user ID can still be configured.
+registers the active note by calling the local API. It sends the filename-derived
+title, note body without frontmatter, note path, resolved Entry date, and
+separate source modification time. It uses Obsidian's `processFrontMatter` API
+to save only `metheory_entry_id`; it never reformats the body. The API URL is
+configured in plugin settings. On its first registration, the plugin creates
+or reuses the local `obsidian-local` user and stores the returned ID locally;
+an explicit user ID can still be configured.
+
+`src/main.ts` imports the shared `src/frontmatter.ts` helpers and is the only
+plugin source of truth. `main.js` is a checked-in generated bundle, produced by
+`npm run build:obsidian`, because Obsidian loads that file directly. The root
+typecheck has separate Node, mobile, and Obsidian targets:
+
+```powershell
+npm run typecheck:root
+npm run typecheck:mobile
+npm run typecheck:obsidian
+npm run build:obsidian
+```
 
 ## Search and AI boundaries
 
@@ -70,8 +95,13 @@ stores the returned ID locally; an explicit user ID can still be configured.
 Tokenizer and deterministic BM25 ranker. On Entry create or update, the API and
 mobile repository derive a `search_documents` row with precomputed tokens. On
 archive, the derived row is removed. `POST /v1/search-documents/rebuild`
-rebuilds current Entry documents, while `GET /v1/search?userId=...&q=...`
-returns source references, snippets, scores, matched terms, and timestamps.
+deletes that user's Entry search documents, loads current unarchived Entries,
+tokenizes them, and inserts the rebuilt set in one transaction. A failure
+rolls back the deletion and inserts. This removes orphaned documents, excludes
+archives, does not affect other users or other source kinds, and returns
+`{ sourceKind: "entry", deleted, indexed, removed }`. `GET
+/v1/search?userId=...&q=...` returns source references, snippets, scores,
+matched terms, and timestamps.
 
 The initial indexed source is `entry`. Hypotheses, Evidence, and parameter
 values remain future builders. Search documents are still replaceable and can
@@ -90,9 +120,11 @@ personal-model claim.
 ## Verification and next phase
 
 `test/entries.test.ts` verifies idempotent schema application, API CRUD,
-source-based note upsert, search indexing, archive/export behavior, input
-validation, and frontmatter extraction. `test/search-core.test.ts` covers
-tokenization and stable BM25 result references. Run the full suite with
+timestamp preservation, source-based note upsert, full search rebuild behavior,
+user isolation, archive exclusion, input validation, Obsidian date precedence,
+and the generated plugin artifact. It also verifies that a failed rebuild
+restores the prior Entry and non-Entry documents. `test/search-core.test.ts`
+covers tokenization and stable BM25 result references. Run the full suite with
 `npm run verify`.
 
 Before the next search increment, add builders for hypotheses and Evidence,

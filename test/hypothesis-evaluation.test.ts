@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildEpisodes } from "../packages/domain/src/hypothesis/episodes.ts";
+import { buildEpisodes, type EpisodeObservation } from "../packages/domain/src/hypothesis/episodes.ts";
 import { evaluateHypothesis } from "../packages/domain/src/hypothesis/evaluators.ts";
 import { validateHypothesisSpec, type HypothesisSpec } from "../packages/domain/src/hypothesis/spec.ts";
 
@@ -17,9 +17,13 @@ const baseSpec = (minimumSamplesPerCohort = 2): HypothesisSpec => validateHypoth
 });
 
 function episodes(values: Array<{ energy: number; activity: string; mode?: "momentary_observation" | "retrospective_entry"; source?: "user_confirmed" | "system" | "ai_inferred"; certainty?: "high" | "medium" | "low" }>) {
-  return buildEpisodes(values.map((value, index) => ({
-    responseId: `response-${index}`, checkinId: `checkin-${index}`, capturedAt: "2026-01-15T00:00:00.000Z", captureMode: value.mode ?? "momentary_observation", field: "activity_context", value: "free_time", source: "system", certainty: "high",
-  })).flatMap((context, index) => [context, { ...context, field: "energy", value: values[index].energy }, { ...context, field: "activity_type", value: values[index].activity, source: values[index].source ?? "user_confirmed", certainty: values[index].certainty ?? "high" }]));
+  const observations = values.flatMap<EpisodeObservation>((value, index) => {
+    const context: EpisodeObservation = {
+      responseId: `response-${index}`, checkinId: `checkin-${index}`, capturedAt: "2026-01-15T00:00:00.000Z", captureMode: value.mode ?? "momentary_observation", field: "activity_context", value: "free_time", source: "system", certainty: "high",
+    };
+    return [context, { ...context, field: "energy", value: value.energy }, { ...context, field: "activity_type", value: value.activity, source: value.source ?? "user_confirmed", certainty: value.certainty ?? "high" }];
+  });
+  return buildEpisodes(observations);
 }
 
 test("binary rate difference supports the expected direction", () => {
@@ -55,7 +59,7 @@ test("minimum samples and cohort ratio produce insufficient_data", () => {
 
 test("missing rate, retrospective entries, low certainty, and AI sources are excluded", () => {
   const result = evaluateHypothesis("h1", baseSpec(), episodes([
-    { energy: 1, activity: "passive", mode: "retrospective_entry" }, { energy: 1, activity: "passive", certainty: "low" }, { energy: 1, activity: "passive", source: "ai_inferred" }, { energy: 1, activity: "active", activity: "active" } as any,
+    { energy: 1, activity: "passive", mode: "retrospective_entry" }, { energy: 1, activity: "passive", certainty: "low" }, { energy: 1, activity: "passive", source: "ai_inferred" }, { energy: 1, activity: "active" },
     { energy: 4, activity: "active" }, { energy: 4, activity: "active" },
   ]), evaluatedAt);
   assert.equal(result.result, "insufficient_data");

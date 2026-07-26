@@ -31,21 +31,28 @@ function toDocument(row: SearchDocumentRow): SearchDocument {
   return { id: row.id, userId: row.user_id, sourceKind: row.source_kind, sourceId: row.source_id, title: row.title, searchText: row.search_text, tags: strings(row.tags_json), tokens: strings(row.tokens_json), docLength: row.doc_length, recordedAt: row.recorded_at, updatedAt: row.updated_at };
 }
 
+async function entryDocument(entry: Entry, existingId?: string): Promise<SearchDocument> {
+  const searchText = `${entry.title}\n${entry.body}`;
+  const tokens = await tokenizer.tokenize(searchText);
+  return { id: existingId ?? newId('search'), userId: entry.userId, sourceKind: 'entry', sourceId: entry.id, title: entry.title, searchText, tags: [], tokens, docLength: tokens.length, recordedAt: entry.recordedAt, updatedAt: new Date().toISOString() };
+}
+
+async function insertDocument(document: SearchDocument): Promise<void> {
+  const db = await dbPromise;
+  await db.runAsync('INSERT INTO search_documents(id,user_id,source_kind,source_id,title,search_text,tags_json,tokens_json,doc_length,recorded_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)', document.id, document.userId, document.sourceKind, document.sourceId, document.title, document.searchText, JSON.stringify(document.tags), JSON.stringify(document.tokens), document.docLength, document.recordedAt, document.updatedAt);
+}
+
 export async function indexEntrySearchDocument(entry: Entry): Promise<void> {
   const db = await dbPromise;
   if (entry.archivedAt) {
     await removeSearchDocument(entry.userId, 'entry', entry.id);
     return;
   }
-  const searchText = `${entry.title}\n${entry.body}`;
-  const tokens = await tokenizer.tokenize(searchText);
   const existing = await db.getFirstAsync<{ id: string }>("SELECT id FROM search_documents WHERE user_id=? AND source_kind='entry' AND source_id=?", entry.userId, entry.id);
-  const document = { id: existing?.id ?? newId('search'), userId: entry.userId, sourceKind: 'entry' as const, sourceId: entry.id, title: entry.title, searchText, tags: [], tokens, docLength: tokens.length, recordedAt: entry.recordedAt, updatedAt: new Date().toISOString() };
+  const document = await entryDocument(entry, existing?.id);
   if (existing) {
     await db.runAsync('UPDATE search_documents SET title=?,search_text=?,tags_json=?,tokens_json=?,doc_length=?,recorded_at=?,updated_at=? WHERE id=?', document.title, document.searchText, JSON.stringify(document.tags), JSON.stringify(document.tokens), document.docLength, document.recordedAt, document.updatedAt, document.id);
-  } else {
-    await db.runAsync('INSERT INTO search_documents(id,user_id,source_kind,source_id,title,search_text,tags_json,tokens_json,doc_length,recorded_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)', document.id, document.userId, document.sourceKind, document.sourceId, document.title, document.searchText, JSON.stringify(document.tags), JSON.stringify(document.tokens), document.docLength, document.recordedAt, document.updatedAt);
-  }
+  } else await insertDocument(document);
 }
 
 export async function removeSearchDocument(userId: string, sourceKind: SearchDocument['sourceKind'], sourceId: string): Promise<void> {
@@ -53,11 +60,17 @@ export async function removeSearchDocument(userId: string, sourceKind: SearchDoc
   await db.runAsync('DELETE FROM search_documents WHERE user_id=? AND source_kind=? AND source_id=?', userId, sourceKind, sourceId);
 }
 
-export async function rebuildEntrySearchDocuments(userId: string): Promise<number> {
+export async function rebuildEntrySearchDocuments(userId: string): Promise<{ sourceKind: 'entry'; deleted: number; removed: number; indexed: number }> {
   const db = await dbPromise;
-  const rows = await db.getAllAsync<Entry & { user_id?: string }>('SELECT id,id AS userId,template_id AS templateId,episode_id AS episodeId,external_source AS externalSource,external_source_id AS externalSourceId,title,body,recorded_at AS recordedAt,created_at AS createdAt,updated_at AS updatedAt,archived_at AS archivedAt FROM entries WHERE user_id=? AND archived_at IS NULL', userId);
-  for (const row of rows) await indexEntrySearchDocument({ ...row, userId });
-  return rows.length;
+  let result: { deleted: number; indexed: number } = { deleted: 0, indexed: 0 };
+  await db.withTransactionAsync(async () => {
+    const deleteResult = await db.runAsync("DELETE FROM search_documents WHERE user_id=? AND source_kind='entry'", userId);
+    const rows = await db.getAllAsync<Entry>('SELECT id,id AS userId,template_id AS templateId,episode_id AS episodeId,external_source AS externalSource,external_source_id AS externalSourceId,source_updated_at AS sourceUpdatedAt,title,body,recorded_at AS recordedAt,created_at AS createdAt,updated_at AS updatedAt,archived_at AS archivedAt FROM entries WHERE user_id=? AND archived_at IS NULL ORDER BY recorded_at DESC,created_at DESC', userId);
+    const documents = await Promise.all(rows.map((entry) => entryDocument(entry)));
+    result = { deleted: deleteResult.changes, indexed: documents.length };
+    for (const document of documents) await db.runAsync('INSERT INTO search_documents(id,user_id,source_kind,source_id,title,search_text,tags_json,tokens_json,doc_length,recorded_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)', document.id, document.userId, document.sourceKind, document.sourceId, document.title, document.searchText, JSON.stringify(document.tags), JSON.stringify(document.tokens), document.docLength, document.recordedAt, document.updatedAt);
+  });
+  return { sourceKind: 'entry', deleted: result.deleted, removed: result.deleted, indexed: result.indexed };
 }
 
 export async function searchLocalDocuments(userId: string, query: string, limit?: number): Promise<SearchResult[]> {

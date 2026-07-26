@@ -9,6 +9,7 @@ type EntryRow = {
   episode_id: string | null;
   external_source: string | null;
   external_source_id: string | null;
+  source_updated_at: string | null;
   title: string;
   body: string;
   recorded_at: string;
@@ -25,6 +26,7 @@ function toEntry(row: EntryRow): Entry {
     episodeId: row.episode_id,
     externalSource: row.external_source,
     externalSourceId: row.external_source_id,
+    sourceUpdatedAt: row.source_updated_at,
     title: row.title,
     body: row.body,
     recordedAt: row.recorded_at,
@@ -63,14 +65,16 @@ export async function saveEntry(input: EntryWriteInput): Promise<{ entry: Entry;
 
   const timestamp = new Date().toISOString();
   if (existing) {
-    await db.runAsync('UPDATE entries SET template_id=?, episode_id=?, external_source=?, external_source_id=?, title=?, body=?, recorded_at=?, updated_at=?, archived_at=NULL WHERE id=? AND user_id=?', draft.templateId, draft.episodeId, draft.externalSource, draft.externalSourceId, draft.title, draft.body, draft.recordedAt, timestamp, existing.id, draft.userId);
-    const entry = { ...toEntry(existing), templateId: draft.templateId, episodeId: draft.episodeId, externalSource: draft.externalSource, externalSourceId: draft.externalSourceId, title: draft.title, body: draft.body, recordedAt: draft.recordedAt, updatedAt: timestamp, archivedAt: null };
+    const recordedAt = existing.recorded_at;
+    const sourceUpdatedAt = draft.sourceUpdatedAt === undefined ? existing.source_updated_at : draft.sourceUpdatedAt;
+    await db.runAsync('UPDATE entries SET template_id=?, episode_id=?, external_source=?, external_source_id=?, source_updated_at=?, title=?, body=?, recorded_at=?, updated_at=?, archived_at=NULL WHERE id=? AND user_id=?', draft.templateId, draft.episodeId, draft.externalSource, draft.externalSourceId, sourceUpdatedAt, draft.title, draft.body, recordedAt, timestamp, existing.id, draft.userId);
+    const entry = { ...toEntry(existing), templateId: draft.templateId, episodeId: draft.episodeId, externalSource: draft.externalSource, externalSourceId: draft.externalSourceId, sourceUpdatedAt, title: draft.title, body: draft.body, recordedAt, updatedAt: timestamp, archivedAt: null };
     await indexEntrySearchDocument(entry);
     return { created: false, entry };
   }
 
-  const entry: Entry = { id: newId('entry'), userId: draft.userId, templateId: draft.templateId, episodeId: draft.episodeId, externalSource: draft.externalSource, externalSourceId: draft.externalSourceId, title: draft.title, body: draft.body, recordedAt: draft.recordedAt, createdAt: timestamp, updatedAt: timestamp, archivedAt: null };
-  await db.runAsync('INSERT INTO entries(id,user_id,template_id,episode_id,external_source,external_source_id,title,body,recorded_at,created_at,updated_at,archived_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', entry.id, entry.userId, entry.templateId, entry.episodeId, entry.externalSource, entry.externalSourceId, entry.title, entry.body, entry.recordedAt, entry.createdAt, entry.updatedAt, entry.archivedAt);
+  const entry: Entry = { id: newId('entry'), userId: draft.userId, templateId: draft.templateId, episodeId: draft.episodeId, externalSource: draft.externalSource, externalSourceId: draft.externalSourceId, sourceUpdatedAt: draft.sourceUpdatedAt ?? null, title: draft.title, body: draft.body, recordedAt: draft.recordedAt ?? timestamp, createdAt: timestamp, updatedAt: timestamp, archivedAt: null };
+  await db.runAsync('INSERT INTO entries(id,user_id,template_id,episode_id,external_source,external_source_id,source_updated_at,title,body,recorded_at,created_at,updated_at,archived_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)', entry.id, entry.userId, entry.templateId, entry.episodeId, entry.externalSource, entry.externalSourceId, entry.sourceUpdatedAt, entry.title, entry.body, entry.recordedAt, entry.createdAt, entry.updatedAt, entry.archivedAt);
   await indexEntrySearchDocument(entry);
   return { entry, created: true };
 }

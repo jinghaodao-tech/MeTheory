@@ -126,9 +126,9 @@ export interface TimeWindow {
 }
 
 export interface NotificationPolicyInput {
-  candidateMinutes: number[];
-  allowedWindows: TimeWindow[];
-  quietWindows: TimeWindow[];
+  candidateMinutes: readonly number[];
+  allowedWindows: readonly TimeWindow[];
+  quietWindows: readonly TimeWindow[];
   sentToday: number;
   maxPerDay: number;
   lastSentMinute: number | null;

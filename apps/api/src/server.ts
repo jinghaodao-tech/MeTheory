@@ -26,6 +26,8 @@ function ensureColumn(table: string, column: string, definition: string): void {
 }
 
 ensureColumn("hypotheses", "state", "TEXT NOT NULL DEFAULT 'tracking'");
+ensureColumn("entries", "source_updated_at", "TEXT");
+if ((db.prepare("PRAGMA table_info(entries)").all() as Array<{ name: string }>).some((column) => column.name === "source_modified_at")) db.exec("UPDATE entries SET source_updated_at=source_modified_at WHERE source_updated_at IS NULL");
 ensureColumn("hypotheses", "spec_json", "TEXT");
 ensureColumn("hypotheses", "spec_version", "TEXT");
 ensureColumn("responses", "capture_mode", "TEXT NOT NULL DEFAULT 'momentary_observation'");
@@ -71,6 +73,7 @@ function entryWriteInput(input: Record<string, unknown>, entryId?: string): Entr
     title: optionalString(input.title) ?? "",
     body: optionalString(input.body) ?? "",
     recordedAt: optionalString(input.recordedAt),
+    sourceUpdatedAt: input.sourceUpdatedAt === null ? null : optionalString(input.sourceUpdatedAt ?? input.sourceModifiedAt),
   };
 }
 
@@ -129,8 +132,16 @@ function createCheckin(userId: string, kind: string, hypothesisId: string | null
   return { id: checkinId, userId, hypothesisId, kind, question, responseStatus: "pending", policyVersion: RULE_VERSION };
 }
 
+function observationValue(value: unknown): ObservationInput["value"] {
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
+  throw new Error("invalid_observation_value");
+}
+
 function saveResponse(checkinId: string, input: Record<string, unknown>): Record<string, unknown> {
-  const existing = db.prepare("SELECT * FROM responses WHERE idempotency_key = ?").get(input.idempotencyKey as string) as Record<string, unknown> | undefined;
+  const idempotencyKey = optionalString(input.idempotencyKey);
+  if (!idempotencyKey) throw new Error("idempotency_key_required");
+  const missingReason = optionalString(input.missingReason) ?? null;
+  const existing = db.prepare("SELECT * FROM responses WHERE idempotency_key = ?").get(idempotencyKey) as Record<string, unknown> | undefined;
   if (existing) return existing;
   const checkin = db.prepare("SELECT * FROM checkins WHERE id = ?").get(checkinId) as Record<string, unknown> | undefined;
   if (!checkin) throw new Error("checkin_not_found");
@@ -150,14 +161,14 @@ function saveResponse(checkinId: string, input: Record<string, unknown>): Record
   db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare("INSERT INTO responses(id, checkin_id, idempotency_key, client_created_at, server_received_at, payload_json, missing_reason, capture_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(responseId, checkinId, input.idempotencyKey as string, (input.clientCreatedAt as string | undefined) ?? now(), now(), payload, input.missingReason ?? null, "momentary_observation");
+      .run(responseId, checkinId, idempotencyKey, optionalString(input.clientCreatedAt) ?? now(), now(), payload, missingReason, "momentary_observation");
     for (const [index, observationInput] of observations.entries()) {
       const observation: ObservationInput = {
         field: observationInput.field,
-        value: observationInput.value,
-        certainty: input.missingReason ? "low" : "high",
+        value: observationValue(observationInput.value),
+        certainty: missingReason ? "low" : "high",
         source: "user_confirmed",
-        missing: Boolean(input.missingReason) || observationInput.value === null,
+        missing: Boolean(missingReason) || observationInput.value === null,
       };
       db.prepare("INSERT INTO observations(id, response_id, field, value_json, certainty, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(observationIds[index], responseId, observation.field, JSON.stringify(observation.value), observation.certainty, observation.source, now());
@@ -168,7 +179,7 @@ function saveResponse(checkinId: string, input: Record<string, unknown>): Record
     db.exec("ROLLBACK");
     throw error;
   }
-  return { id: responseId, checkinId, idempotencyKey: input.idempotencyKey, observationId: observationIds[0] ?? null, observationIds };
+  return { id: responseId, checkinId, idempotencyKey, observationId: observationIds[0] ?? null, observationIds };
 }
 
 function evaluateStoredHypothesis(hypothesisId: string, evaluatedAt = now()): Record<string, unknown> {
@@ -224,7 +235,7 @@ const server = createServer(async (request, response) => {
       const existing = db.prepare("SELECT id FROM users WHERE auth_subject=?").get(authSubject) as { id: string } | undefined;
       if (existing) return json(response, 200, { id: existing.id, existing: true });
       const userId = id("usr");
-      db.prepare("INSERT INTO users(id, auth_subject, locale, timezone, created_at) VALUES (?, ?, ?, ?, ?)").run(userId, authSubject, input.locale ?? "ja-JP", input.timezone ?? "Asia/Tokyo", now());
+      db.prepare("INSERT INTO users(id, auth_subject, locale, timezone, created_at) VALUES (?, ?, ?, ?, ?)").run(userId, authSubject, optionalString(input.locale) ?? "ja-JP", optionalString(input.timezone) ?? "Asia/Tokyo", now());
       return json(response, 201, { id: userId });
     }
     if (request.method === "POST" && parts.join("/") === "v1/entries") {
@@ -267,8 +278,7 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && parts.join("/") === "v1/search-documents/rebuild") {
       const input = await body(request); const userId = String(input.userId ?? "");
       if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      const indexed = await searchDocumentRepository.rebuildEntries(entryRepository.list(userId));
-      return json(response, 200, { indexed });
+      return json(response, 200, await searchDocumentRepository.rebuildEntries(userId));
     }
     if (request.method === "GET" && parts.join("/") === "v1/search") {
       const userId = requestUrl.searchParams.get("userId") ?? "";
@@ -279,14 +289,14 @@ const server = createServer(async (request, response) => {
       return json(response, 200, { items: await searchDocumentRepository.search(userId, query, Number.isFinite(limit) ? limit : 20) });
     }
     if (request.method === "POST" && parts.length === 2 && parts[0] === "v1" && parts[1] === "self-beliefs") {
-      const input = await body(request); if (!userExists(input.userId as string)) return json(response, 404, { error: "user_not_found" });
-      const beliefId = id("belief"); db.prepare("INSERT INTO self_beliefs(id, user_id, statement, source_kind, created_at) VALUES (?, ?, ?, 'user', ?)").run(beliefId, input.userId, input.statement, now());
-      return json(response, 201, { id: beliefId, userId: input.userId, statement: input.statement });
+      const input = await body(request); const userId = optionalString(input.userId) ?? ""; const statement = optionalString(input.statement) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      const beliefId = id("belief"); db.prepare("INSERT INTO self_beliefs(id, user_id, statement, source_kind, created_at) VALUES (?, ?, ?, 'user', ?)").run(beliefId, userId, statement, now());
+      return json(response, 201, { id: beliefId, userId, statement });
     }
     if (request.method === "POST" && parts.length === 2 && parts[0] === "v1" && parts[1] === "hypotheses") {
-      const input = await body(request); if (!userExists(input.userId as string)) return json(response, 404, { error: "user_not_found" });
+      const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
       const spec = input.spec ? validateHypothesisSpec(input.spec) : null;
-      const hypothesisId = id("hyp"); db.prepare("INSERT INTO hypotheses(id, user_id, self_belief_id, template_key, statement, state, status, spec_json, spec_version, rule_version, created_at) VALUES (?, ?, ?, ?, ?, 'tracking', 'tracking', ?, ?, ?, ?)").run(hypothesisId, input.userId, input.selfBeliefId ?? null, input.templateKey ?? "belief_vs_observation", input.statement, spec ? JSON.stringify(spec) : null, spec?.schemaVersion ?? null, RULE_VERSION, now());
+      const hypothesisId = id("hyp"); db.prepare("INSERT INTO hypotheses(id, user_id, self_belief_id, template_key, statement, state, status, spec_json, spec_version, rule_version, created_at) VALUES (?, ?, ?, ?, ?, 'tracking', 'tracking', ?, ?, ?, ?)").run(hypothesisId, userId, optionalString(input.selfBeliefId) ?? null, optionalString(input.templateKey) ?? "belief_vs_observation", optionalString(input.statement) ?? "", spec ? JSON.stringify(spec) : null, spec?.schemaVersion ?? null, RULE_VERSION, now());
       return json(response, 201, { id: hypothesisId, state: "tracking", specVersion: spec?.schemaVersion ?? null });
     }
     if (request.method === "POST" && parts.join("/") === "v1/checkins/next") {

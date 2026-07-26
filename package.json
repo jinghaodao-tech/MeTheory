@@ -2,7 +2,9 @@
   "name": "metheory",
   "private": true,
   "type": "module",
-  "workspaces": ["apps/mobile"],
+  "workspaces": [
+    "apps/mobile"
+  ],
   "scripts": {
     "dev:api": "node --experimental-strip-types apps/api/src/server.ts",
     "dev:mobile": "npm --workspace apps/mobile run start",
@@ -27,12 +29,20 @@
     "reset:synthetic": "node --experimental-strip-types tools/synthetic-scenarios.ts reset",
     "test": "npm run test:domain && npm run test:hypothesis && npm run test:candidates && npm run test:source-adapters && npm run test:completion && npm run test:benchmark && npm run test:ai-service && npm run test:api && npm run test:entries && npm run test:search",
     "test:mobile": "npm --workspace apps/mobile run test",
+    "typecheck:root": "tsc --project tsconfig.json",
     "typecheck:mobile": "npm --workspace apps/mobile run typecheck",
-    "typecheck": "npm run typecheck:mobile",
-    "check": "node --check apps/api/src/server.ts && node --check packages/domain/src/index.ts && npm run check:openapi",
-    "verify": "npm run typecheck && npm run test && npm run test:mobile && npm run test:synthetic && npm run check"
+    "typecheck:obsidian": "tsc --project apps/obsidian-plugin/tsconfig.json",
+    "typecheck": "npm run typecheck:root && npm run typecheck:mobile && npm run typecheck:obsidian",
+    "build:obsidian": "node apps/obsidian-plugin/esbuild.mjs",
+    "check": "node --check apps/api/src/server.ts && node --check packages/domain/src/index.ts && node --check apps/obsidian-plugin/main.js && npm run check:openapi",
+    "verify": "npm run typecheck && npm run build:obsidian && npm run test && npm run test:mobile && npm run test:synthetic && npm run check"
   },
   "engines": {
     "node": ">=24.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "esbuild": "^0.28.1",
+    "typescript": "^7.0.2"
   }
 }

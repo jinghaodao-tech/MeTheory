@@ -190,6 +190,7 @@ CREATE TABLE IF NOT EXISTS entries (
   episode_id TEXT REFERENCES observation_episodes(id) ON DELETE SET NULL,
   external_source TEXT,
   external_source_id TEXT,
+  source_updated_at TEXT,
   title TEXT NOT NULL CHECK (length(trim(title)) > 0),
   body TEXT NOT NULL,
   recorded_at TEXT NOT NULL,
