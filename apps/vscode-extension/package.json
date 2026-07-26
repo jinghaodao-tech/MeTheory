@@ -1,0 +1,10 @@
+{
+  "name": "metheory-vscode",
+  "displayName": "MeTheory Workspace",
+  "version": "0.1.0",
+  "engines": { "vscode": "^1.90.0" },
+  "activationEvents": ["onStartupFinished"],
+  "main": "dist/extension.js",
+  "contributes": { "commands": [{"command":"metheory.initializeWorkspace","title":"MeTheory: Initialize Workspace"},{"command":"metheory.syncCurrentFile","title":"MeTheory: Sync Current File"},{"command":"metheory.syncWorkspace","title":"MeTheory: Sync Workspace"},{"command":"metheory.generateTemplate","title":"MeTheory: Generate Template from Theme"},{"command":"metheory.listTemplates","title":"MeTheory: List Templates"},{"command":"metheory.searchEntries","title":"MeTheory: Search Entries"}] },
+  "scripts": { "build": "node esbuild.mjs", "typecheck": "tsc --noEmit" }
+}

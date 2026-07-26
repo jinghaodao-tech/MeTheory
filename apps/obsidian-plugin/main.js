@@ -88,7 +88,8 @@ function entryRegistrationPayload(input) {
 var DEFAULT_SETTINGS = {
   apiUrl: "http://127.0.0.1:8100",
   userId: "",
-  authSubject: "obsidian-local"
+  authSubject: "obsidian-local",
+  aiProvider: "manual_chatgpt"
 };
 function sourceUpdatedAt(file) {
   return new Date(file.stat.mtime).toISOString();
@@ -113,6 +114,13 @@ var MeTheorySettingTab = class extends import_obsidian.PluginSettingTab {
       this.plugin.settings.userId = value.trim();
       await this.plugin.saveSettings();
     }));
+    new import_obsidian.Setting(containerEl).setName("Template generation mode").setDesc("manual_chatgpt, openai, or disabled. API keys stay on the local API.").addText((text) => text.setValue(this.plugin.settings.aiProvider).onChange(async (value) => {
+      const mode = value.trim();
+      if (["manual_chatgpt", "openai", "disabled"].includes(mode)) {
+        this.plugin.settings.aiProvider = mode;
+        await this.plugin.saveSettings();
+      }
+    }));
   }
 };
 var MeTheoryEntrySyncPlugin = class extends import_obsidian.Plugin {
@@ -125,6 +133,7 @@ var MeTheoryEntrySyncPlugin = class extends import_obsidian.Plugin {
       name: "Register current note as MeTheory Entry",
       callback: () => this.registerActiveNote()
     });
+    this.addCommand({ id: "create-template-draft", name: "Create MeTheory Template", callback: () => this.createTemplateDraft() });
   }
   async loadSettings() {
     this.settings = { ...DEFAULT_SETTINGS, ...await this.loadData() };
@@ -168,6 +177,35 @@ var MeTheoryEntrySyncPlugin = class extends import_obsidian.Plugin {
       new import_obsidian.Notice(payload.created ? "MeTheory Entry created." : "MeTheory Entry updated.");
     } catch (error) {
       new import_obsidian.Notice(`MeTheory registration failed: ${error instanceof Error ? error.message : "unknown_error"}`);
+    }
+  }
+  async createTemplateDraft() {
+    const theme = window.prompt("Template theme")?.trim();
+    if (!theme) return;
+    try {
+      const userId = await this.ensureUserId();
+      const response = await fetch(`${this.settings.apiUrl}/v1/templates/generate-draft`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, theme }) });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "template_generation_failed");
+      let draft = payload.draft;
+      if (payload.prompt) {
+        await navigator.clipboard?.writeText(payload.prompt);
+        new import_obsidian.Notice("ChatGPT\u7528\u30D7\u30ED\u30F3\u30D7\u30C8\u3092\u30B3\u30D4\u30FC\u3057\u307E\u3057\u305F\u3002\u8FD4\u5374JSON\u3092\u8CBC\u308A\u4ED8\u3051\u3066\u304F\u3060\u3055\u3044\u3002");
+        const result = window.prompt("ChatGPT\u306EJSON\u7D50\u679C");
+        if (!result) return;
+        const validation = await fetch(`${this.settings.apiUrl}/v1/templates/validate-draft`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ response: result }) });
+        const validated = await validation.json();
+        if (!validation.ok) throw new Error(validated.error ?? "template_generation_invalid_json");
+        draft = validated.draft;
+      }
+      const approved = window.confirm(`\u30C6\u30F3\u30D7\u30EC\u30FC\u30C8\u6848\u3092\u4FDD\u5B58\u3057\u307E\u3059\u304B\uFF1F
+${JSON.stringify(draft).slice(0, 500)}`);
+      if (!approved) return;
+      const saved = await fetch(`${this.settings.apiUrl}/v1/templates`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, approved: true, ...draft, generationSource: payload.prompt ? "user" : "ai", promptVersion: "template-v2" }) });
+      if (!saved.ok) throw new Error((await saved.json()).error ?? "template_save_failed");
+      new import_obsidian.Notice("MeTheory Template saved.");
+    } catch (error) {
+      new import_obsidian.Notice(`Template generation failed: ${error instanceof Error ? error.message : "unknown_error"}`);
     }
   }
 };

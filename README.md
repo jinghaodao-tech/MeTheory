@@ -252,3 +252,6 @@ SQLite benchmark results are written to the ignored artifacts directory and
 include insert/query timings and EXPLAIN QUERY PLAN output. The large profile
 uses 500,000 parameter_values; adjust the profile argument for a larger local
 dataset.
+## Entry Templates
+
+Entry Templates provide reusable, user-approved structures for free records. AI generation returns an unsaved draft; the user must approve it before storage. Templates and immutable versions are stored in local SQLite, and each template Entry keeps the version used at creation. Typed field values are intentionally separate from `observations` and `parameter_values`, so free records do not silently enter hypothesis evaluation. See `docs/template-system.md`.

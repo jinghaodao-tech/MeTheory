@@ -11,6 +11,8 @@ import type { EntryWriteInput } from "../../../packages/records/src/index.ts";
 import { createAiQueryService } from "./aiQueryService.ts";
 import { SqliteEntryRepository } from "./entryRepository.ts";
 import { SqliteSearchDocumentRepository } from "./searchDocumentRepository.ts";
+import { SqliteTemplateRepository } from "./templateRepository.ts";
+import { MockTemplateGenerationProvider, UnavailableTemplateGenerationProvider, DisabledTemplateGenerationProvider, ManualChatGPTTemplateProvider, OpenAITemplateGenerationProvider, TEMPLATE_PROMPT_VERSION } from "../../../packages/templates/src/index.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.METHEORY_DB ?? resolve(root, "data", "metheory.sqlite3");
@@ -19,6 +21,7 @@ db.exec(readFileSync(resolve(root, "db", "ts_mvp_schema.sql"), "utf8"));
 const aiQueryService = createAiQueryService(db);
 const entryRepository = new SqliteEntryRepository(db);
 const searchDocumentRepository = new SqliteSearchDocumentRepository(db);
+const templateRepository = new SqliteTemplateRepository(db);
 
 function ensureColumn(table: string, column: string, definition: string): void {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<Record<string, unknown>>;
@@ -27,6 +30,7 @@ function ensureColumn(table: string, column: string, definition: string): void {
 
 ensureColumn("hypotheses", "state", "TEXT NOT NULL DEFAULT 'tracking'");
 ensureColumn("entries", "source_updated_at", "TEXT");
+ensureColumn("entries", "template_version_id", "TEXT");
 if ((db.prepare("PRAGMA table_info(entries)").all() as Array<{ name: string }>).some((column) => column.name === "source_modified_at")) db.exec("UPDATE entries SET source_updated_at=source_modified_at WHERE source_updated_at IS NULL");
 ensureColumn("hypotheses", "spec_json", "TEXT");
 ensureColumn("hypotheses", "spec_version", "TEXT");
@@ -217,6 +221,15 @@ const server = createServer(async (request, response) => {
   const requestUrl = new URL(request.url ?? "/", "http://localhost");
   try {
     if (request.method === "GET" && parts.join("/") === "healthz") return json(response, 200, { status: "ok", service: "metheory-api" });
+    if (parts[0] === "v1" && parts[1] === "templates") {
+      if (request.method === "GET" && parts.length === 2) return json(response, 200, { items: templateRepository.list(requestUrl.searchParams.get("userId") ?? "") });
+      if (request.method === "GET" && parts.length === 3) return json(response, 200, templateRepository.detail(requestUrl.searchParams.get("userId") ?? "", parts[2]));
+      if (request.method === "POST" && parts.length === 3 && parts[2] === "generate-draft") { const input = await body(request); const requestInput = { userId: String(input.userId ?? ""), theme: String(input.theme ?? ""), purpose: typeof input.purpose === "string" ? input.purpose : undefined }; const kind = process.env.AI_PROVIDER ?? "disabled"; if (kind === "manual_chatgpt") { const provider = new ManualChatGPTTemplateProvider(); return json(response, 200, { provider: kind, promptVersion: TEMPLATE_PROMPT_VERSION, prompt: provider.buildPrompt(requestInput), saved: false }); } const provider = kind === "mock" ? new MockTemplateGenerationProvider() : kind === "openai" ? new OpenAITemplateGenerationProvider({ apiKey: process.env.OPENAI_API_KEY ?? "", model: process.env.OPENAI_TEMPLATE_MODEL ?? "gpt-5.4-mini", reasoning: process.env.OPENAI_TEMPLATE_REASONING ?? "none" }) : new DisabledTemplateGenerationProvider(); const draft = await provider.generateTemplateDraft(requestInput); return json(response, 200, { draft, provider: kind, promptVersion: TEMPLATE_PROMPT_VERSION, saved: false }); }
+      if (request.method === "POST" && parts.length === 3 && parts[2] === "validate-draft") { const input = await body(request); const provider = new ManualChatGPTTemplateProvider(); return json(response, 200, { draft: provider.parseResponse(String(input.response ?? "")), valid: true }); }
+      if (request.method === "POST" && parts.length === 3) { const input = await body(request); return json(response, 201, templateRepository.save(String(input.userId ?? ""), input)); }
+      if (request.method === "POST" && parts.length === 4 && parts[3] === "entries") { const input = await body(request); return json(response, 201, templateRepository.createEntry(String(input.userId ?? ""), parts[2], input)); }
+      if (request.method === "DELETE" && parts.length === 3) { const input = await body(request); templateRepository.archive(String(input.userId ?? requestUrl.searchParams.get("userId") ?? ""), parts[2]); return json(response, 200, { archived: true }); }
+    }
     if (parts[0] === "v1" && parts[1] === "ai" && request.method === "GET") {
       const userId = aiUserId(request, requestUrl); const clientId = requestUrl.searchParams.get("clientId") ?? String(request.headers["x-metheory-client-id"] ?? ""); const clientType = requestUrl.searchParams.get("clientType") ?? String(request.headers["x-metheory-client-type"] ?? "other"); const purpose = requestUrl.searchParams.get("purpose") ?? "read_only_ai";
       if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); if (!aiAuthenticatedUser(request, userId)) return json(response, 401, { error: "authenticated_user_required" }); if (!aiClientAllowed(clientId, clientType)) return json(response, 403, { error: "ai_client_not_allowed" }); if (!aiPurposeAllowed(purpose)) return json(response, 403, { error: "ai_purpose_not_allowed" });

@@ -1,0 +1,4 @@
+export type WorkspaceFrontmatter = Record<string, string | boolean>;
+const block = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+export function parseFrontmatter(text: string): { values: WorkspaceFrontmatter; body: string } { const match=text.match(block); if(!match)return { values:{}, body:text }; const values: WorkspaceFrontmatter={}; for(const line of match[1].split(/\r?\n/)){const m=/^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);if(!m)continue;const raw=m[2].trim().replace(/^['"]|['"]$/g,"");values[m[1]]=raw==="true"?true:raw==="false"?false:raw;} return { values, body:text.slice(match[0].length) }; }
+export function serializeFrontmatter(values: WorkspaceFrontmatter, body: string): string { const lines=Object.entries(values).map(([key,value])=>`${key}: ${typeof value === "boolean" ? String(value) : value}`); return lines.length ? `---\n${lines.join("\n")}\n---\n\n${body}` : body; }

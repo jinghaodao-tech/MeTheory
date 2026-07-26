@@ -11,3 +11,11 @@ node_modules/
 apps/mobile/dist/
 *.py[cod]
 artifacts/
+apps/vscode-extension/dist/
+.metheory/cache/
+.metheory/logs/
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+.env

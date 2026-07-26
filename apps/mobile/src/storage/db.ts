@@ -3,7 +3,7 @@ import { seedParameterDefinitions } from './parameterSeed';
 import { migrateLegacyObservations } from './parameterMigration';
 
 export const dbPromise = SQLite.openDatabaseAsync('metheory.sqlite');
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 const migrations: Record<number, string> = {
   1: `CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY NOT NULL, value_json TEXT NOT NULL);
@@ -44,6 +44,7 @@ const migrations: Record<number, string> = {
   12: `CREATE TABLE IF NOT EXISTS search_documents (id TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL, source_kind TEXT NOT NULL CHECK (source_kind IN ('entry','hypothesis','evidence','parameter_value')), source_id TEXT NOT NULL, title TEXT NOT NULL, search_text TEXT NOT NULL, tags_json TEXT NOT NULL DEFAULT '[]', tokens_json TEXT NOT NULL, doc_length INTEGER NOT NULL CHECK (doc_length >= 0), recorded_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (user_id,source_kind,source_id)); CREATE INDEX IF NOT EXISTS idx_search_documents_user_source ON search_documents(user_id,source_kind,recorded_at DESC);`,
   13: `ALTER TABLE entries ADD COLUMN source_updated_at TEXT;`,
   14: `SELECT 1;`,
+  15: `ALTER TABLE entries ADD COLUMN template_version_id TEXT; CREATE TABLE IF NOT EXISTS entry_templates (id TEXT PRIMARY KEY NOT NULL,user_id TEXT NOT NULL,name TEXT NOT NULL,theme TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',current_version_id TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,archived_at TEXT); CREATE TABLE IF NOT EXISTS entry_template_versions (id TEXT PRIMARY KEY NOT NULL,template_id TEXT NOT NULL,version_number INTEGER NOT NULL,generation_source TEXT NOT NULL,ai_provider TEXT,ai_model TEXT,prompt_version TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(template_id,version_number)); CREATE TABLE IF NOT EXISTS entry_template_fields (id TEXT PRIMARY KEY NOT NULL,template_version_id TEXT NOT NULL,field_key TEXT NOT NULL,label TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',input_type TEXT NOT NULL,value_type TEXT NOT NULL,required INTEGER NOT NULL,display_order INTEGER NOT NULL,options_json TEXT NOT NULL DEFAULT '[]',minimum REAL,maximum REAL,unit TEXT,sensitivity TEXT NOT NULL,reason TEXT NOT NULL,UNIQUE(template_version_id,field_key),UNIQUE(template_version_id,display_order)); CREATE TABLE IF NOT EXISTS entry_field_values (id TEXT PRIMARY KEY NOT NULL,entry_id TEXT NOT NULL,template_version_id TEXT NOT NULL,template_field_id TEXT NOT NULL,text_value TEXT,integer_value INTEGER,number_value REAL,boolean_value INTEGER,json_value TEXT,date_value TEXT,datetime_value TEXT,duration_seconds INTEGER,is_missing INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS entry_templates_user_idx ON entry_templates(user_id,archived_at,updated_at);`,
 };
 
 export async function migrate() {

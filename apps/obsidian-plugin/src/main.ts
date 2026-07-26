@@ -6,6 +6,7 @@ type MeTheoryPluginSettings = {
   apiUrl: string;
   userId: string;
   authSubject: string;
+  aiProvider: "manual_chatgpt" | "openai" | "disabled";
 };
 
 type EntryResponse = { created: boolean; entry: { id: string } };
@@ -14,6 +15,7 @@ const DEFAULT_SETTINGS: MeTheoryPluginSettings = {
   apiUrl: "http://127.0.0.1:8100",
   userId: "",
   authSubject: "obsidian-local",
+  aiProvider: "manual_chatgpt",
 };
 
 function sourceUpdatedAt(file: TFile): string {
@@ -49,6 +51,13 @@ class MeTheorySettingTab extends PluginSettingTab {
         this.plugin.settings.userId = value.trim();
         await this.plugin.saveSettings();
       }));
+    new Setting(containerEl)
+      .setName("Template generation mode")
+      .setDesc("manual_chatgpt, openai, or disabled. API keys stay on the local API.")
+      .addText((text) => text.setValue(this.plugin.settings.aiProvider).onChange(async (value) => {
+        const mode = value.trim() as MeTheoryPluginSettings["aiProvider"];
+        if (["manual_chatgpt", "openai", "disabled"].includes(mode)) { this.plugin.settings.aiProvider = mode; await this.plugin.saveSettings(); }
+      }));
   }
 }
 
@@ -63,6 +72,7 @@ export default class MeTheoryEntrySyncPlugin extends Plugin {
       name: "Register current note as MeTheory Entry",
       callback: () => this.registerActiveNote(),
     });
+    this.addCommand({ id: "create-template-draft", name: "Create MeTheory Template", callback: () => this.createTemplateDraft() });
   }
 
   async loadSettings(): Promise<void> {
@@ -111,5 +121,32 @@ export default class MeTheoryEntrySyncPlugin extends Plugin {
     } catch (error) {
       new Notice(`MeTheory registration failed: ${error instanceof Error ? error.message : "unknown_error"}`);
     }
+  }
+
+  async createTemplateDraft(): Promise<void> {
+    const theme = window.prompt("Template theme")?.trim();
+    if (!theme) return;
+    try {
+      const userId = await this.ensureUserId();
+      const response = await fetch(`${this.settings.apiUrl}/v1/templates/generate-draft`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, theme }) });
+      const payload = await response.json() as { prompt?: string; draft?: unknown; error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "template_generation_failed");
+      let draft = payload.draft;
+      if (payload.prompt) {
+        await navigator.clipboard?.writeText(payload.prompt);
+        new Notice("ChatGPT用プロンプトをコピーしました。返却JSONを貼り付けてください。");
+        const result = window.prompt("ChatGPTのJSON結果");
+        if (!result) return;
+        const validation = await fetch(`${this.settings.apiUrl}/v1/templates/validate-draft`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ response: result }) });
+        const validated = await validation.json() as { draft?: unknown; error?: string };
+        if (!validation.ok) throw new Error(validated.error ?? "template_generation_invalid_json");
+        draft = validated.draft;
+      }
+      const approved = window.confirm(`テンプレート案を保存しますか？\n${JSON.stringify(draft).slice(0, 500)}`);
+      if (!approved) return;
+      const saved = await fetch(`${this.settings.apiUrl}/v1/templates`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, approved: true, ...(draft as object), generationSource: payload.prompt ? "user" : "ai", promptVersion: "template-v2" }) });
+      if (!saved.ok) throw new Error((await saved.json() as { error?: string }).error ?? "template_save_failed");
+      new Notice("MeTheory Template saved.");
+    } catch (error) { new Notice(`Template generation failed: ${error instanceof Error ? error.message : "unknown_error"}`); }
   }
 }
