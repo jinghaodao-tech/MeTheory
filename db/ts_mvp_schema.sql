@@ -187,6 +187,7 @@ CREATE TABLE IF NOT EXISTS entries (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   template_id TEXT,
+  template_version_id TEXT,
   episode_id TEXT REFERENCES observation_episodes(id) ON DELETE SET NULL,
   external_source TEXT,
   external_source_id TEXT,
@@ -220,8 +221,67 @@ CREATE INDEX IF NOT EXISTS search_documents_user_source_idx ON search_documents(
 
 CREATE TABLE IF NOT EXISTS entry_templates (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, name TEXT NOT NULL, theme TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', current_version_id TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, archived_at TEXT) STRICT;
 CREATE TABLE IF NOT EXISTS entry_template_versions (id TEXT PRIMARY KEY, template_id TEXT NOT NULL REFERENCES entry_templates(id) ON DELETE CASCADE, version_number INTEGER NOT NULL, generation_source TEXT NOT NULL CHECK(generation_source IN ('ai','user')), ai_provider TEXT, ai_model TEXT, prompt_version TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(template_id,version_number)) STRICT;
-CREATE TABLE IF NOT EXISTS entry_template_fields (id TEXT PRIMARY KEY, template_version_id TEXT NOT NULL REFERENCES entry_template_versions(id) ON DELETE CASCADE, field_key TEXT NOT NULL, label TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', input_type TEXT NOT NULL, value_type TEXT NOT NULL, required INTEGER NOT NULL CHECK(required IN(0,1)), display_order INTEGER NOT NULL, options_json TEXT NOT NULL DEFAULT '[]', minimum REAL, maximum REAL, unit TEXT, sensitivity TEXT NOT NULL CHECK(sensitivity IN('normal','sensitive')), reason TEXT NOT NULL, UNIQUE(template_version_id,field_key), UNIQUE(template_version_id,display_order)) STRICT;
-CREATE TABLE IF NOT EXISTS entry_field_values (id TEXT PRIMARY KEY, entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE, template_version_id TEXT NOT NULL REFERENCES entry_template_versions(id) ON DELETE RESTRICT, template_field_id TEXT NOT NULL REFERENCES entry_template_fields(id) ON DELETE RESTRICT, text_value TEXT, integer_value INTEGER, number_value REAL, boolean_value INTEGER, json_value TEXT, date_value TEXT, datetime_value TEXT, duration_seconds INTEGER, is_missing INTEGER NOT NULL DEFAULT 0 CHECK(is_missing IN(0,1)), created_at TEXT NOT NULL, UNIQUE(entry_id,template_field_id)) STRICT;
+CREATE TABLE IF NOT EXISTS entry_template_fields (id TEXT PRIMARY KEY, template_version_id TEXT NOT NULL REFERENCES entry_template_versions(id) ON DELETE CASCADE, field_key TEXT NOT NULL, label TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', input_type TEXT NOT NULL, value_type TEXT NOT NULL, required INTEGER NOT NULL CHECK(required IN(0,1)), display_order INTEGER NOT NULL, options_json TEXT NOT NULL DEFAULT '[]', minimum REAL, maximum REAL, unit TEXT, sensitivity TEXT NOT NULL CHECK(sensitivity IN('normal','sensitive')), reason TEXT NOT NULL, sensitivity_level TEXT NOT NULL DEFAULT 'normal' CHECK(sensitivity_level IN('normal','sensitive','highly_sensitive')), classification_source TEXT NOT NULL DEFAULT 'system_rule' CHECK(classification_source IN('ai_suggested','user_selected','system_rule')), prohibited_secret_risk INTEGER NOT NULL DEFAULT 0 CHECK(prohibited_secret_risk IN(0,1)), UNIQUE(template_version_id,field_key), UNIQUE(template_version_id,display_order)) STRICT;
+CREATE TABLE IF NOT EXISTS entry_field_values (id TEXT PRIMARY KEY, entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE, template_version_id TEXT NOT NULL REFERENCES entry_template_versions(id) ON DELETE RESTRICT, template_field_id TEXT NOT NULL REFERENCES entry_template_fields(id) ON DELETE RESTRICT, text_value TEXT, integer_value INTEGER, number_value REAL, boolean_value INTEGER, json_value TEXT, date_value TEXT, datetime_value TEXT, duration_seconds INTEGER, is_missing INTEGER NOT NULL DEFAULT 0 CHECK(is_missing IN(0,1)), source_content_hash TEXT, source_updated_at TEXT, confidence REAL, source TEXT, reviewed_at TEXT, updated_at TEXT, created_at TEXT NOT NULL, UNIQUE(entry_id,template_field_id)) STRICT;
 CREATE INDEX IF NOT EXISTS entry_templates_user_idx ON entry_templates(user_id,archived_at,updated_at);
 CREATE INDEX IF NOT EXISTS entry_template_versions_template_idx ON entry_template_versions(template_id,version_number);
 CREATE INDEX IF NOT EXISTS entry_field_values_entry_idx ON entry_field_values(entry_id);
+
+CREATE TABLE IF NOT EXISTS privacy_consents (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  workspace_id TEXT,
+  template_id TEXT,
+  template_version_id TEXT,
+  field_key TEXT NOT NULL,
+  consent_type TEXT NOT NULL CHECK(consent_type IN('sensitive_field_processing','external_ai_transfer','highly_sensitive_downgrade')),
+  provider_id TEXT,
+  destination_fingerprint TEXT,
+  scope TEXT NOT NULL CHECK(scope IN('field','single_value')),
+  granted_at TEXT NOT NULL,
+  revoked_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS privacy_consents_lookup_idx ON privacy_consents(user_id,template_id,template_version_id,field_key,consent_type,revoked_at);
+CREATE TABLE IF NOT EXISTS privacy_audit_events (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  workspace_id TEXT,
+  event_type TEXT NOT NULL,
+  data_category TEXT NOT NULL,
+  affected_count INTEGER NOT NULL DEFAULT 0,
+  occurred_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS privacy_audit_events_user_idx ON privacy_audit_events(user_id,occurred_at);
+CREATE TABLE IF NOT EXISTS privacy_value_overrides (
+  entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+  template_version_id TEXT NOT NULL,
+  field_key TEXT NOT NULL,
+  original_level TEXT NOT NULL CHECK(original_level='highly_sensitive'),
+  effective_level TEXT NOT NULL CHECK(effective_level='sensitive'),
+  consent_id TEXT NOT NULL REFERENCES privacy_consents(id) ON DELETE RESTRICT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(entry_id,template_version_id,field_key)
+) STRICT;
+CREATE TABLE IF NOT EXISTS privacy_extraction_corrections (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  template_id TEXT,
+  template_version_id TEXT,
+  field_key TEXT NOT NULL,
+  source_pattern TEXT NOT NULL,
+  original_value_json TEXT NOT NULL,
+  corrected_value_json TEXT NOT NULL,
+  sensitivity_level TEXT NOT NULL CHECK(sensitivity_level IN('normal','sensitive','highly_sensitive')),
+  created_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS privacy_safe_delete_plans (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  selector_json TEXT NOT NULL,
+  plan_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN('planned','executed','expired','cancelled')),
+  created_at TEXT NOT NULL,
+  executed_at TEXT
+) STRICT;

@@ -5,6 +5,37 @@
   "engines": { "vscode": "^1.90.0" },
   "activationEvents": ["onStartupFinished"],
   "main": "dist/extension.js",
-  "contributes": { "commands": [{"command":"metheory.initializeWorkspace","title":"MeTheory: Initialize Workspace"},{"command":"metheory.syncCurrentFile","title":"MeTheory: Sync Current File"},{"command":"metheory.syncWorkspace","title":"MeTheory: Sync Workspace"},{"command":"metheory.generateTemplate","title":"MeTheory: Generate Template from Theme"},{"command":"metheory.listTemplates","title":"MeTheory: List Templates"},{"command":"metheory.searchEntries","title":"MeTheory: Search Entries"}] },
+  "contributes": {
+    "commands": [
+      { "command": "metheory.initializeWorkspace", "title": "MeTheory: Initialize Workspace" },
+      { "command": "metheory.startNoteFromTheme", "title": "MeTheory: Start Note from Theme" },
+      { "command": "metheory.syncCurrentFile", "title": "MeTheory: Sync Current File" },
+      { "command": "metheory.syncWorkspace", "title": "MeTheory: Sync Workspace" },
+      { "command": "metheory.generateTemplate", "title": "MeTheory: Generate Template from Theme" },
+      { "command": "metheory.listTemplates", "title": "MeTheory: List Templates" },
+      { "command": "metheory.searchEntries", "title": "MeTheory: Search Entries" },
+      { "command": "metheory.openStatus", "title": "MeTheory: Open Status" },
+      { "command": "metheory.startService", "title": "MeTheory: Start Service" },
+      { "command": "metheory.stopService", "title": "MeTheory: Stop Service" },
+      { "command": "metheory.createBackup", "title": "MeTheory: Create Backup" },
+      { "command": "metheory.detectLocalAi", "title": "MeTheory: Detect Local AI" },
+      { "command": "metheory.startLocalAi", "title": "MeTheory: Start Local AI" },
+      { "command": "metheory.stopLocalAi", "title": "MeTheory: Stop Local AI" },
+      { "command": "metheory.testAiConnection", "title": "MeTheory: Test AI Connection" },
+      { "command": "metheory.structureCurrentNote", "title": "MeTheory: Structure Current Note" },
+      { "command": "metheory.reextractCurrentNote", "title": "MeTheory: Re-extract Current Note" },
+      { "command": "metheory.openExtractionReview", "title": "MeTheory: Open Extraction Review" },
+      { "command": "metheory.copyExternalAiPrompt", "title": "MeTheory: Copy External AI Prompt" },
+      { "command": "metheory.openPrivacyView", "title": "MeTheory: Open Privacy View" },
+      { "command": "metheory.listPrivacyConsents", "title": "MeTheory: List Privacy Consents" },
+      { "command": "metheory.grantPrivacyConsent", "title": "MeTheory: Grant Privacy Consent" },
+      { "command": "metheory.revokePrivacyConsent", "title": "MeTheory: Revoke Privacy Consent" },
+      { "command": "metheory.planSafeDelete", "title": "MeTheory: Plan Safe Delete" },
+      { "command": "metheory.executeSafeDelete", "title": "MeTheory: Execute Safe Delete" }
+    ],
+    "viewsContainers": { "activitybar": [{ "id": "metheory", "title": "MeTheory", "icon": "$(book)" }] },
+    "views": { "metheory": [{ "type": "webview", "id": "metheory.start", "name": "Start" }, { "id": "metheory.templates", "name": "Templates" }, { "id": "metheory.review", "name": "Review" }, { "id": "metheory.search", "name": "Search" }, { "type": "webview", "id": "metheory.status", "name": "Status" }, { "type": "webview", "id": "metheory.privacy", "name": "Privacy" }] },
+    "configuration": { "title": "MeTheory", "properties": { "metheory.service.startupMode": { "type": "string", "enum": ["onWorkspaceOpen", "onDemand", "manual"], "default": "onDemand" }, "metheory.service.shutdownMode": { "type": "string", "enum": ["onEditorClose", "idle", "keepRunning"], "default": "idle" }, "metheory.workspace.defaultPath": { "type": "string", "default": "" }, "metheory.notes.openAfterCreate": { "type": "boolean", "default": true }, "metheory.templates.showAuxiliarySuggestions": { "type": "boolean", "default": true }, "metheory.ui.confirmDirectoryCreation": { "type": "boolean", "default": true } } }
+  },
   "scripts": { "build": "node esbuild.mjs", "typecheck": "tsc --noEmit" }
 }

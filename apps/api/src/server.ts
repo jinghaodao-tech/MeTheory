@@ -12,6 +12,7 @@ import { createAiQueryService } from "./aiQueryService.ts";
 import { SqliteEntryRepository } from "./entryRepository.ts";
 import { SqliteSearchDocumentRepository } from "./searchDocumentRepository.ts";
 import { SqliteTemplateRepository } from "./templateRepository.ts";
+import { SqlitePrivacyRepository } from "./privacyRepository.ts";
 import { MockTemplateGenerationProvider, UnavailableTemplateGenerationProvider, DisabledTemplateGenerationProvider, ManualChatGPTTemplateProvider, OpenAITemplateGenerationProvider, TEMPLATE_PROMPT_VERSION } from "../../../packages/templates/src/index.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
@@ -22,6 +23,7 @@ const aiQueryService = createAiQueryService(db);
 const entryRepository = new SqliteEntryRepository(db);
 const searchDocumentRepository = new SqliteSearchDocumentRepository(db);
 const templateRepository = new SqliteTemplateRepository(db);
+const privacyRepository = new SqlitePrivacyRepository(db);
 
 function ensureColumn(table: string, column: string, definition: string): void {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<Record<string, unknown>>;
@@ -45,6 +47,15 @@ ensureColumn("hypothesis_evaluations", "cohort_metrics_json", "TEXT NOT NULL DEF
 ensureColumn("hypothesis_evaluations", "observed_effect", "REAL");
 ensureColumn("hypothesis_evaluations", "required_effect", "REAL NOT NULL DEFAULT 0");
 ensureColumn("hypothesis_evaluations", "data_quality_json", "TEXT NOT NULL DEFAULT '[]'");
+ensureColumn("entry_field_values", "source_content_hash", "TEXT");
+ensureColumn("entry_field_values", "source_updated_at", "TEXT");
+ensureColumn("entry_field_values", "confidence", "REAL");
+ensureColumn("entry_field_values", "source", "TEXT");
+ensureColumn("entry_field_values", "reviewed_at", "TEXT");
+ensureColumn("entry_field_values", "updated_at", "TEXT");
+ensureColumn("entry_template_fields", "sensitivity_level", "TEXT NOT NULL DEFAULT 'normal'");
+ensureColumn("entry_template_fields", "classification_source", "TEXT NOT NULL DEFAULT 'system_rule'");
+ensureColumn("entry_template_fields", "prohibited_secret_risk", "INTEGER NOT NULL DEFAULT 0");
 db.exec("CREATE TABLE IF NOT EXISTS ai_http_access_audit_logs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, client_id TEXT NOT NULL, client_type TEXT NOT NULL, purpose TEXT NOT NULL, requested_parameter_ids_json TEXT NOT NULL, allowed_parameter_ids_json TEXT NOT NULL, denied_parameter_ids_json TEXT NOT NULL, requested_start_at TEXT, requested_end_at TEXT, returned_record_count INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, created_at TEXT NOT NULL)");
 
 const now = () => new Date().toISOString();
@@ -251,6 +262,22 @@ const server = createServer(async (request, response) => {
       db.prepare("INSERT INTO users(id, auth_subject, locale, timezone, created_at) VALUES (?, ?, ?, ?, ?)").run(userId, authSubject, optionalString(input.locale) ?? "ja-JP", optionalString(input.timezone) ?? "Asia/Tokyo", now());
       return json(response, 201, { id: userId });
     }
+    if (parts[0] === "v1" && parts[1] === "privacy") {
+      const queryUserId = requestUrl.searchParams.get("userId") ?? "";
+      if (request.method === "GET" && parts.length === 3 && parts[2] === "status") { if (!userExists(queryUserId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, privacyRepository.status(queryUserId)); }
+      if (request.method === "GET" && parts.length === 3 && parts[2] === "consents") { if (!userExists(queryUserId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, { items: privacyRepository.listConsents(queryUserId, requestUrl.searchParams.get("includeRevoked") === "true") }); }
+      if (request.method === "GET" && parts.length === 3 && parts[2] === "audit-events") { if (!userExists(queryUserId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, { items: privacyRepository.listAuditEvents(queryUserId, Number(requestUrl.searchParams.get("limit") ?? 100)) }); }
+      if (request.method === "GET" && parts.length === 4 && parts[2] === "consents") { if (!userExists(queryUserId)) return json(response, 404, { error: "user_not_found" }); const consent = privacyRepository.getConsent(queryUserId, parts[3]); return consent ? json(response, 200, consent) : json(response, 404, { error: "consent_not_found" }); }
+      if (request.method === "POST" && parts.length === 3 && parts[2] === "consents") { const input = await body(request); const userId = String(input.userId ?? ""); if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); return json(response, 201, privacyRepository.grantConsent({ userId, workspaceId: typeof input.workspaceId === "string" ? input.workspaceId : null, templateId: typeof input.templateId === "string" ? input.templateId : null, templateVersionId: typeof input.templateVersionId === "string" ? input.templateVersionId : null, fieldKey: String(input.fieldKey ?? ""), consentType: input.consentType as any, providerId: typeof input.providerId === "string" ? input.providerId : null, destinationFingerprint: typeof input.destinationFingerprint === "string" ? input.destinationFingerprint : null, scope: input.scope as any, grantedAt: String(input.grantedAt ?? now()) })); }
+      if (request.method === "POST" && parts.length === 3 && parts[2] === "external-ai-check") { const input = await body(request); const userId = String(input.userId ?? ""); if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, privacyRepository.externalAiDecision(userId, { templateId: typeof input.templateId === "string" ? input.templateId : undefined, templateVersionId: typeof input.templateVersionId === "string" ? input.templateVersionId : undefined, fieldKey: String(input.fieldKey ?? ""), providerId: String(input.providerId ?? ""), host: String(input.host ?? ""), connectionType: typeof input.connectionType === "string" ? input.connectionType : undefined, profileId: typeof input.profileId === "string" ? input.profileId : undefined })); }
+      if (request.method === "POST" && parts.length === 5 && parts[2] === "consents" && parts[4] === "revoke") { if (!userExists(queryUserId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, privacyRepository.revokeConsent(queryUserId, parts[3])); }
+      if (request.method === "GET" && parts.length === 3 && parts[2] === "fields") { if (!userExists(queryUserId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, { items: privacyRepository.listFields(queryUserId, requestUrl.searchParams.get("templateId") ?? undefined) }); }
+      if (request.method === "GET" && parts.length === 5 && parts[2] === "fields") { if (!userExists(queryUserId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, { items: privacyRepository.fieldDetail(queryUserId, parts[3], parts[4]) }); }
+      if (request.method === "POST" && parts.length === 5 && parts[2] === "templates" && parts[4] === "downgrade") { const input = await body(request); const userId = String(input.userId ?? ""); if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, templateRepository.downgradeHighlySensitiveField(userId, parts[3], String(input.fieldKey ?? ""), String(input.consentId ?? ""))); }
+      if (request.method === "POST" && parts.length === 4 && parts[2] === "safe-delete" && parts[3] === "plan") { const input = await body(request); const userId = String(input.userId ?? ""); if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); return json(response, 201, privacyRepository.createSafeDeletePlan({ userId, templateId: typeof input.templateId === "string" ? input.templateId : undefined, templateVersionId: typeof input.templateVersionId === "string" ? input.templateVersionId : undefined, fieldKey: typeof input.fieldKey === "string" ? input.fieldKey : undefined, entryId: typeof input.entryId === "string" ? input.entryId : undefined, consentId: typeof input.consentId === "string" ? input.consentId : undefined }, Array.isArray(input.markdownFiles) ? input.markdownFiles : [], Number(input.backupCount ?? 0), Number(input.extractionCandidateCount ?? 0))); }
+      if (request.method === "POST" && parts.length === 4 && parts[2] === "safe-delete" && parts[3] === "execute") { const input = await body(request); const userId = String(input.userId ?? ""); if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, privacyRepository.executeSafeDelete(userId, String(input.planId ?? ""), String(input.confirmation ?? ""))); }
+      if (request.method === "GET" && parts.length === 5 && parts[2] === "safe-delete" && parts[3] === "status") { if (!userExists(queryUserId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, privacyRepository.getSafeDeletePlan(queryUserId, parts[4])); }
+    }
     if (request.method === "POST" && parts.join("/") === "v1/entries") {
       const input = entryWriteInput(await body(request));
       if (!userExists(input.userId)) return json(response, 404, { error: "user_not_found" });
@@ -263,6 +290,12 @@ const server = createServer(async (request, response) => {
       if (!userExists(input.userId)) return json(response, 404, { error: "user_not_found" });
       const result = entryRepository.save(input);
       await searchDocumentRepository.indexEntry(result.entry);
+      return json(response, 200, result);
+    }
+    if (request.method === "POST" && parts.length === 5 && parts[0] === "v1" && parts[1] === "entries" && parts[3] === "extraction" && parts[4] === "apply") {
+      const input = await body(request);
+      const userId = String(input.userId ?? "");
+       const result = entryRepository.applyExtraction(userId, String(parts[2]), { templateVersionId: String(input.templateVersionId ?? ""), values: input.values && typeof input.values === "object" ? input.values as Record<string, unknown> : {}, confidence: input.confidence && typeof input.confidence === "object" ? input.confidence as Record<string, number> : {}, sourceContentHash: String(input.sourceContentHash ?? ""), sourceUpdatedAt: typeof input.sourceUpdatedAt === "string" ? input.sourceUpdatedAt : undefined, provider: typeof input.provider === "string" ? input.provider : undefined, model: typeof input.model === "string" ? input.model : undefined, privacyOverrides: input.privacyOverrides && typeof input.privacyOverrides === "object" ? input.privacyOverrides as Record<string, string> : undefined });
       return json(response, 200, result);
     }
     if (request.method === "GET" && parts.join("/") === "v1/exports/entries") {

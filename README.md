@@ -19,6 +19,8 @@ notification timing, hypothesis status, or Self Model updates.
 - `docs/integration-architecture.md`: Entry, Obsidian, experiments, and future search boundaries.
 - `docs/technical-architecture.md`: module boundaries and runtime flow.
 - `docs/privacy-retention.md`: retention, consent, erasure, and AI safety baseline.
+- `docs/local-ai-phase3.md`: local AI providers, draft approval, extraction, and review boundaries.
+- `docs/privacy-phase4.md`: field privacy classification, consent, safe deletion, and privacy audit behavior.
 - `docs/implementation-roadmap.md`: phased implementation and beta criteria.
 - `docs/notification-policy.md`: notification constraints and user controls.
 - `prompts/ai-templates.json`: versioned AI templates.
@@ -255,3 +257,45 @@ dataset.
 ## Entry Templates
 
 Entry Templates provide reusable, user-approved structures for free records. AI generation returns an unsaved draft; the user must approve it before storage. Templates and immutable versions are stored in local SQLite, and each template Entry keeps the version used at creation. Typed field values are intentionally separate from `observations` and `parameter_values`, so free records do not silently enter hypothesis evaluation. See `docs/template-system.md`.
+
+## Local AI and Review
+
+Phase 3 adds local-only AI provider selection for Ollama, OpenAI-compatible
+local endpoints, Mock, Manual external AI, and Disabled mode. The default is
+Disabled. Local workspace configuration is stored in `.metheory/workspace.json`;
+API keys are read only from the process environment and are not written to
+notes, SQLite exports, or logs. Manual mode only copies a schema prompt and
+accepts pasted JSON after the same domain validation used by generated output.
+
+Template generation writes an unapproved draft to `templates/drafts`. It is
+never saved as a reusable SQLite template until the user runs the approval
+command. Entry structuring also writes a reviewable extraction record with a
+source content hash and source update time. A changed note makes that result
+stale, so it cannot be applied silently. Structured Entry values remain free
+record metadata and are not implicitly converted into observations.
+Structuring requires both `template_id` and `auto_structure: true` in note
+frontmatter, plus an explicit CLI or VS Code command.
+
+Useful commands are `ai detect`, `ai status`, `ai start`, `ai stop`, `ai test`,
+`template generate`, `template draft list`, `template draft show <id>`,
+`template draft set-result <id> <json-file>`, `template draft approve <id>`, `entry structure <note.md>`, and
+`entry extraction-list`. VS Code exposes the corresponding AI detection,
+template, structure, and review commands. Automatic cloud calls are not part
+of this phase; external AI prompts are copied for explicit user interaction.
+
+## Privacy and Safe Delete
+
+Phase 4 adds `normal`, `sensitive`, and `highly_sensitive` field policies.
+Classification suggestions are advisory; the stored policy records the source
+of the final user or system choice. Sensitive field values require field-level
+consent before storage. External AI transfer requires separate consent for the
+field and a hashed destination fingerprint; API keys and raw destination
+secrets are never stored.
+
+`privacy status`, `privacy consents list`, `privacy fields list`, and
+`privacy safe-delete plan <selector-json>` expose the privacy state. Safe
+delete always creates a plan with affected counts and an exact confirmation
+string. Execution is user-scoped and transactional for SQLite values and
+derived Entry search documents. Markdown files are reported for review and
+are never modified automatically. Consent history and deletion audit events
+contain metadata and counts only, not values or note bodies.
