@@ -6,6 +6,12 @@ Each saved template has immutable versions and fields. Entries retain the `templ
 
 `POST /v1/templates/:id/entries` validates required fields, types, ranges, and choices, then writes the Entry and all field values in one SQLite transaction. A failure rolls back the complete operation. Archived templates remain available to existing Entries but are omitted from the normal list.
 
-The current provider boundary includes a deterministic Mock provider for development and tests and an explicit unavailable provider. No external AI or cloud dependency is enabled. Sensitive field values are not added to search documents by default. Obsidian can call the draft endpoint, let the user approve and edit it, then reuse saved templates offline through the local API.
+The current provider boundary includes deterministic Mock and disabled providers, a
+manual ChatGPT copy/paste workflow, and an optional OpenAI API provider. External
+AI is never contacted automatically: a user chooses the provider and approves a
+draft before it can be used. A local or disabled provider remains sufficient for
+the core flow. Sensitive field values are not added to search documents by default.
+Obsidian can call the draft endpoint, let the user approve and edit it, then reuse
+saved templates offline through the local API.
 
 Adding a template or field does not require a schema change. Only the template tables are migrated; existing Entries, observations, hypotheses, and search documents remain intact.

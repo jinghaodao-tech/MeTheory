@@ -25,6 +25,7 @@
       { "command": "metheory.structureCurrentNote", "title": "MeTheory: Structure Current Note" },
       { "command": "metheory.reextractCurrentNote", "title": "MeTheory: Re-extract Current Note" },
       { "command": "metheory.openExtractionReview", "title": "MeTheory: Open Extraction Review" },
+      { "command": "metheory.openSelfUnderstanding", "title": "MeTheory: Open Self Understanding" },
       { "command": "metheory.copyExternalAiPrompt", "title": "MeTheory: Copy External AI Prompt" },
       { "command": "metheory.openPrivacyView", "title": "MeTheory: Open Privacy View" },
       { "command": "metheory.listPrivacyConsents", "title": "MeTheory: List Privacy Consents" },
@@ -34,7 +35,7 @@
       { "command": "metheory.executeSafeDelete", "title": "MeTheory: Execute Safe Delete" }
     ],
     "viewsContainers": { "activitybar": [{ "id": "metheory", "title": "MeTheory", "icon": "$(book)" }] },
-    "views": { "metheory": [{ "type": "webview", "id": "metheory.start", "name": "Start" }, { "id": "metheory.templates", "name": "Templates" }, { "type": "webview", "id": "metheory.review", "name": "Review" }, { "id": "metheory.search", "name": "Search" }, { "type": "webview", "id": "metheory.status", "name": "Status" }, { "type": "webview", "id": "metheory.privacy", "name": "Privacy" }] },
+    "views": { "metheory": [{ "type": "webview", "id": "metheory.start", "name": "Start" }, { "id": "metheory.templates", "name": "Templates" }, { "type": "webview", "id": "metheory.review", "name": "Review" }, { "type": "webview", "id": "metheory.selfUnderstanding", "name": "Self Understanding" }, { "id": "metheory.search", "name": "Search" }, { "type": "webview", "id": "metheory.status", "name": "Status" }, { "type": "webview", "id": "metheory.privacy", "name": "Privacy" }] },
     "configuration": { "title": "MeTheory", "properties": { "metheory.service.startupMode": { "type": "string", "enum": ["onWorkspaceOpen", "onDemand", "manual"], "default": "onDemand" }, "metheory.service.shutdownMode": { "type": "string", "enum": ["onEditorClose", "idle", "keepRunning"], "default": "idle" }, "metheory.workspace.defaultPath": { "type": "string", "default": "" }, "metheory.notes.openAfterCreate": { "type": "boolean", "default": true }, "metheory.templates.showAuxiliarySuggestions": { "type": "boolean", "default": true }, "metheory.ui.confirmDirectoryCreation": { "type": "boolean", "default": true } } }
   },
   "scripts": { "build": "node esbuild.mjs", "typecheck": "tsc --noEmit" }

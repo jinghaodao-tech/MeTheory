@@ -6,7 +6,8 @@ deterministic hypothesis system when a user wants to test a self-belief.
 
 The current product specification is [`docs/current-product-spec.md`](docs/current-product-spec.md).
 It is the source of truth for the Node.js, SQLite, VS Code/Cursor, CLI, and
-Obsidian-first implementation. Older documents are retained as historical
+VS Code/Cursor is the primary writing environment; Obsidian remains a compatible
+Entry source. Older documents are retained as historical
 domain references or future architecture research and do not override it.
 
 The product boundary is explicit: the user chooses the scope of collection,

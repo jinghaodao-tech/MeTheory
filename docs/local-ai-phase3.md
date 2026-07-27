@@ -37,7 +37,9 @@ Confidence is normalized to `0..1`: values at or above `0.85` are suggestions,
 Confidence never grants final approval by itself.
 
 An Entry is eligible for structuring only when its Markdown frontmatter has
-`auto_structure: true` and a `template_id`. The CLI and VS Code commands are
+`tracked: true`, `auto_structure: true`, and an approved `template_version_id`.
+Only those workspace notes are structured after the save debounce; ordinary notes
+never invoke an AI provider. The CLI and VS Code commands are
 still explicit user actions; no background watcher sends note content to an AI.
 
 The API startup migration adds nullable extraction provenance columns to the

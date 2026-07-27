@@ -10,13 +10,15 @@ User experience: enter a theme, open a note in `notes/inbox` immediately,
 write without waiting for AI, attach a reviewed template, and structure only
 the tracked note after saving. Uncertain values are reviewed field by field.
 
-Required work:
+Implemented baseline:
 
-- provisional note creation, `auto_structure: true`, and non-blocking template processing;
+- provisional note creation, `tracked: true`, `auto_structure: true`, and non-blocking template processing;
 - three-second save debounce, source-content hashing, stale-result rejection, and one automatic retry;
-- field-level Review with value, confidence, evidence/source text, previous value, diff, edit, approve, unknown, and re-extract actions;
-- local runtime readiness, one retry, ownership-aware stop, and 15-minute idle shutdown;
+- field-level Review with value, confidence, inferred source, edit, approve, unknown, reject, re-extract, and open-note actions;
+- one retry, ownership-aware stop, and 15-minute idle protection for MeTheory-owned local runtime processes;
 - human-readable CLI output by default and stable `--json` output for agents.
+
+Remaining refinement: show per-field existing-value diffs, richer source spans, and sensitivity labels directly in Review, and add runtime-specific readiness polling.
 
 ## Stage 2: self-understanding vertical slice
 

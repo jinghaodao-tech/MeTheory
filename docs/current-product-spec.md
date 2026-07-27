@@ -35,14 +35,16 @@ VS Code and Cursor are the primary desktop workflow. The CLI provides workspace,
 - Local Node API and SQLite schema for Entries, templates, structured field values, hypotheses, evaluations, evidence, privacy, and search.
 - Shared Markdown parsing, timestamp preservation, generated Obsidian bundle, and idempotent Entry sync.
 - Local AI provider boundary, manual ChatGPT prompt/result workflow, mock provider, disabled provider, extraction hashing, stale-result rejection, and privacy checks.
-- Workspace initialization, status, backup/restore checks, CLI extraction review, and VS Code Start, Status, Privacy, Templates, Review, and Entries views.
+- Workspace initialization, status, backup/restore checks, CLI extraction review, and VS Code Start, Status, Privacy, Templates, Review, Self Understanding, and Entries views.
+- Provisional inbox-note creation, non-blocking template suggestions, tracked-note save debounce, a single extraction retry, and explicit extraction approval before SQLite updates.
+- Self-understanding analysis over confirmed values, data-shortage reporting, hypothesis ratings, and user-confirmed Self Model additions.
 - Deterministic hypothesis evaluation, candidate generation primitives, evidence inspection, dynamic question support in the mobile experiment client, and `npm run verify`.
 
 ## Next implementation
 
-1. Finish the end-to-end desktop flow: create the provisional note, attach a reviewed template, debounce tracked-note extraction, and expose field-level review actions.
-2. Add a desktop self-understanding view that turns structured values into three to five candidate hypotheses with supporting and contradicting records, a user review, a next small experiment, and a proposed Self Model update.
-3. Complete local runtime lifecycle management for MeTheory-owned processes, including readiness, one retry, and 15-minute idle shutdown.
+1. Add richer Review context for field labels, source spans, existing-value diffs, and field sensitivity in the desktop UI.
+2. Expand self-understanding filters to choose template and fields, while preserving the confirmed-value-only boundary.
+3. Complete readiness polling for each supported local runtime; process ownership, one retry, and idle-operation protection already exist.
 4. Improve ordinary backup/delete UX while keeping advanced export history and encryption out of the initial version.
 
 ## Non-goals
