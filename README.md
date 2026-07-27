@@ -5,6 +5,8 @@ form records, later structure selected information, and use the existing
 deterministic hypothesis system when a user wants to test a self-belief.
 
 The current product specification is [`docs/current-product-spec.md`](docs/current-product-spec.md).
+For the practical self-understanding flow and its non-clinical analysis boundary,
+see [`docs/self-understanding-practical-v1.md`](docs/self-understanding-practical-v1.md).
 It is the source of truth for the Node.js, SQLite, VS Code/Cursor, CLI, and
 VS Code/Cursor is the primary writing environment; Obsidian remains a compatible
 Entry source. Older documents are retained as historical
@@ -29,6 +31,7 @@ notification timing, hypothesis status, or Self Model updates.
 - `docs/privacy-phase4.md`: field privacy classification, consent, safe deletion, and privacy audit behavior.
 - `docs/implementation-roadmap.md`: phased implementation and beta criteria.
 - `docs/current-product-spec.md`: current product scope, boundaries, and implementation status.
+- `docs/self-understanding-practical-v1.md`: confirmed-value analysis and Self Model review flow.
 - `docs/notification-policy.md`: notification constraints and user controls.
 - `prompts/ai-templates.json`: versioned AI templates.
 - `schemas/domain-schema.json`: domain data contract.
@@ -315,12 +318,20 @@ contain metadata and counts only, not values or note bodies.
 
 ## Self-understanding vertical slice
 
-`POST /v1/self-understanding/analyze` and the CLI command
-`self-understanding analyze` aggregate reviewed Entry field values over a
-selected period and return up to five deterministic, non-diagnostic
-hypotheses. Each result includes the period, supporting and contradicting
-Entry IDs, missing-data flags, confidence, a small next action, and a proposed
-Self Model statement. Use `self-understanding review <candidate-id> fits`,
-`does_not_fit`, or `on_hold` to record the user's judgment. A `fits` review
-creates a proposed Self Model candidate; accepting it is a separate explicit
-review action.
+`POST /v1/self-understanding/analyze` aggregates reviewed Entry field values
+over a selected one-to-four-week period. It accepts optional `templateId` and
+`fieldKeys` filters, requires eight Entries by default, and returns at most five
+deterministic, non-diagnostic hypotheses. When data is insufficient it returns
+a concrete shortage instead of a hypothesis. Each result includes a status,
+period, supporting and contradicting Entry IDs, missing-data flags, a Japanese
+fallback explanation, a small next action, and a proposed Self Model statement.
+
+In VS Code, open **Self Understanding**, select the period, template, and
+fields, then analyze confirmed values. Rate a result as `fits`,
+`does_not_fit`, or `on_hold`; a `fits` review creates an editable proposal.
+Only a separate explicit acceptance adds it to Self Model. See
+[`docs/self-understanding-practical-v1.md`](docs/self-understanding-practical-v1.md)
+for the complete boundary and API workflow.
+
+From the workspace CLI, use
+`self-understanding analyze --from=2026-07-01T00:00:00.000Z --to=2026-07-28T00:00:00.000Z --template=<template-id> --field=<field-key>`.

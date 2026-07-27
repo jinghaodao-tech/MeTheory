@@ -13,6 +13,13 @@ CREATE TABLE IF NOT EXISTS self_beliefs (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   statement TEXT NOT NULL,
   source_kind TEXT NOT NULL CHECK (source_kind IN ('user', 'import', 'ai_structured')),
+  source_hypothesis_id TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','questioned','archived')),
+  user_note TEXT NOT NULL DEFAULT '',
+  accepted_at TEXT,
+  last_reviewed_at TEXT,
+  supporting_period_start TEXT,
+  supporting_period_end TEXT,
   created_at TEXT NOT NULL
 ) STRICT;
 
@@ -209,6 +216,11 @@ CREATE TABLE IF NOT EXISTS hypothesis_reviews (
   candidate_id TEXT NOT NULL,
   rating TEXT NOT NULL CHECK (rating IN ('fits','does_not_fit','on_hold')),
   note TEXT NOT NULL DEFAULT '',
+  analysis_start_at TEXT,
+  analysis_end_at TEXT,
+  template_version_id TEXT,
+  field_pair_json TEXT NOT NULL DEFAULT '{}',
+  reviewed_at TEXT,
   created_at TEXT NOT NULL
 ) STRICT;
 CREATE INDEX IF NOT EXISTS hypothesis_reviews_user_candidate_idx ON hypothesis_reviews(user_id, candidate_id, created_at DESC);
@@ -218,6 +230,12 @@ CREATE TABLE IF NOT EXISTS self_model_candidates (
   candidate_id TEXT NOT NULL,
   statement TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed','accepted','rejected')),
+  source_hypothesis_id TEXT,
+  supporting_period_start TEXT,
+  supporting_period_end TEXT,
+  user_note TEXT NOT NULL DEFAULT '',
+  accepted_at TEXT,
+  last_reviewed_at TEXT,
   created_at TEXT NOT NULL,
   reviewed_at TEXT
 ) STRICT;

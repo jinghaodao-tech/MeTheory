@@ -37,13 +37,13 @@ VS Code and Cursor are the primary desktop workflow. The CLI provides workspace,
 - Local AI provider boundary, manual ChatGPT prompt/result workflow, mock provider, disabled provider, extraction hashing, stale-result rejection, and privacy checks.
 - Workspace initialization, status, backup/restore checks, CLI extraction review, and VS Code Start, Status, Privacy, Templates, Review, Self Understanding, and Entries views.
 - Provisional inbox-note creation, non-blocking template suggestions, tracked-note save debounce, a single extraction retry, and explicit extraction approval before SQLite updates.
-- Self-understanding analysis over confirmed values, data-shortage reporting, hypothesis ratings, and user-confirmed Self Model additions.
+- Self-understanding Practical v1: confirmed-value-only analysis, eight-record quality gate, condition/result filtering, deterministic Japanese explanations, evidence links, ratings, and editable user-confirmed Self Model additions.
 - Deterministic hypothesis evaluation, candidate generation primitives, evidence inspection, dynamic question support in the mobile experiment client, and `npm run verify`.
 
 ## Next implementation
 
 1. Add richer Review context for field labels, source spans, existing-value diffs, and field sensitivity in the desktop UI.
-2. Expand self-understanding filters to choose template and fields, while preserving the confirmed-value-only boundary.
+2. Add optional local-only AI wording from the validated self-understanding DTO, without changing deterministic evidence or automatically sending note text.
 3. Complete readiness polling for each supported local runtime; process ownership, one retry, and idle-operation protection already exist.
 4. Improve ordinary backup/delete UX while keeping advanced export history and encryption out of the initial version.
 

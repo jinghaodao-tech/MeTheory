@@ -33,6 +33,12 @@ starting/continuing/recovery, state-dependent tendencies, and relatively stable
 tendencies. The deterministic comparison evaluator remains the authority for
 evidence direction and insufficiency.
 
+Practical v1 now requires eight confirmed Entries and three values in each
+comparison group, supports template and field filters, and labels candidates as
+emerging, relatively stable, or unstable. See
+[`self-understanding-practical-v1.md`](self-understanding-practical-v1.md) for
+the non-clinical boundary and the persisted review flow.
+
 ## Stage 3: minimum practical safety
 
 - sensitive-field warnings and one-time field approval;
