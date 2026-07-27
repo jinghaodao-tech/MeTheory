@@ -4,6 +4,11 @@ MeTheory is a local-first personal information foundation. It can keep free
 form records, later structure selected information, and use the existing
 deterministic hypothesis system when a user wants to test a self-belief.
 
+The current product specification is [`docs/current-product-spec.md`](docs/current-product-spec.md).
+It is the source of truth for the Node.js, SQLite, VS Code/Cursor, CLI, and
+Obsidian-first implementation. Older documents are retained as historical
+domain references or future architecture research and do not override it.
+
 The product boundary is explicit: the user chooses the scope of collection,
 the system chooses when and what to collect, and AI may only propose bounded
 interpretations or candidates. AI never decides facts, evidence strength,
@@ -22,6 +27,7 @@ notification timing, hypothesis status, or Self Model updates.
 - `docs/local-ai-phase3.md`: local AI providers, draft approval, extraction, and review boundaries.
 - `docs/privacy-phase4.md`: field privacy classification, consent, safe deletion, and privacy audit behavior.
 - `docs/implementation-roadmap.md`: phased implementation and beta criteria.
+- `docs/current-product-spec.md`: current product scope, boundaries, and implementation status.
 - `docs/notification-policy.md`: notification constraints and user controls.
 - `prompts/ai-templates.json`: versioned AI templates.
 - `schemas/domain-schema.json`: domain data contract.
@@ -273,8 +279,14 @@ command. Entry structuring also writes a reviewable extraction record with a
 source content hash and source update time. A changed note makes that result
 stale, so it cannot be applied silently. Structured Entry values remain free
 record metadata and are not implicitly converted into observations.
-Structuring requires both `template_id` and `auto_structure: true` in note
-frontmatter, plus an explicit CLI or VS Code command.
+New notes created from the VS Code Start view are provisional: they are written
+to `notes/inbox`, opened immediately, and marked `tracked: true` and
+`auto_structure: true`. Template search and attachment continue in the
+background. Once a template is attached, the watcher waits three seconds
+after a save before structuring the tracked note. It retries once, records a
+content hash, and rejects stale results. Ordinary notes without `tracked:
+true` never call AI automatically. Manual CLI and VS Code structure commands
+remain available.
 
 Useful commands are `ai detect`, `ai status`, `ai start`, `ai stop`, `ai test`,
 `template generate`, `template draft list`, `template draft show <id>`,
@@ -299,3 +311,15 @@ string. Execution is user-scoped and transactional for SQLite values and
 derived Entry search documents. Markdown files are reported for review and
 are never modified automatically. Consent history and deletion audit events
 contain metadata and counts only, not values or note bodies.
+
+## Self-understanding vertical slice
+
+`POST /v1/self-understanding/analyze` and the CLI command
+`self-understanding analyze` aggregate reviewed Entry field values over a
+selected period and return up to five deterministic, non-diagnostic
+hypotheses. Each result includes the period, supporting and contradicting
+Entry IDs, missing-data flags, confidence, a small next action, and a proposed
+Self Model statement. Use `self-understanding review <candidate-id> fits`,
+`does_not_fit`, or `on_hold` to record the user's judgment. A `fits` review
+creates a proposed Self Model candidate; accepting it is a separate explicit
+review action.

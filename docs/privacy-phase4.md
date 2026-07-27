@@ -4,10 +4,14 @@
 
 Template fields keep the compatible `sensitivity` column and add
 `sensitivity_level`, `classification_source`, and `prohibited_secret_risk`.
-The levels are `normal`, `sensitive`, and `highly_sensitive`.
-`suggestFieldPrivacy` is deterministic and detects likely credentials as well
-as health, location, identity, and intimate fields. AI classifications cannot
-be persisted until the user confirms them.
+The levels are `normal`, `sensitive`, and `highly_sensitive`; prohibited
+secrets such as passwords and API keys are rejected rather than classified as
+storable data. `suggestFieldPrivacy` is deterministic and detects likely
+credentials as well as personal health, medication, financial, relationship,
+exact-location, third-party, and highly identifying fields. General private
+records are `sensitive`; exact addresses, identifying medical detail,
+third-party secrets, and severe harm information are `highly_sensitive`. AI
+classifications cannot be persisted until the user confirms them.
 
 Fields that look like passwords, API keys, tokens, session cookies, or recovery
 secrets are rejected at template persistence. Secret-shaped values are rejected

@@ -1,37 +1,55 @@
 # Implementation Roadmap
 
-## Phase 1: core MVP
+This roadmap follows user-visible product stages. The current scope is defined
+by [`current-product-spec.md`](current-product-spec.md); this file is the
+execution order, not a separate product definition.
 
-- Event model, authentication, device registration, and offline sync.
-- Random / Hypothesis / Follow-up check-in flows.
-- Notification preferences, quiet hours, budget, snooze, skip, and expiry.
-- Deterministic evidence aggregation and an Evidence UI.
-- PostgreSQL migration and a local SQLite test fixture.
+## Stage 1: recording and structuring
 
-## Phase 2: constrained AI
+User experience: enter a theme, open a note in `notes/inbox` immediately,
+write without waiting for AI, attach a reviewed template, and structure only
+the tracked note after saving. Uncertain values are reviewed field by field.
 
-- Self Belief structuring with redaction and JSON-schema validation.
-- Hypothesis candidate generation with a maximum of three candidates.
-- Next-question suggestion with allowed question types.
-- Safe explanation rendering with explicit insufficiency states.
-- Offline evaluation dataset and provider/model lineage.
+Required work:
 
-## Phase 3: trust and operations
+- provisional note creation, `auto_structure: true`, and non-blocking template processing;
+- three-second save debounce, source-content hashing, stale-result rejection, and one automatic retry;
+- field-level Review with value, confidence, evidence/source text, previous value, diff, edit, approve, unknown, and re-extract actions;
+- local runtime readiness, one retry, ownership-aware stop, and 15-minute idle shutdown;
+- human-readable CLI output by default and stable `--json` output for agents.
 
-- Consent, retention tiers, export, and erasure propagation.
-- OpenTelemetry traces, Sentry error reporting, and product analytics.
-- Idempotency tests, notification receipt tests, and deterministic replay tests.
-- Dockerized API/worker deployment and versioned database migrations.
+## Stage 2: self-understanding vertical slice
 
-## Phase 4: scale only when evidence requires it
+For a selected one-to-four-week period, aggregate structured values and present
+three to five non-diagnostic hypotheses. Each hypothesis shows the statement,
+period, supporting Entries, contradicting Entries, missing data, confidence,
+user review (`fits`, `does_not_fit`, `on_hold`), a small next experiment, and a
+proposed Self Model update. Acceptance never happens automatically.
 
-- Reassess a dedicated workflow queue or vector database after usage data.
-- Add additional AI providers behind the adapter, not in domain modules.
-- Introduce aggregate privacy controls for cross-user research.
+The first domains are behavior, fatigue and mood, person/environment fit,
+starting/continuing/recovery, state-dependent tendencies, and relatively stable
+tendencies. The deterministic comparison evaluator remains the authority for
+evidence direction and insufficiency.
 
-## Exit criteria for the first beta
+## Stage 3: minimum practical safety
 
-- AI outage leaves check-in, response storage, and basic summaries functional.
-- Replaying the same raw events and rule version produces the same summary.
-- A user can inspect, export, and delete their stored data.
-- Missing data is visible and does not count as evidence against a hypothesis.
+- sensitive-field warnings and one-time field approval;
+- external AI approval by template field, provider, and destination host;
+- refusal to persist passwords, API keys, tokens, or private keys;
+- ordinary backup and ordinary deletion;
+- no automatic Markdown body edits.
+
+Advanced diff exports, anonymous export IDs, encrypted exports, complex backup
+regeneration, and detailed export history are later work.
+
+## Deferred architecture
+
+Cloud sync, PostgreSQL/vector databases, MCP actions, general-purpose desktop
+packaging, and distributed services remain future architecture research. The
+mobile experiment client remains supported but does not redefine the primary
+desktop product flow.
+
+## Historical beta criteria
+
+The earlier beta checklist is retained for reference. It does not require
+cloud deployment or a PostgreSQL migration for the current local-first MVP.

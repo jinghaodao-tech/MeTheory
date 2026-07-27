@@ -203,6 +203,26 @@ CREATE TABLE IF NOT EXISTS entries (
 CREATE INDEX IF NOT EXISTS entries_user_recorded_idx ON entries(user_id, recorded_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS entries_external_identity_idx ON entries(user_id, external_source, external_source_id) WHERE external_source IS NOT NULL AND external_source_id IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS hypothesis_reviews (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  candidate_id TEXT NOT NULL,
+  rating TEXT NOT NULL CHECK (rating IN ('fits','does_not_fit','on_hold')),
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS hypothesis_reviews_user_candidate_idx ON hypothesis_reviews(user_id, candidate_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS self_model_candidates (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  candidate_id TEXT NOT NULL,
+  statement TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed','accepted','rejected')),
+  created_at TEXT NOT NULL,
+  reviewed_at TEXT
+) STRICT;
+CREATE INDEX IF NOT EXISTS self_model_candidates_user_idx ON self_model_candidates(user_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS search_documents (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
