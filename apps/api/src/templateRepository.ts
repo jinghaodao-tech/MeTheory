@@ -17,7 +17,12 @@ export class SqliteTemplateRepository {
     const template = this.db.prepare("SELECT * FROM entry_templates WHERE user_id=? AND id=?").get(userId, templateId) as Record<string, unknown> | undefined;
     if (!template) throw new Error("template_not_found");
     const version = this.db.prepare("SELECT * FROM entry_template_versions WHERE id=?").get(String(template.current_version_id)) as Record<string, unknown>;
-    const fields = this.db.prepare("SELECT * FROM entry_template_fields WHERE template_version_id=? ORDER BY display_order").all(String(version.id)).map((row: any) => ({ ...row, options: JSON.parse(row.options_json) }));
+    const fields = this.db.prepare("SELECT * FROM entry_template_fields WHERE template_version_id=? ORDER BY display_order").all(String(version.id)).map((row: any) => ({
+      ...row,
+      minimum: row.minimum === null ? undefined : row.minimum,
+      maximum: row.maximum === null ? undefined : row.maximum,
+      options: JSON.parse(row.options_json)
+    }));
     return { ...template, currentVersion: { ...version, fields } };
   }
 

@@ -24,7 +24,7 @@ Markdown is the human-readable source for free records. SQLite is the local oper
 
 ## AI boundary
 
-AI may suggest templates, titles, structured values, and wording for questions. AI must not decide facts, evidence strength, diagnosis, hypothesis status, consent, notification timing, or Self Model updates. Every extracted value is reviewable, stale extraction results are rejected, and deterministic fallback behavior keeps recording available.
+AI may suggest templates, titles, structured values, wording for questions, and plain-language explanations of an already computed self-understanding candidate. AI must not decide facts, evidence strength, diagnosis, hypothesis status, consent, notification timing, or Self Model updates. Self-understanding explanation receives a DTO with aggregate statistics and allowlisted Entry references, never Markdown bodies. Only localhost AI endpoints are accepted; invalid JSON, invented statistics, unknown Entry IDs, or clinical and absolute claims fall back to deterministic wording. Every extracted value is reviewable, stale extraction results are rejected, and deterministic fallback behavior keeps recording available.
 
 ## Supported clients
 
@@ -37,15 +37,20 @@ VS Code and Cursor are the primary desktop workflow. The CLI provides workspace,
 - Local AI provider boundary, manual ChatGPT prompt/result workflow, mock provider, disabled provider, extraction hashing, stale-result rejection, and privacy checks.
 - Workspace initialization, status, backup/restore checks, CLI extraction review, and VS Code Start, Status, Privacy, Templates, Review, Self Understanding, and Entries views.
 - Provisional inbox-note creation, non-blocking template suggestions, tracked-note save debounce, a single extraction retry, and explicit extraction approval before SQLite updates.
-- Self-understanding Practical v1: confirmed-value-only analysis, eight-record quality gate, condition/result filtering, deterministic Japanese explanations, evidence links, ratings, and editable user-confirmed Self Model additions.
+- Self-understanding Practical v1: confirmed-value-only analysis, eight-record quality gate, condition/result filtering, stable/unstable/unknown period checks, deterministic Japanese explanations, optional validated localhost-AI wording, evidence links, ratings, and editable user-confirmed Self Model additions.
 - Deterministic hypothesis evaluation, candidate generation primitives, evidence inspection, dynamic question support in the mobile experiment client, and `npm run verify`.
 
 ## Next implementation
 
 1. Add richer Review context for field labels, source spans, existing-value diffs, and field sensitivity in the desktop UI.
-2. Add optional local-only AI wording from the validated self-understanding DTO, without changing deterministic evidence or automatically sending note text.
-3. Complete readiness polling for each supported local runtime; process ownership, one retry, and idle-operation protection already exist.
-4. Improve ordinary backup/delete UX while keeping advanced export history and encryption out of the initial version.
+2. Complete readiness polling for each supported local runtime; process ownership, one retry, and idle-operation protection already exist.
+3. Improve ordinary backup/delete UX while keeping advanced export history and encryption out of the initial version.
+
+Self-understanding explanation uses deterministic wording by default. Optional
+local wording is enabled with `SELF_UNDERSTANDING_AI_PROVIDER=ollama` or
+`openai-compatible-local`. Configure `SELF_UNDERSTANDING_AI_BASE_URL` and
+`SELF_UNDERSTANDING_AI_MODEL` as needed. The URL must resolve to
+`localhost`, `127.0.0.1`, or `::1`; an external host is rejected.
 
 ## Non-goals
 

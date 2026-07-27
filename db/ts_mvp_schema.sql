@@ -264,6 +264,33 @@ CREATE TABLE IF NOT EXISTS entry_field_values (id TEXT PRIMARY KEY, entry_id TEX
 CREATE INDEX IF NOT EXISTS entry_templates_user_idx ON entry_templates(user_id,archived_at,updated_at);
 CREATE INDEX IF NOT EXISTS entry_template_versions_template_idx ON entry_template_versions(template_id,version_number);
 CREATE INDEX IF NOT EXISTS entry_field_values_entry_idx ON entry_field_values(entry_id);
+CREATE TRIGGER IF NOT EXISTS hypothesis_reviews_infer_template_version
+AFTER INSERT ON hypothesis_reviews
+WHEN NEW.template_version_id IS NULL
+  AND NEW.analysis_start_at IS NOT NULL
+  AND NEW.analysis_end_at IS NOT NULL
+BEGIN
+  UPDATE hypothesis_reviews
+  SET template_version_id = (
+    SELECT CASE
+      WHEN COUNT(DISTINCT ev.template_version_id) = 1
+      THEN MIN(ev.template_version_id)
+      ELSE NULL
+    END
+    FROM entries e
+    JOIN entry_field_values ev ON ev.entry_id = e.id
+    JOIN entry_template_fields f ON f.id = ev.template_field_id
+    WHERE e.user_id = NEW.user_id
+      AND e.archived_at IS NULL
+      AND e.recorded_at >= NEW.analysis_start_at
+      AND e.recorded_at <= NEW.analysis_end_at
+      AND (
+        f.field_key = json_extract(NEW.field_pair_json, '$.condition')
+        OR f.field_key = json_extract(NEW.field_pair_json, '$.outcome')
+      )
+  )
+  WHERE id = NEW.id;
+END;
 
 CREATE TABLE IF NOT EXISTS privacy_consents (
   id TEXT PRIMARY KEY,
