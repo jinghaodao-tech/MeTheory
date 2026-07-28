@@ -152,6 +152,7 @@ export function chooseNotificationMinute(input: NotificationPolicyInput): number
 
 export * from './sourceAdapters.ts';
 export * from './questionBudget.ts';
+export * from './provenance.ts';
 export * from './syntheticData.ts';
 export * from './replication.ts';
 export * from './aiProvider.ts';

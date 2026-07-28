@@ -33,6 +33,7 @@ notification timing, hypothesis status, or Self Model updates.
 - `docs/current-product-spec.md`: current product scope, boundaries, and implementation status.
 - `docs/self-understanding-practical-v1.md`: confirmed-value analysis and Self Model review flow.
 - `docs/self-understanding-construct-catalog.md`: allowlisted non-clinical constructs and semantic-role mapping.
+- `docs/external-assets.md`: local structured output, ActivityWatch, baseline self-perception, question quality, fixed charts, and provenance.
 - `docs/ai-review-loop-setup.md`: optional ChatGPT Review Bridge to local Codex improvement loop.
 - `docs/notification-policy.md`: notification constraints and user controls.
 - `prompts/ai-templates.json`: versioned AI templates.
@@ -71,6 +72,9 @@ Run the TypeScript domain tests:
 
 ```powershell
 npm.cmd test
+
+# External-asset boundary tests
+npm.cmd run test:external-assets
 ```
 
 Start the TypeScript MVP API:

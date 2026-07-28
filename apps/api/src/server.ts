@@ -21,8 +21,11 @@ import {
   OpenAICompatibleLocalInterpretationProvider,
   toSelfUnderstandingHypothesisView,
   validateSelfModelStatement,
-  type UnderstandingRecord
+  type UnderstandingRecord,
+  baselineItems,
+  createBaselineResponse
 } from "../../../packages/self-understanding/src/index.ts";
+import { ActivityWatchAdapter } from "../../../packages/domain/src/activitywatch.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.METHEORY_DB ?? resolve(root, "data", "metheory.sqlite3");
@@ -464,6 +467,46 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "POST" && parts.join("/") === "v1/self-understanding/analyze") {
       const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, await analyzeSelfUnderstandingWithInterpretation(userId, input));
+    }
+    if (parts[0] === "v1" && parts[1] === "activitywatch") {
+      const activityWatchEnabled = process.env.ACTIVITYWATCH_ENABLED === "true";
+      const adapter = new ActivityWatchAdapter({ baseUrl: process.env.ACTIVITYWATCH_URL ?? "http://127.0.0.1:5600" });
+      if (request.method === "GET" && parts[2] === "status") return json(response, 200, { enabled: activityWatchEnabled, ...(activityWatchEnabled ? await adapter.status() : { running: false, baseUrl: adapter.baseUrl }) });
+      if (!activityWatchEnabled) return json(response, 409, { error: "activitywatch_disabled" });
+      if (request.method === "GET" && parts[2] === "buckets") return json(response, 200, { items: await adapter.buckets() });
+      if (request.method === "POST" && (parts[2] === "preview" || parts[2] === "import")) {
+        const input = await body(request);
+        const bucketIds = Array.isArray(input.bucketIds) ? input.bucketIds.filter((value): value is string => typeof value === "string").slice(0, 10) : [];
+        const startAt = optionalString(input.startAt) ?? "";
+        const endAt = optionalString(input.endAt) ?? "";
+        if (!bucketIds.length || !startAt || !endAt || Date.parse(startAt) >= Date.parse(endAt)) return json(response, 400, { error: "activitywatch_period_invalid" });
+        const observations = await adapter.preview(bucketIds, startAt, endAt);
+        if (parts[2] === "preview") return json(response, 200, { source: "activitywatch", startAt, endAt, count: observations.length, items: observations });
+        if (input.confirm !== true) return json(response, 400, { error: "activitywatch_import_confirmation_required" });
+        const userId = optionalString(input.userId) ?? "";
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        let imported = 0;
+        for (const observation of observations) {
+          const result = db.prepare("INSERT OR IGNORE INTO external_observations(id,user_id,source,source_event_id,observed_at,duration_seconds,semantic_role,category,project_label,privacy_level,imported_at,user_confirmed,original_reference,transform_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(observation.id, userId, observation.source, observation.sourceEventId ?? null, observation.observedAt, observation.durationSeconds ?? null, observation.semanticRole, observation.category, observation.projectLabel ?? null, observation.privacyLevel, observation.importedAt, 1, observation.sourceEventId ?? null, "activitywatch-v1");
+          imported += Number(result.changes ?? 0);
+        }
+        return json(response, 201, { source: "activitywatch", count: observations.length, imported, skipped: observations.length - imported });
+      }
+    }
+    if (parts[0] === "v1" && parts[1] === "self-understanding" && parts[2] === "baseline") {
+      if (request.method === "GET" && parts.length === 3) return json(response, 200, { itemSetVersion: "ipip-paraphrase-ja-v1", items: baselineItems() });
+      const input = request.method === "POST" ? await body(request) : {};
+      const userId = request.method === "GET" ? requestUrl.searchParams.get("userId") ?? "" : optionalString(input.userId) ?? "";
+      const resolvedUserId = request.method === "DELETE" ? requestUrl.searchParams.get("userId") ?? "" : userId;
+      if (!userExists(resolvedUserId)) return json(response, 404, { error: "user_not_found" });
+      if (request.method === "GET" && parts.length === 4 && parts[3] === "responses") return json(response, 200, { items: db.prepare("SELECT * FROM baseline_self_perceptions WHERE user_id=? AND deleted_at IS NULL ORDER BY recorded_at").all(resolvedUserId) });
+      if (request.method === "POST" && parts.length === 4 && parts[3] === "responses") {
+        const item = createBaselineResponse({ id: id("baseline"), itemKey: String(input.itemKey ?? ""), response: Number(input.response), recordedAt: optionalString(input.recordedAt), useForSelfUnderstanding: input.useForSelfUnderstanding !== false });
+        db.prepare("INSERT INTO baseline_self_perceptions(id,user_id,source,item_set_version,item_key,original_item_reference,statement_ja,response,response_minimum,response_maximum,recorded_at,user_confirmed,use_for_self_understanding,privacy_level,provenance_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,item_set_version,item_key) DO UPDATE SET response=excluded.response,recorded_at=excluded.recorded_at,user_confirmed=excluded.user_confirmed,use_for_self_understanding=excluded.use_for_self_understanding,deleted_at=NULL").run(item.id, resolvedUserId, item.source, item.itemSetVersion, item.itemKey, item.originalItemReference ?? null, item.statementJa, item.response, item.responseScale.minimum, item.responseScale.maximum, item.recordedAt, 1, item.useForSelfUnderstanding ? 1 : 0, item.privacyLevel, JSON.stringify({ source: item.source, importedAt: item.recordedAt, recordedAt: item.recordedAt, userConfirmed: true, transformVersion: item.itemSetVersion, privacyLevel: item.privacyLevel }));
+        return json(response, 201, item);
+      }
+      if (request.method === "POST" && parts.length === 4 && parts[3] === "disable") { db.prepare("UPDATE baseline_self_perceptions SET use_for_self_understanding=0 WHERE user_id=? AND deleted_at IS NULL").run(resolvedUserId); return json(response, 200, { disabled: true }); }
+      if (request.method === "DELETE" && parts.length === 3) { db.prepare("UPDATE baseline_self_perceptions SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL").run(now(), resolvedUserId); return json(response, 200, { deleted: true }); }
     }
     if (request.method === "GET" && parts.join("/") === "v1/self-understanding/options") {
       const userId = requestUrl.searchParams.get("userId") ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); const templates = db.prepare("SELECT DISTINCT t.id,t.name FROM entry_templates t JOIN entries e ON e.template_id=t.id WHERE t.user_id=? AND e.archived_at IS NULL ORDER BY t.updated_at DESC").all(userId); const fields = db.prepare("SELECT DISTINCT e.template_id,f.field_key,f.label,f.value_type FROM entries e JOIN entry_field_values ev ON ev.entry_id=e.id JOIN entry_template_fields f ON f.id=ev.template_field_id WHERE e.user_id=? AND e.archived_at IS NULL AND ev.reviewed_at IS NOT NULL ORDER BY e.template_id,f.label").all(userId); return json(response, 200, { templates, fields });

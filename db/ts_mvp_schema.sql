@@ -284,6 +284,50 @@ CREATE TABLE IF NOT EXISTS self_model_candidates (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS self_model_candidates_user_idx ON self_model_candidates(user_id, created_at DESC);
 
+-- External observations are normalized before persistence. Raw ActivityWatch
+-- payloads are intentionally not stored, so this table remains safe to reuse
+-- in local analysis and can be rebuilt from the adapter when needed.
+CREATE TABLE IF NOT EXISTS external_observations (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  source TEXT NOT NULL CHECK(source IN('activitywatch','manual_import','experiment')),
+  source_event_id TEXT,
+  observed_at TEXT NOT NULL,
+  duration_seconds REAL,
+  semantic_role TEXT NOT NULL CHECK(semantic_role IN('observed_behavior','task_continuation','time_of_day','environment')),
+  category TEXT NOT NULL CHECK(category IN('coding','writing','browser','communication','idle','other')),
+  project_label TEXT,
+  privacy_level TEXT NOT NULL CHECK(privacy_level IN('normal','sensitive')),
+  imported_at TEXT NOT NULL,
+  user_confirmed INTEGER NOT NULL DEFAULT 0 CHECK(user_confirmed IN(0,1)),
+  original_reference TEXT,
+  transform_version TEXT NOT NULL DEFAULT 'activitywatch-v1',
+  UNIQUE(user_id, source, source_event_id)
+) STRICT;
+CREATE INDEX IF NOT EXISTS external_observations_user_time_idx ON external_observations(user_id, observed_at);
+CREATE UNIQUE INDEX IF NOT EXISTS external_observations_fingerprint_idx ON external_observations(user_id, source, id);
+
+CREATE TABLE IF NOT EXISTS baseline_self_perceptions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  source TEXT NOT NULL CHECK(source = 'ipip'),
+  item_set_version TEXT NOT NULL,
+  item_key TEXT NOT NULL,
+  original_item_reference TEXT,
+  statement_ja TEXT NOT NULL,
+  response INTEGER NOT NULL CHECK(response >= 1 AND response <= 5),
+  response_minimum INTEGER NOT NULL DEFAULT 1,
+  response_maximum INTEGER NOT NULL DEFAULT 5,
+  recorded_at TEXT NOT NULL,
+  user_confirmed INTEGER NOT NULL DEFAULT 1 CHECK(user_confirmed IN(0,1)),
+  use_for_self_understanding INTEGER NOT NULL DEFAULT 1 CHECK(use_for_self_understanding IN(0,1)),
+  privacy_level TEXT NOT NULL DEFAULT 'normal' CHECK(privacy_level = 'normal'),
+  provenance_json TEXT NOT NULL DEFAULT '{}',
+  deleted_at TEXT,
+  UNIQUE(user_id, item_set_version, item_key)
+) STRICT;
+CREATE INDEX IF NOT EXISTS baseline_self_perceptions_user_idx ON baseline_self_perceptions(user_id, deleted_at, recorded_at);
+
 CREATE TABLE IF NOT EXISTS search_documents (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

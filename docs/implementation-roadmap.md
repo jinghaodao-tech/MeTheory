@@ -17,6 +17,7 @@ Implemented baseline:
 - field-level Review with value, confidence, inferred source, edit, approve, unknown, reject, re-extract, and open-note actions;
 - one retry, ownership-aware stop, and 15-minute idle protection for MeTheory-owned local runtime processes;
 - human-readable CLI output by default and stable `--json` output for agents.
+- strict local structured-output validation, deterministic fallback, and fixed external-observation provenance contracts.
 
 Remaining refinement: show per-field existing-value diffs, richer source spans, and sensitivity labels directly in Review, and add runtime-specific readiness polling.
 
@@ -42,6 +43,11 @@ the API also returns excluded fields and data-quality counts for user review.
 See
 [`self-understanding-practical-v1.md`](self-understanding-practical-v1.md) for
 the non-clinical boundary and the persisted review flow.
+
+The external-assets slice adds four fixed visualization models, a deterministic
+question-quality validator, a separate self-perception baseline, and an
+optional localhost-only ActivityWatch adapter. None of these inputs is a
+diagnosis, a personality label, or a substitute for user confirmation.
 
 ## Stage 3: minimum practical safety
 

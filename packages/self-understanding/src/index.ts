@@ -27,9 +27,18 @@ import {
   SELF_UNDERSTANDING_EXPLANATION_PROMPT_VERSION,
   SELF_UNDERSTANDING_EXPLANATION_SYSTEM_PROMPT
 } from "./prompt.ts";
+import {
+  SELF_UNDERSTANDING_INTERPRETATION_SCHEMA_VERSION,
+  selfUnderstandingInterpretationV3Schema,
+  validateSelfUnderstandingStructuredOutput
+} from "./structuredOutput.ts";
 
 export * from "./constructs.ts";
 export * from "./prompt.ts";
+export * from "./structuredOutput.ts";
+export * from "./baseline.ts";
+export * from "./questionQuality.ts";
+export * from "./visualization.ts";
 
 export type UnderstandingRecord = {
   id: string;
@@ -253,6 +262,7 @@ export function toSelfUnderstandingHypothesisView(
 }
 
 const outputKeys = new Set([
+  "schemaVersion",
   "statementJa",
   "constructExplanationJa",
   "plainExplanationJa",
@@ -311,6 +321,7 @@ export class OpenAICompatibleLocalInterpretationProvider
             content: JSON.stringify({
               promptVersion: SELF_UNDERSTANDING_EXPLANATION_PROMPT_VERSION,
               schema: {
+                schemaVersion: SELF_UNDERSTANDING_INTERPRETATION_SCHEMA_VERSION,
                 statementJa: "string",
                 constructExplanationJa: "string",
                 plainExplanationJa: "string",
@@ -335,7 +346,15 @@ export class OpenAICompatibleLocalInterpretationProvider
               data: input
             })
           }
-        ]
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "self_understanding_interpretation_v3",
+            strict: true,
+            schema: selfUnderstandingInterpretationV3Schema
+          }
+        }
       })
     });
     if (!response.ok) throw new Error("self_understanding_provider_failed");
@@ -735,7 +754,18 @@ export async function interpretSelfUnderstanding(
         validationErrors: ["invalid_json"]
       };
     }
-    const validationErrors = interpretationErrors(input, parsed);
+    // Accept the pre-V3 local provider shape during migration, but validate all
+    // new structured responses against the versioned strict contract.
+    const structured = validateSelfUnderstandingStructuredOutput(
+      parsed && !("schemaVersion" in parsed)
+        ? { ...parsed, schemaVersion: SELF_UNDERSTANDING_INTERPRETATION_SCHEMA_VERSION }
+        : parsed,
+      { input }
+    );
+    const validationErrors = [
+      ...structured.errors,
+      ...interpretationErrors(input, parsed)
+    ].filter((error, index, values) => values.indexOf(error) === index);
     if (validationErrors.length) {
       return {
         interpretation: fallback,
