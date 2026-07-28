@@ -99,6 +99,17 @@ repository, a 30-second interval, and automatic push disabled:
 .\scripts\start-review-watcher.ps1 -PrNumber 12
 ```
 
+To leave the watcher running after closing the current PowerShell window, start a hidden
+background process from the same session:
+
+```powershell
+.\scripts\start-review-watcher-background.ps1 -PrNumber 12
+```
+
+The background process inherits `REVIEW_BRIDGE_TOKEN` in memory and does not write it to a file.
+It lasts for the current Windows session. Automatic restart after reboot is intentionally not
+registered because that would require a separate secure secret-storage setup.
+
 Prepare a safe custom GPT review trigger from the working branch. This reads only PR metadata,
 prints a prompt containing the current head SHA, and never handles or stores Review Bridge tokens:
 
