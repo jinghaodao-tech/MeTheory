@@ -14,9 +14,22 @@ if ([string]::IsNullOrWhiteSpace($env:REVIEW_BRIDGE_TOKEN)) {
     throw "REVIEW_BRIDGE_TOKEN is not configured in this PowerShell session."
 }
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-    throw "GitHub CLI (gh) is required. Install it and run gh auth login."
+    $ghCandidates = @(
+        "C:\Program Files\GitHub CLI\gh.exe",
+        "C:\Program Files (x86)\GitHub CLI\gh.exe",
+        (Join-Path $env:LOCALAPPDATA "Programs\GitHub CLI\gh.exe")
+    )
+    if (-not ($ghCandidates | Where-Object { Test-Path -LiteralPath $_ })) {
+        throw "GitHub CLI (gh) is required. Install it and run gh auth login."
+    }
 }
-if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
+$codexCandidates = @(
+    (Join-Path $env:APPDATA "npm\codex.cmd"),
+    (Join-Path $env:APPDATA "npm\codex.ps1"),
+    (Join-Path $env:APPDATA "npm\codex.exe")
+)
+if (-not (Get-Command codex -ErrorAction SilentlyContinue) -and
+    -not ($codexCandidates | Where-Object { Test-Path -LiteralPath $_ })) {
     throw "codex is required and must be available on PATH."
 }
 

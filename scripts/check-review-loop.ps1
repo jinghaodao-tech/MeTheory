@@ -15,6 +15,19 @@ $requiredFiles = @(
 )
 
 $failures = 0
+function Resolve-Executable {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string[]]$Candidates
+    )
+    $command = Get-Command $Name -ErrorAction SilentlyContinue
+    if ($null -ne $command) { return $command.Source }
+    foreach ($candidate in $Candidates) {
+        if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
+    return $null
+}
+
 function Report-Check {
     param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][bool]$Ok)
     if ($Ok) {
@@ -27,26 +40,44 @@ function Report-Check {
 
 Report-Check "REVIEW_BRIDGE_TOKEN is configured" (-not [string]::IsNullOrWhiteSpace($env:REVIEW_BRIDGE_TOKEN))
 
-$gh = Get-Command gh -ErrorAction SilentlyContinue
+$gh = Resolve-Executable "gh" @(
+    "C:\Program Files\GitHub CLI\gh.exe",
+    "C:\Program Files (x86)\GitHub CLI\gh.exe",
+    (Join-Path $env:LOCALAPPDATA "Programs\GitHub CLI\gh.exe")
+)
 Report-Check "gh is installed" ($null -ne $gh)
 if ($null -ne $gh) {
-    gh auth status *> $null
-    Report-Check "gh auth status succeeds" ($LASTEXITCODE -eq 0)
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $gh auth status *> $null
+    $ghAuthExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorAction
+    Report-Check "gh auth status succeeds" ($ghAuthExitCode -eq 0)
 } else {
     Report-Check "gh auth status succeeds" $false
 }
 
-$codex = Get-Command codex -ErrorAction SilentlyContinue
+$codex = Resolve-Executable "codex" @(
+    (Join-Path $env:APPDATA "npm\codex.cmd"),
+    (Join-Path $env:APPDATA "npm\codex.ps1"),
+    (Join-Path $env:APPDATA "npm\codex.exe")
+)
 Report-Check "codex is installed" ($null -ne $codex)
 
 $healthOk = $false
 if (-not [string]::IsNullOrWhiteSpace($env:REVIEW_BRIDGE_TOKEN)) {
     try {
-        $health = Invoke-RestMethod `
-            -Method Get `
-            -Uri "$bridgeUrl/health" `
-            -Headers @{ Authorization = "Bearer $env:REVIEW_BRIDGE_TOKEN" }
-        $healthOk = ($health.ok -eq $true -and $health.service -eq "metheory-review-bridge")
+        $previousErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $healthRaw = & curl.exe -sS `
+            -H "Authorization: Bearer $env:REVIEW_BRIDGE_TOKEN" `
+            "$bridgeUrl/health" 2>$null
+        $curlExitCode = $LASTEXITCODE
+        $ErrorActionPreference = $previousErrorAction
+        if ($curlExitCode -eq 0) {
+            $health = $healthRaw | ConvertFrom-Json
+            $healthOk = ($health.ok -eq $true -and $health.service -eq "metheory-review-bridge")
+        }
     } catch {
         $healthOk = $false
     }

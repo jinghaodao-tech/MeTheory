@@ -11,6 +11,34 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+function Resolve-Executable {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string[]]$Candidates
+    )
+    $command = Get-Command $Name -ErrorAction SilentlyContinue
+    if ($null -ne $command) { return $command.Source }
+    foreach ($candidate in $Candidates) {
+        if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
+    throw "$Name command is required."
+}
+
+$git = Resolve-Executable "git" @(
+    "C:\Program Files\Git\cmd\git.exe",
+    "C:\Program Files (x86)\Git\cmd\git.exe"
+)
+$gh = Resolve-Executable "gh" @(
+    "C:\Program Files\GitHub CLI\gh.exe",
+    "C:\Program Files (x86)\GitHub CLI\gh.exe",
+    (Join-Path $env:LOCALAPPDATA "Programs\GitHub CLI\gh.exe")
+)
+$codex = Resolve-Executable "codex" @(
+    (Join-Path $env:APPDATA "npm\codex.cmd"),
+    (Join-Path $env:APPDATA "npm\codex.ps1"),
+    (Join-Path $env:APPDATA "npm\codex.exe")
+)
+
 function Invoke-Bridge {
     param([Parameter(Mandatory)][string]$Method, [Parameter(Mandatory)][string]$Path, [object]$Body)
     if (-not $env:REVIEW_BRIDGE_TOKEN) { throw "REVIEW_BRIDGE_TOKEN is not configured." }
@@ -31,14 +59,13 @@ function Invoke-Bridge {
 }
 
 function Get-CurrentPrSha {
-    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw "GitHub CLI (gh) is required." }
-    $raw = gh pr view $PrNumber --repo $Repository --json headRefOid
+    $raw = & $gh pr view $PrNumber --repo $Repository --json headRefOid
     if ($LASTEXITCODE -ne 0) { throw "Could not get the current PR head SHA." }
     return ($raw | ConvertFrom-Json).headRefOid
 }
 
 function Get-CurrentBranch {
-    $branch = (git branch --show-current 2>$null).Trim()
+    $branch = (& $git branch --show-current 2>$null).Trim()
     if ($LASTEXITCODE -ne 0 -or -not $branch) { throw "Could not determine the current branch." }
     return $branch
 }
@@ -75,10 +102,9 @@ $constraints
 "@
 }
 
-$repoRoot = (git rev-parse --show-toplevel 2>$null).Trim()
+$repoRoot = (& $git rev-parse --show-toplevel 2>$null).Trim()
 if (-not $repoRoot) { throw "Run this script inside a Git repository." }
 Set-Location $repoRoot
-if (-not (Get-Command codex -ErrorAction SilentlyContinue)) { throw "codex command is required." }
 
 $encodedRepository = [uri]::EscapeDataString($Repository)
 $instruction = Invoke-Bridge -Method GET -Path "/api/review-instructions/latest?repository=$encodedRepository&prNumber=$PrNumber&status=pending" -Body $null
@@ -107,7 +133,7 @@ $promptPath = Join-Path $runDir "review-fix.md"
 Convert-InstructionToPrompt $instruction | Set-Content $promptPath -Encoding utf8
 
 try {
-    Get-Content $promptPath -Raw | codex exec --sandbox workspace-write -
+    Get-Content $promptPath -Raw | & $codex exec --sandbox workspace-write -
     if ($LASTEXITCODE -ne 0) { throw "Codex execution failed." }
     npm run verify
     if ($LASTEXITCODE -ne 0) { throw "npm run verify failed." }
