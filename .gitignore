@@ -19,3 +19,4 @@ apps/vscode-extension/dist/
 *.sqlite-shm
 *.sqlite-wal
 .env
+.ai/runs/

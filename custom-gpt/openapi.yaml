@@ -1,0 +1,111 @@
+openapi: 3.1.0
+info:
+  title: MeTheory Review Bridge
+  version: 1.0.0
+servers:
+  - url: https://metheory-review-bridge.jinghaodao-tech.workers.dev
+security:
+  - bearerAuth: []
+paths:
+  /api/pr/{owner}/{repo}/{prNumber}:
+    get:
+      operationId: getPullRequestForReview
+      summary: Get an allowlisted pull request and its diff
+      parameters:
+        - in: path
+          name: owner
+          required: true
+          schema: { type: string }
+        - in: path
+          name: repo
+          required: true
+          schema: { type: string }
+        - in: path
+          name: prNumber
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Pull request metadata and diff
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [repository, prNumber, headSha, diff]
+                properties:
+                  repository: { type: string }
+                  prNumber: { type: integer }
+                  title: { type: string }
+                  body: { type: string }
+                  headSha: { type: string }
+                  headRef: { type: string }
+                  baseRef: { type: string }
+                  changedFiles: { type: integer }
+                  additions: { type: integer }
+                  deletions: { type: integer }
+                  diff: { type: string }
+                  diffTruncated: { type: boolean }
+  /api/review-instructions:
+    post:
+      operationId: saveCodexReviewInstruction
+      summary: Save the structured result of a PR review
+      x-openai-isConsequential: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - repository
+                - prNumber
+                - headSha
+                - result
+                - objective
+                - blockingIssues
+                - suggestions
+                - acceptanceCriteria
+                - constraints
+                - reviewCycle
+              properties:
+                repository: { type: string, example: jinghaodao-tech/MeTheory }
+                prNumber: { type: integer, minimum: 1 }
+                headSha: { type: string }
+                result: { type: string, enum: [pass, fail] }
+                objective: { type: string }
+                blockingIssues:
+                  type: array
+                  items:
+                    type: object
+                    required: [file, problem, requiredOutcome]
+                    properties:
+                      file: { type: string }
+                      problem: { type: string }
+                      requiredOutcome: { type: string }
+                suggestions:
+                  type: array
+                  items: { type: object, additionalProperties: true }
+                acceptanceCriteria:
+                  type: array
+                  items: { type: string }
+                constraints:
+                  type: array
+                  items: { type: string }
+                reviewCycle: { type: integer, minimum: 1, maximum: 10 }
+      responses:
+        "201":
+          description: Saved instruction
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, status, fingerprint]
+                properties:
+                  id: { type: string }
+                  status: { type: string }
+                  fingerprint: { type: string }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
