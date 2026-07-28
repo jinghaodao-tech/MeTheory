@@ -339,8 +339,21 @@ test("tendency scope distinguishes one period, repeated state patterns, and rela
   const current = { candidateId: "current", constructKey: "task_initiation" as const, conditionRole: "task_clarity" as const, outcomeRole: "start_delay" as const, relation: "a_less_than_b" as const, period: { startAt: "2026-07-01", endAt: "2026-07-28" }, completePairCount: 8 };
   assert.equal(tendencyScopeFor({ current, history: [] }).scope, "single_period_state");
   assert.equal(tendencyScopeFor({ current, history: [{ ...current, candidateId: "old", period: { startAt: "2026-06-01", endAt: "2026-06-28" } }] }).scope, "repeated_state_pattern");
-  assert.equal(tendencyScopeFor({ current: { ...current, completePairCount: 8 }, history: [{ ...current, candidateId: "old-1", completePairCount: 8, period: { startAt: "2026-06-01", endAt: "2026-06-28" } }, { ...current, candidateId: "old-2", completePairCount: 8, period: { startAt: "2026-05-01", endAt: "2026-05-28" } }] }).scope, "relatively_stable_candidate");
+  const identifiedCurrent = { ...current, sourceEntryIds: Array.from({ length: 8 }, (_, index) => `current-${index}`) };
+  const identifiedHistory = [{ ...current, candidateId: "old-1", sourceEntryIds: Array.from({ length: 8 }, (_, index) => `old-1-${index}`), period: { startAt: "2026-06-01", endAt: "2026-06-28" } }, { ...current, candidateId: "old-2", sourceEntryIds: Array.from({ length: 8 }, (_, index) => `old-2-${index}`), period: { startAt: "2026-05-01", endAt: "2026-05-28" } }];
+  assert.equal(tendencyScopeFor({ current: identifiedCurrent, history: identifiedHistory }).scope, "relatively_stable_candidate");
+  assert.equal(tendencyScopeFor({ current, history: [{ ...current, candidateId: "legacy-1", period: { startAt: "2026-06-01", endAt: "2026-06-28" } }, { ...current, candidateId: "legacy-2", period: { startAt: "2026-05-01", endAt: "2026-05-28" } }] }).scope, "repeated_state_pattern");
   assert.equal(tendencyScopeFor({ current, history: [{ ...current, candidateId: "reversed", relation: "a_greater_than_b", period: { startAt: "2026-06-01", endAt: "2026-06-28" } }] }).scope, "unknown");
+});
+
+test("tendency scope rejects overlapping periods and requires independent entries", () => {
+  const make = (startAt: string, ids: string[]) => ({ candidateId: startAt, constructKey: "task_initiation" as const, conditionRole: "task_clarity" as const, outcomeRole: "start_delay" as const, relation: "a_less_than_b" as const, period: { startAt, endAt: `${startAt}-end` }, completePairCount: ids.length, sourceEntryIds: ids });
+  const current = make("2026-07-01", Array.from({ length: 8 }, (_, index) => `a${index}`));
+  const overlapping = make("2026-06-01", Array.from({ length: 8 }, (_, index) => `a${index}`));
+  const result = tendencyScopeFor({ current, history: [overlapping] });
+  assert.equal(result.scope, "single_period_state");
+  const stable = tendencyScopeFor({ current: make("2026-07-01", Array.from({ length: 8 }, (_, index) => `a${index}`)), history: [make("2026-06-01", Array.from({ length: 8 }, (_, index) => `b${index}`)), make("2026-05-01", Array.from({ length: 8 }, (_, index) => `c${index}`))] });
+  assert.equal(stable.scope, "relatively_stable_candidate");
 });
 
 test("self rating and recorded behavior become a self perception gap without judging the rating", () => {

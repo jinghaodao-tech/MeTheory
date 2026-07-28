@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MockTemplateGenerationProvider, canAutoApplySemanticRole, canMergeSemanticFields, inferSemanticRole, semanticRoleNeedsConfirmation, validateSemanticRoleSuggestion, validateTemplateDraft, valueForField } from "../packages/templates/src/index.ts";
+import { MockTemplateGenerationProvider, canAutoApplySemanticRole, canMergeSemanticFields, inferSemanticRole, resolveSemanticRole, semanticRoleNeedsConfirmation, validateSemanticRoleSuggestion, validateTemplateDraft, valueForField } from "../packages/templates/src/index.ts";
 
 test("template drafts validate fields and values", async () => {
   const draft = await new MockTemplateGenerationProvider().generateTemplateDraft({ userId: "u", theme: "集中" });
@@ -40,4 +40,10 @@ test("semantic fields only merge with explicit compatible permission", () => {
   assert.equal(canMergeSemanticFields(base, { ...base }), true);
   assert.equal(canMergeSemanticFields(base, { ...base, maximum: 10 }), false);
   assert.equal(canMergeSemanticFields(base, { ...base, mergeAllowed: false }), false);
+});
+
+test("unconfirmed semantic roles never resolve as analysis-ready", () => {
+  assert.equal(resolveSemanticRole({ fieldKey: "avoidance", label: "avoidance", storedRole: "avoidance", storedSource: "ai_suggestion", confirmed: false, confidence: 0.99 }).status, "confirmation_required");
+  assert.equal(resolveSemanticRole({ fieldKey: "energy_level", label: "energy", confirmed: false, sensitivity: "normal" }).status, "safe_auto_inferred");
+  assert.equal(resolveSemanticRole({ fieldKey: "custom", label: "custom", confirmed: false, sensitivity: "normal" }).status, "unknown");
 });

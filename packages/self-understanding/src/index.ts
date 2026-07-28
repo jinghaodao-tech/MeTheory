@@ -201,6 +201,56 @@ export type InterpretationResult = {
   providerId: string;
   validationErrors: string[];
 };
+export type SelfUnderstandingHypothesisView = {
+  id: string;
+  construct: { key: SelfUnderstandingConstructKey; labelJa: string; descriptionJa: string };
+  tendencyScope: { key: TendencyScope; labelJa: string; independentPeriodCount: number; uniqueEntryCount: number };
+  status: { key: SelfUnderstandingStatus; labelJa: string };
+  statement: string;
+  condition: { label: string; semanticRole: SelfUnderstandingSemanticRole; groupA: string; groupB: string };
+  outcome: { label: string; semanticRole: SelfUnderstandingSemanticRole };
+  statistics: SelfUnderstandingInterpretationInputV2["statistics"];
+  supportingEntries: EntryReference[];
+  contradictingEntries: EntryReference[];
+  explanations: { plain: string; supporting: string; contradicting: string; alternative: string; uncertainty: string; tendencyScope: string };
+  nextExperiment: SelfUnderstandingInterpretation["nextExperiment"];
+  selfModelCandidate: string;
+  technicalDetails: { mergedCandidateIds: string[]; sourceTemplateIds: string[]; sourceFieldKeys: string[]; explanationMode: string };
+};
+export type SelfUnderstandingAnalysisResponse = {
+  status: "ready" | "insufficient" | "needs_configuration";
+  period: { startAt: string; endAt: string };
+  filters: { templateIds: string[]; fieldKeys: string[]; [key: string]: unknown };
+  dataQuality: { entryCount: number; confirmedValueCount: number; excludedFieldCount: number; minimumEntryCount: number };
+  excludedFields: unknown[];
+  hypotheses: SelfUnderstandingHypothesisView[];
+  explanationMode: "local_ai" | "deterministic_fallback" | "mixed";
+};
+
+export function toSelfUnderstandingHypothesisView(
+  hypothesis: SelfUnderstandingHypothesis,
+  explanationMode = "deterministic_fallback"
+): SelfUnderstandingHypothesisView {
+  const input = hypothesis.interpretationInput;
+  const supportingEntries = input.supportingEntries;
+  const contradictingEntries = input.contradictingEntries;
+  return {
+    id: hypothesis.id,
+    construct: hypothesis.constructDefinition,
+    tendencyScope: { key: hypothesis.tendencyScope, labelJa: hypothesis.tendencyScopeLabelJa, independentPeriodCount: input.statistics.repeatedPeriodCount, uniqueEntryCount: new Set([...supportingEntries, ...contradictingEntries].map((entry) => entry.entryId)).size },
+    status: { key: hypothesis.status, labelJa: hypothesis.statusLabelJa },
+    statement: hypothesis.statement,
+    condition: { label: input.condition.label, semanticRole: input.condition.semanticRole, groupA: input.condition.groupA, groupB: input.condition.groupB },
+    outcome: { label: input.outcome.label, semanticRole: input.outcome.semanticRole },
+    statistics: input.statistics,
+    supportingEntries,
+    contradictingEntries,
+    explanations: { plain: hypothesis.interpretation.plainExplanationJa, supporting: hypothesis.interpretation.supportingExplanationJa, contradicting: hypothesis.interpretation.contradictingExplanationJa, alternative: hypothesis.interpretation.alternativeExplanationJa, uncertainty: hypothesis.interpretation.uncertaintyJa, tendencyScope: hypothesis.interpretation.tendencyScopeExplanationJa },
+    nextExperiment: hypothesis.interpretation.nextExperiment,
+    selfModelCandidate: hypothesis.interpretation.selfModelCandidateJa,
+    technicalDetails: { mergedCandidateIds: hypothesis.mergedCandidateIds, sourceTemplateIds: hypothesis.templateIds, sourceFieldKeys: [input.condition.fieldKey, input.outcome.fieldKey], explanationMode }
+  };
+}
 
 const outputKeys = new Set([
   "statementJa",
@@ -866,7 +916,16 @@ export function generateSelfUnderstanding(input: {
       outcomeRole,
       relation: candidate.relation,
       period: candidate.supportingPeriod,
-      completePairCount: candidate.completePairCount
+      completePairCount: candidate.completePairCount,
+      conditionTemplateId: conditionParameter.templateId,
+      conditionTemplateVersionId: conditionParameter.templateVersionId,
+      conditionFieldKey: conditionParameter.fieldKey,
+      conditionScaleFingerprint: conditionParameter.scaleFingerprint,
+      outcomeTemplateId: outcomeParameter.templateId,
+      outcomeTemplateVersionId: outcomeParameter.templateVersionId,
+      outcomeFieldKey: outcomeParameter.fieldKey,
+      outcomeScaleFingerprint: outcomeParameter.scaleFingerprint,
+      sourceEntryIds: [...new Set([...supporting, ...contradicting])].sort()
     };
     const tendency = tendencyScopeFor({
       current: currentHistory,

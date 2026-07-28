@@ -105,8 +105,11 @@ class NonClinicalSelfUnderstandingViewProvider {
             <p>${escapeHtml(String(activeResult.dataShortage.message))}</p>
           </section>`
         : "";
+      const excluded = (activeResult?.excludedFields ?? []).length
+        ? `<section><h3>蛻・梵縺九ｉ髫区ｼ・譁ｹ陦ｨ</h3><p>${escapeHtml(String(activeResult.dataQuality?.excludedFieldCount ?? activeResult.excludedFields.length))} fields need confirmation or a supported type.</p><ul>${activeResult.excludedFields.map((field: any) => `<li>${escapeHtml(field.label)} (${escapeHtml(field.fieldKey)}) - ${escapeHtml(field.reason)}${field.suggestedRole ? ` / ${escapeHtml(field.suggestedRole)}` : ""}</li>`).join("")}</ul></section>`
+        : "";
       const groups = new Map<string, any[]>();
-      for (const item of activeResult?.hypotheses ?? []) {
+      for (const item of activeResult?.legacyHypotheses ?? activeResult?.hypotheses ?? []) {
         const key = String(item.construct);
         groups.set(key, [...(groups.get(key) ?? []), item]);
       }
@@ -132,7 +135,9 @@ class NonClinicalSelfUnderstandingViewProvider {
               ${
                 item.status === "proposed"
                   ? `<button data-a="edit-model" data-id="${escapeHtml(item.id)}" data-statement="${escapeHtml(item.statement)}">編集</button>
-                     <button data-a="model" data-id="${escapeHtml(item.id)}" data-status="accepted">承認</button>
+                     <button data-a="model" data-id="${escapeHtml(item.id)}" data-status="accepted" data-resolution="create_new">新規追加</button>
+                     <button data-a="model" data-id="${escapeHtml(item.id)}" data-status="accepted" data-resolution="propose_update">更新候補</button>
+                     <button data-a="model" data-id="${escapeHtml(item.id)}" data-status="accepted" data-resolution="keep_separate">分けて保存</button>
                      <button data-a="model" data-id="${escapeHtml(item.id)}" data-status="rejected">却下</button>`
                   : ""
               }
@@ -153,6 +158,7 @@ class NonClinicalSelfUnderstandingViewProvider {
         <button id="analyze">確認済み値を分析</button>
         ${activeResult?.explanationMode === "deterministic_fallback" ? "<p>検証済みの標準説明を表示しています。</p>" : ""}
         ${shortage}
+        ${excluded}
         ${hypotheses || "<p>期間と対象を選んで分析してください。</p>"}
         <section><h3>Self Model候補</h3><ul>${selfModel || "<li>候補はありません。</li>"}</ul></section>
         <script>
@@ -170,7 +176,7 @@ class NonClinicalSelfUnderstandingViewProvider {
           document.body.onclick=(event)=>{
             const el=event.target;
             if(!(el instanceof HTMLElement)||!el.dataset.a)return;
-            vscode.postMessage({type:el.dataset.a,id:el.dataset.id,rating:el.dataset.rating,status:el.dataset.status,entry:el.dataset.entry,statement:el.dataset.statement});
+            vscode.postMessage({type:el.dataset.a,id:el.dataset.id,rating:el.dataset.rating,status:el.dataset.status,resolution:el.dataset.resolution,entry:el.dataset.entry,statement:el.dataset.statement});
           };
         </script>
       </body></html>`;
@@ -234,7 +240,8 @@ class NonClinicalSelfUnderstandingViewProvider {
             body: JSON.stringify({
               userId,
               candidateId: message.id,
-              status: message.status
+              status: message.status,
+              resolutionAction: message.resolution ?? "create_new"
             })
           });
           await render();

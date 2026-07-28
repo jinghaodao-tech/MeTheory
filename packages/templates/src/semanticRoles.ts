@@ -40,6 +40,11 @@ export type SemanticRoleSuggestion = {
   confidence: number;
   reasonJa: string;
 };
+export type ResolvedSemanticRole =
+  | { status: "confirmed"; role: SelfUnderstandingSemanticRole; source: "user" | "template_rule" | "ai_suggestion" }
+  | { status: "safe_auto_inferred"; role: SelfUnderstandingSemanticRole; source: "legacy_inference" }
+  | { status: "confirmation_required"; suggestedRole: SelfUnderstandingSemanticRole; reason: string }
+  | { status: "unknown"; reason: string };
 
 const roleSet = new Set<string>(SELF_UNDERSTANDING_SEMANTIC_ROLES);
 const sensitiveReviewRoles = new Set<SelfUnderstandingSemanticRole>([
@@ -155,6 +160,42 @@ export function canAutoApplySemanticRole(input: {
   return !semanticRoleNeedsConfirmation(input);
 }
 
+export function resolveSemanticRole(input: {
+  fieldKey: string;
+  label: string;
+  description?: string;
+  templateTheme?: string;
+  storedRole?: unknown;
+  storedSource?: unknown;
+  confirmed?: boolean;
+  confidence?: number;
+  sensitivity?: "normal" | "sensitive" | "highly_sensitive";
+}): ResolvedSemanticRole {
+  if (isSelfUnderstandingSemanticRole(input.storedRole)) {
+    const suggestion = {
+      fieldKey: input.fieldKey,
+      semanticRole: input.storedRole,
+      confidence: input.confidence ?? 0,
+      reasonJa: "stored semantic role"
+    };
+    if (!input.confirmed) {
+      return { status: "confirmation_required", suggestedRole: input.storedRole, reason: "semantic_role_confirmation_required" };
+    }
+    const source = input.storedSource;
+    if (source === "user" || source === "template_rule" || source === "ai_suggestion") {
+      return { status: "confirmed", role: input.storedRole, source };
+    }
+    return { status: "confirmation_required", suggestedRole: input.storedRole, reason: "semantic_role_source_invalid" };
+  }
+  const suggestion = inferSemanticRole(input);
+  if (canAutoApplySemanticRole({ suggestion, sensitivity: input.sensitivity }) && suggestion.semanticRole !== "other") {
+    return { status: "safe_auto_inferred", role: suggestion.semanticRole, source: "legacy_inference" };
+  }
+  return suggestion.semanticRole === "other"
+    ? { status: "unknown", reason: "semantic_role_unknown" }
+    : { status: "confirmation_required", suggestedRole: suggestion.semanticRole, reason: "semantic_role_confirmation_required" };
+}
+
 export function suggestSemanticRolesForTemplate(input: {
   theme: string;
   description?: string;
@@ -218,4 +259,19 @@ export function canMergeSemanticFields(
     );
   }
   return true;
+}
+
+export function semanticGroupIdFor(input: {
+  semanticRole: SelfUnderstandingSemanticRole;
+  valueType: string;
+  scaleFingerprint: string;
+  sensitivity: string;
+}): string {
+  const value = `${input.semanticRole}|${input.valueType}|${input.scaleFingerprint}|${input.sensitivity}`;
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `semantic_${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }

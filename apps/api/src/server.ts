@@ -19,6 +19,7 @@ import {
   generateSelfUnderstanding,
   interpretSelfUnderstanding,
   OpenAICompatibleLocalInterpretationProvider,
+  toSelfUnderstandingHypothesisView,
   validateSelfModelStatement,
   type UnderstandingRecord
 } from "../../../packages/self-understanding/src/index.ts";
@@ -98,6 +99,16 @@ ensureColumn("self_beliefs", "construct_key", "TEXT");
 ensureColumn("self_beliefs", "tendency_scope", "TEXT");
 ensureColumn("self_beliefs", "source_analysis_periods_json", "TEXT NOT NULL DEFAULT '[]'");
 ensureColumn("self_beliefs", "supporting_field_pairs_json", "TEXT NOT NULL DEFAULT '[]'");
+ensureColumn("self_understanding_analysis_history", "condition_template_id", "TEXT");
+ensureColumn("self_understanding_analysis_history", "condition_template_version_id", "TEXT");
+ensureColumn("self_understanding_analysis_history", "condition_field_key", "TEXT");
+ensureColumn("self_understanding_analysis_history", "condition_scale_fingerprint", "TEXT");
+ensureColumn("self_understanding_analysis_history", "outcome_template_id", "TEXT");
+ensureColumn("self_understanding_analysis_history", "outcome_template_version_id", "TEXT");
+ensureColumn("self_understanding_analysis_history", "outcome_field_key", "TEXT");
+ensureColumn("self_understanding_analysis_history", "outcome_scale_fingerprint", "TEXT");
+ensureColumn("self_understanding_analysis_history", "source_entry_ids_json", "TEXT NOT NULL DEFAULT '[]'");
+ensureColumn("self_understanding_analysis_history", "source_entry_fingerprint", "TEXT NOT NULL DEFAULT ''");
 db.exec("CREATE TABLE IF NOT EXISTS ai_http_access_audit_logs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, client_id TEXT NOT NULL, client_type TEXT NOT NULL, purpose TEXT NOT NULL, requested_parameter_ids_json TEXT NOT NULL, allowed_parameter_ids_json TEXT NOT NULL, denied_parameter_ids_json TEXT NOT NULL, requested_start_at TEXT, requested_end_at TEXT, returned_record_count INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, created_at TEXT NOT NULL)");
 
 const now = () => new Date().toISOString();
@@ -151,10 +162,14 @@ async function analyzeSelfUnderstandingWithInterpretation(
   );
   return {
     ...result,
-    hypotheses: interpreted,
+    hypotheses: interpreted.map((item) => toSelfUnderstandingHypothesisView(item, item.explanationMode)),
+    hypothesisViews: interpreted.map((item) => toSelfUnderstandingHypothesisView(item, item.explanationMode)),
+    legacyHypotheses: interpreted,
     explanationMode: interpreted.every((item) => item.explanationMode === "local_ai")
       ? "local_ai"
-      : "deterministic_fallback"
+      : interpreted.some((item) => item.explanationMode === "local_ai")
+        ? "mixed"
+        : "deterministic_fallback"
   };
 }
 
@@ -504,7 +519,7 @@ const server = createServer(async (request, response) => {
         );
       }
       const relatedItems = selfUnderstandingRepository.relatedSelfModelItems(userId, String(snapshot.construct));
-      return json(response, 201, { id: reviewId, candidateId, rating, selfModelUpdate: selfModelCandidateId ? "proposed" : "none", selfModelCandidateId, relatedItems, availableResolutionActions: ["new", "update_existing", "separate"] });
+      return json(response, 201, { id: reviewId, candidateId, rating, selfModelUpdate: selfModelCandidateId ? "proposed" : "none", selfModelCandidateId, relatedItems, availableResolutionActions: ["create_new", "propose_update", "keep_separate"], resolutionActionAliases: ["new", "update_existing", "separate"] });
     }
     if (request.method === "GET" && parts.join("/") === "v1/self-understanding/self-model-candidates") {
       const userId = requestUrl.searchParams.get("userId") ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, { items: db.prepare("SELECT * FROM self_model_candidates WHERE user_id=? ORDER BY created_at DESC").all(userId) });
@@ -516,14 +531,15 @@ const server = createServer(async (request, response) => {
       const candidate = db.prepare("SELECT construct_key FROM self_model_candidates WHERE user_id=? AND id=?").get(userId, candidateId) as { construct_key: string | null } | undefined;
       if (!candidate) return json(response, 404, { error: "self_model_candidate_not_found" });
       const relatedItems = candidate.construct_key ? selfUnderstandingRepository.relatedSelfModelItems(userId, candidate.construct_key) : [];
-      return json(response, 200, { candidateId, constructKey: candidate.construct_key, actions: ["new", "update_existing", "separate"], relatedItems, automaticMerge: false });
+      return json(response, 200, { candidateId, constructKey: candidate.construct_key, actions: ["create_new", "propose_update", "keep_separate"], relatedActions: ["new", "update_existing", "separate"], relatedItems, automaticMerge: false });
     }
     if (request.method === "POST" && parts.join("/") === "v1/self-understanding/self-model-candidates/edit") {
       const input = await body(request);
       const userId = optionalString(input.userId) ?? "";
       const candidateId = optionalString(input.candidateId) ?? "";
       const statement = optionalString(input.statement)?.trim() ?? "";
-      const resolutionAction = optionalString(input.resolutionAction) ?? "new";
+      const requestedResolution = optionalString(input.resolutionAction) ?? "create_new";
+      const resolutionAction = requestedResolution === "create_new" ? "new" : requestedResolution === "keep_separate" || requestedResolution === "propose_update" ? "separate" : requestedResolution;
       const targetSelfBeliefId = optionalString(input.targetSelfBeliefId) ?? null;
       if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
       if (!validateSelfModelStatement(statement)) return json(response, 400, { error: "self_model_statement_invalid" });
@@ -535,7 +551,7 @@ const server = createServer(async (request, response) => {
       }
       const result = db.prepare("UPDATE self_model_candidates SET statement=?,user_note=?,resolution_action=?,target_self_belief_id=?,last_reviewed_at=? WHERE user_id=? AND id=? AND status='proposed'").run(statement, optionalString(input.userNote) ?? "", resolutionAction, targetSelfBeliefId, now(), userId, candidateId);
       if (!result.changes) return json(response, 404, { error: "self_model_candidate_not_found" });
-      return json(response, 200, { candidateId, statement, resolutionAction, targetSelfBeliefId });
+      return json(response, 200, { candidateId, statement, resolutionAction, conflictOption: requestedResolution, targetSelfBeliefId });
     }
     if (request.method === "POST" && parts.join("/") === "v1/self-understanding/self-model-candidates/review") {
       const input = await body(request);
@@ -544,6 +560,12 @@ const server = createServer(async (request, response) => {
       const status = optionalString(input.status) ?? "";
       if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
       if (!["accepted", "rejected"].includes(status)) return json(response, 400, { error: "self_model_review_invalid" });
+      const requestedResolution = optionalString(input.resolutionAction);
+      if (requestedResolution) {
+        const normalizedResolution = requestedResolution === "create_new" ? "new" : requestedResolution === "keep_separate" || requestedResolution === "propose_update" ? "separate" : requestedResolution;
+        if (!["new", "update_existing", "separate"].includes(normalizedResolution)) return json(response, 400, { error: "self_model_resolution_invalid" });
+        db.prepare("UPDATE self_model_candidates SET resolution_action=? WHERE user_id=? AND id=? AND status='proposed'").run(normalizedResolution, userId, candidateId);
+      }
       const candidate = db.prepare(`SELECT statement,source_hypothesis_id,
         supporting_period_start,supporting_period_end,user_note,construct_key,
         tendency_scope,source_analysis_periods_json,supporting_field_pairs_json,

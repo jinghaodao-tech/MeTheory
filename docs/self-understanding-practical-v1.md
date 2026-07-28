@@ -20,6 +20,9 @@ personality diagnosis feature.
 - Template fields have an allowlisted `semanticRole`. Roles map to the
   non-clinical construct catalog, and ambiguous or sensitive suggestions need
   confirmation. See [the catalog](self-understanding-construct-catalog.md).
+- A stored role is analysis-ready only after confirmation. Legacy inference may
+  be used only for a high-confidence, normal field; otherwise the field is
+  returned in `excludedFields` with a reason and is excluded from analysis.
 - Candidate history assigns `emerging`, `state_dependent`,
   `relatively_stable`, or `uncertain` scope. This is evidence scope, not a
   personality label.
@@ -36,6 +39,11 @@ versioned, validated `SelfUnderstandingInterpretationInputV2` DTO. It cannot
 change the construct, evidence direction, candidate state, or Entry references.
 Invalid output falls back to deterministic wording.
 
+The analysis API returns a stable view DTO containing construct, tendency scope,
+status, statistics, supporting and contradicting Entry references, alternative
+explanations, the next experiment, and technical provenance. A legacy-shaped
+`legacyHypotheses` field remains available during client migration.
+
 ## Workflow
 
 1. Open **Self Understanding** in the VS Code MeTheory view.
@@ -51,10 +59,14 @@ Invalid output falls back to deterministic wording.
 ## Persistence
 
 `self_understanding_analysis_history` retains canonical candidate snapshots for
-deduplication and scope. `hypothesis_reviews` records the rating and source
-period. `self_model_candidates` and `self_beliefs` retain construct, scope,
-periods, and field pairs. Acceptance creates a new belief unless the user
-explicitly selects a compatible existing belief to update.
+deduplication and scope, including template/version/field identities, scale
+fingerprints, and a sorted Entry-set fingerprint. Stable scope requires three
+independent periods, at least 24 unique paired records, and at most 35% Entry
+overlap; legacy history without Entry identities cannot satisfy that gate.
+`hypothesis_reviews` records the rating and source period. `self_model_candidates`
+and `self_beliefs` retain construct, scope, periods, and field pairs. The user
+chooses create-new, propose-update, or keep-separate; no Self Model is replaced
+automatically.
 
 ## Current limitations
 

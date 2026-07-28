@@ -5,9 +5,11 @@ import {
   type UnderstandingRecord
 } from "../../../packages/self-understanding/src/index.ts";
 import {
-  inferSemanticRole,
   isSelfUnderstandingSemanticRole,
+  inferSemanticRole,
   semanticRoleNeedsConfirmation,
+  resolveSemanticRole,
+  semanticGroupIdFor,
   type SelfUnderstandingSemanticRole
 } from "../../../packages/templates/src/semanticRoles.ts";
 import type { CandidateParameter } from "../../../packages/domain/src/hypothesis/candidates.ts";
@@ -80,6 +82,56 @@ function storedOrInferredRole(row: Row): SelfUnderstandingSemanticRole {
   }).semanticRole;
 }
 
+export type ExcludedAnalysisField = {
+  templateId: string;
+  templateVersionId: string;
+  fieldKey: string;
+  label: string;
+  reason: "semantic_role_confirmation_required" | "semantic_role_unknown" | "unsupported_value_type" | "sensitive_role_unapproved";
+  suggestedRole?: SelfUnderstandingSemanticRole;
+};
+
+function resolvedRole(row: Row) {
+  return resolveSemanticRole({
+    fieldKey: String(row.field_key),
+    label: String(row.label ?? row.field_key),
+    description: String(row.description ?? ""),
+    templateTheme: String(row.template_theme ?? ""),
+    storedRole: row.semantic_role,
+    storedSource: row.semantic_role_source,
+    confirmed: Number(row.semantic_role_confirmed ?? 0) === 1,
+    confidence: Number(row.semantic_role_confidence ?? 0),
+    sensitivity: String(row.sensitivity_level ?? row.sensitivity ?? "normal") as "normal" | "sensitive" | "highly_sensitive"
+  });
+}
+
+function scaleFingerprint(row: Row): string {
+  let options = "[]";
+  try {
+    options = JSON.stringify((JSON.parse(String(row.options_json ?? "[]")) as Array<{ key?: string }>).map((item) => String(item.key ?? "")).sort());
+  } catch {}
+  return [String(row.value_type), row.minimum ?? "", row.maximum ?? "", row.unit ?? "", options].join("|");
+}
+
+function parseJsonArray(value: unknown): string[] | undefined {
+  try {
+    const parsed = JSON.parse(String(value ?? "[]"));
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function entryFingerprint(ids: string[]): string {
+  const value = [...new Set(ids)].sort().join("|");
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
 export class SqliteSelfUnderstandingRepository {
   private readonly db: DatabaseSync;
 
@@ -91,7 +143,7 @@ export class SqliteSelfUnderstandingRepository {
     return (
       this.db
         .prepare(
-          "SELECT candidate_id,construct_key,condition_role,outcome_role,relation,period_start_at,period_end_at,complete_pair_count FROM self_understanding_analysis_history WHERE user_id=? ORDER BY period_start_at"
+          "SELECT candidate_id,construct_key,condition_role,outcome_role,relation,period_start_at,period_end_at,complete_pair_count,condition_template_id,condition_template_version_id,condition_field_key,condition_scale_fingerprint,outcome_template_id,outcome_template_version_id,outcome_field_key,outcome_scale_fingerprint,source_entry_ids_json,source_entry_fingerprint FROM self_understanding_analysis_history WHERE user_id=? ORDER BY period_start_at"
         )
         .all(userId) as Row[]
     ).flatMap((row) => {
@@ -112,7 +164,17 @@ export class SqliteSelfUnderstandingRepository {
             startAt: String(row.period_start_at),
             endAt: String(row.period_end_at)
           },
-          completePairCount: Number(row.complete_pair_count)
+          completePairCount: Number(row.complete_pair_count),
+          conditionTemplateId: String(row.condition_template_id ?? "") || undefined,
+          conditionTemplateVersionId: String(row.condition_template_version_id ?? "") || undefined,
+          conditionFieldKey: String(row.condition_field_key ?? "") || undefined,
+          conditionScaleFingerprint: String(row.condition_scale_fingerprint ?? "") || undefined,
+          outcomeTemplateId: String(row.outcome_template_id ?? "") || undefined,
+          outcomeTemplateVersionId: String(row.outcome_template_version_id ?? "") || undefined,
+          outcomeFieldKey: String(row.outcome_field_key ?? "") || undefined,
+          outcomeScaleFingerprint: String(row.outcome_scale_fingerprint ?? "") || undefined,
+          sourceEntryIds: parseJsonArray(row.source_entry_ids_json),
+          sourceEntryFingerprint: String(row.source_entry_fingerprint ?? "") || undefined
         }
       ];
     });
@@ -175,6 +237,8 @@ export class SqliteSelfUnderstandingRepository {
         ORDER BY e.recorded_at`
       )
       .all(...params) as Row[];
+    const excludedFields: ExcludedAnalysisField[] = [];
+    const excludedKeys = new Set<string>();
     const entryCount = new Set(rows.map((row) => String(row.id))).size;
     const templateVersionIds = [
       ...new Set(
@@ -189,6 +253,7 @@ export class SqliteSelfUnderstandingRepository {
     ];
     const filters = {
       templateId: templateId ?? null,
+      templateIds: [...new Set(rows.map((row) => String(row.template_id ?? "")).filter(Boolean))],
       templateVersionId:
         templateVersionIds.length === 1 ? templateVersionIds[0] : null,
       templateVersionIds,
@@ -208,6 +273,8 @@ export class SqliteSelfUnderstandingRepository {
             "確認済みの構造化記録が不足しています。条件と結果を同じEntryで記録してください。",
           recommendedFields: fieldKeys
         },
+        dataQuality: { entryCount, confirmedValueCount: rows.length, excludedFieldCount: excludedFields.length, minimumEntryCount },
+        excludedFields,
         hypotheses: []
       };
     }
@@ -227,10 +294,26 @@ export class SqliteSelfUnderstandingRepository {
     for (const row of rows) {
       const rawValueType = String(row.value_type);
       const valueType = candidateValueType(rawValueType);
+      const exclusionKey = `${String(row.template_version_id)}:${String(row.field_key)}`;
+      const roleResolution = resolvedRole(row);
       if (!["boolean", "single_choice", "integer", "number"].includes(valueType)) {
+        if (!excludedKeys.has(exclusionKey)) {
+          excludedKeys.add(exclusionKey);
+          excludedFields.push({ templateId: String(row.template_id ?? ""), templateVersionId: String(row.template_version_id ?? ""), fieldKey: String(row.field_key), label: String(row.label ?? row.field_key), reason: "unsupported_value_type" });
+        }
         continue;
       }
-      const parameterId = `${String(row.template_version_id)}:${String(row.field_key)}`;
+      if (roleResolution.status !== "confirmed" && roleResolution.status !== "safe_auto_inferred") {
+        if (!excludedKeys.has(exclusionKey)) {
+          excludedKeys.add(exclusionKey);
+          excludedFields.push({ templateId: String(row.template_id ?? ""), templateVersionId: String(row.template_version_id ?? ""), fieldKey: String(row.field_key), label: String(row.label ?? row.field_key), reason: roleResolution.status === "unknown" ? "semantic_role_unknown" : "semantic_role_confirmation_required", suggestedRole: roleResolution.status === "confirmation_required" ? roleResolution.suggestedRole : undefined });
+        }
+        continue;
+      }
+      const role = roleResolution.role;
+      const fingerprint = scaleFingerprint(row);
+      const canMerge = Number(row.semantic_merge_allowed ?? 0) === 1 && roleResolution.status === "confirmed";
+      const parameterId = canMerge ? semanticGroupIdFor({ semanticRole: role, valueType, scaleFingerprint: fingerprint, sensitivity: String(row.sensitivity_level ?? "normal") }) : exclusionKey;
       if (!definitions.has(parameterId)) {
         let choices: Array<{ valueKey: string; labelJa: string }> = [];
         try {
@@ -255,9 +338,10 @@ export class SqliteSelfUnderstandingRepository {
           templateId:
             typeof row.template_id === "string" ? row.template_id : undefined,
           templateVersionId: String(row.template_version_id),
-          semanticRole: storedOrInferredRole(row),
+          semanticRole: role,
           sensitivity: String(row.sensitivity_level ?? "normal"),
           semanticMergeAllowed: Number(row.semantic_merge_allowed ?? 0) === 1,
+          scaleFingerprint: fingerprint,
           nameJa: String(row.label ?? row.field_key),
           valueType,
           minimumValue:
@@ -273,7 +357,7 @@ export class SqliteSelfUnderstandingRepository {
                 ? undefined
                 : 100,
           positiveValues:
-            storedOrInferredRole(row) === "completion"
+            role === "completion"
               ? ["completed", "started", true]
               : undefined,
           usableAsCondition: true,
@@ -313,8 +397,10 @@ export class SqliteSelfUnderstandingRepository {
       `INSERT INTO self_understanding_analysis_history(
         id,user_id,candidate_id,construct_key,condition_role,outcome_role,
         relation,period_start_at,period_end_at,complete_pair_count,
-        candidate_snapshot_json,created_at
-      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        condition_template_id,condition_template_version_id,condition_field_key,condition_scale_fingerprint,
+        outcome_template_id,outcome_template_version_id,outcome_field_key,outcome_scale_fingerprint,
+        source_entry_ids_json,source_entry_fingerprint,candidate_snapshot_json,created_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(user_id,candidate_id,period_start_at,period_end_at)
       DO UPDATE SET
         construct_key=excluded.construct_key,
@@ -322,11 +408,24 @@ export class SqliteSelfUnderstandingRepository {
         outcome_role=excluded.outcome_role,
         relation=excluded.relation,
         complete_pair_count=excluded.complete_pair_count,
+        condition_template_id=excluded.condition_template_id,
+        condition_template_version_id=excluded.condition_template_version_id,
+        condition_field_key=excluded.condition_field_key,
+        condition_scale_fingerprint=excluded.condition_scale_fingerprint,
+        outcome_template_id=excluded.outcome_template_id,
+        outcome_template_version_id=excluded.outcome_template_version_id,
+        outcome_field_key=excluded.outcome_field_key,
+        outcome_scale_fingerprint=excluded.outcome_scale_fingerprint,
+        source_entry_ids_json=excluded.source_entry_ids_json,
+        source_entry_fingerprint=excluded.source_entry_fingerprint,
         candidate_snapshot_json=excluded.candidate_snapshot_json`
     );
     this.db.exec("BEGIN IMMEDIATE");
     try {
       for (const hypothesis of hypotheses) {
+        const conditionParameter = definitions.get(hypothesis.candidate.conditionParameterId);
+        const outcomeParameter = definitions.get(hypothesis.candidate.outcomeParameterId);
+        const sourceEntryIds = [...new Set([...hypothesis.supportingEntryIds, ...hypothesis.contradictingEntryIds])].sort();
         save.run(
           `analysis_${userId}_${hypothesis.id}_${startAt}_${endAt}`,
           userId,
@@ -338,6 +437,16 @@ export class SqliteSelfUnderstandingRepository {
           startAt,
           endAt,
           hypothesis.candidate.completePairCount,
+          conditionParameter?.templateId ?? null,
+          conditionParameter?.templateVersionId ?? null,
+          conditionParameter?.fieldKey ?? hypothesis.interpretationInput.condition.fieldKey,
+          conditionParameter?.scaleFingerprint ?? null,
+          outcomeParameter?.templateId ?? null,
+          outcomeParameter?.templateVersionId ?? null,
+          outcomeParameter?.fieldKey ?? hypothesis.interpretationInput.outcome.fieldKey,
+          outcomeParameter?.scaleFingerprint ?? null,
+          JSON.stringify(sourceEntryIds),
+          entryFingerprint(sourceEntryIds),
           JSON.stringify(hypothesis),
           createdAt
         );
@@ -357,6 +466,8 @@ export class SqliteSelfUnderstandingRepository {
       entryCount,
       minimumEntryCount,
       hypotheses,
+      dataQuality: { entryCount, confirmedValueCount: rows.length, excludedFieldCount: excludedFields.length, minimumEntryCount },
+      excludedFields,
       explanationMode: "deterministic_fallback"
     };
   }

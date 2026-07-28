@@ -51,6 +51,16 @@ export type CandidateHistory = {
   relation: HypothesisCandidate["relation"];
   period: { startAt: string; endAt: string };
   completePairCount: number;
+  conditionTemplateId?: string;
+  conditionTemplateVersionId?: string;
+  conditionFieldKey?: string;
+  conditionScaleFingerprint?: string;
+  outcomeTemplateId?: string;
+  outcomeTemplateVersionId?: string;
+  outcomeFieldKey?: string;
+  outcomeScaleFingerprint?: string;
+  sourceEntryIds?: string[];
+  sourceEntryFingerprint?: string;
 };
 
 export const SELF_UNDERSTANDING_CONSTRUCT_CATALOG_VERSION = "construct-catalog-v1";
@@ -130,7 +140,9 @@ export function tendencyScopeFor(input: {
     (item) =>
       item.constructKey === input.current.constructKey &&
       item.conditionRole === input.current.conditionRole &&
-      item.outcomeRole === input.current.outcomeRole
+      item.outcomeRole === input.current.outcomeRole &&
+      (!input.current.conditionScaleFingerprint || !item.conditionScaleFingerprint || item.conditionScaleFingerprint === input.current.conditionScaleFingerprint) &&
+      (!input.current.outcomeScaleFingerprint || !item.outcomeScaleFingerprint || item.outcomeScaleFingerprint === input.current.outcomeScaleFingerprint)
   );
   const periods = [input.current, ...relevant].filter(
     (item, index, all) =>
@@ -143,29 +155,39 @@ export function tendencyScopeFor(input: {
   const sameDirection = periods.filter(
     (item) => item.relation === input.current.relation
   );
+  const independent = sameDirection.filter((item, index, all) => {
+    if (!item.sourceEntryIds?.length) return true;
+    return all.slice(0, index).every((previous) => {
+      if (!previous.sourceEntryIds?.length) return true;
+      const overlap = item.sourceEntryIds!.filter((id) => previous.sourceEntryIds!.includes(id)).length;
+      return overlap / Math.max(1, Math.min(item.sourceEntryIds!.length, previous.sourceEntryIds!.length)) <= 0.35;
+    });
+  });
   const hasConflict = periods.some(
     (item) =>
       item.relation !== input.current.relation &&
       item.relation !== "approximately_equal"
   );
-  const totalSampleCount = sameDirection.reduce(
+  const totalSampleCount = independent.reduce(
     (sum, item) => sum + item.completePairCount,
     0
   );
   if (hasConflict) {
-    return { scope: "unknown", repeatedPeriodCount: sameDirection.length, totalSampleCount };
+    return { scope: "unknown", repeatedPeriodCount: independent.length, totalSampleCount };
   }
-  if (sameDirection.length >= 3 && totalSampleCount >= 24) {
+  const uniqueEntryCount = new Set(independent.flatMap((item) => item.sourceEntryIds ?? [])).size;
+  const allPeriodsIdentified = independent.every((item) => Boolean(item.sourceEntryIds?.length));
+  if (independent.length >= 3 && totalSampleCount >= 24 && allPeriodsIdentified && uniqueEntryCount >= 24) {
     return {
       scope: "relatively_stable_candidate",
-      repeatedPeriodCount: sameDirection.length,
+      repeatedPeriodCount: independent.length,
       totalSampleCount
     };
   }
-  if (sameDirection.length >= 2) {
+  if (independent.length >= 2) {
     return {
       scope: "repeated_state_pattern",
-      repeatedPeriodCount: sameDirection.length,
+      repeatedPeriodCount: independent.length,
       totalSampleCount
     };
   }

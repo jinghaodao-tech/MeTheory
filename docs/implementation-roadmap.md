@@ -37,6 +37,8 @@ The implementation requires eight confirmed Entries and three values in each
 comparison group. Semantic roles map field pairs to an allowlisted non-clinical
 construct, candidate history controls emerging/state-dependent/relatively
 stable scope, and duplicate comparisons are merged while preserving evidence.
+Legacy history without Entry-set identity is not sufficient for stable scope;
+the API also returns excluded fields and data-quality counts for user review.
 See
 [`self-understanding-practical-v1.md`](self-understanding-practical-v1.md) for
 the non-clinical boundary and the persisted review flow.
