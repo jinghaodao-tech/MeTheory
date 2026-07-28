@@ -33,9 +33,11 @@ starting/continuing/recovery, state-dependent tendencies, and relatively stable
 tendencies. The deterministic comparison evaluator remains the authority for
 evidence direction and insufficiency.
 
-Practical v1 now requires eight confirmed Entries and three values in each
-comparison group, supports template and field filters, and labels candidates as
-emerging, relatively stable, or unstable. See
+The implementation requires eight confirmed Entries and three values in each
+comparison group. Semantic roles map field pairs to an allowlisted non-clinical
+construct, candidate history controls emerging/state-dependent/relatively
+stable scope, and duplicate comparisons are merged while preserving evidence.
+See
 [`self-understanding-practical-v1.md`](self-understanding-practical-v1.md) for
 the non-clinical boundary and the persisted review flow.
 

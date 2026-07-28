@@ -24,7 +24,7 @@ Markdown is the human-readable source for free records. SQLite is the local oper
 
 ## AI boundary
 
-AI may suggest templates, titles, structured values, wording for questions, and plain-language explanations of an already computed self-understanding candidate. AI must not decide facts, evidence strength, diagnosis, hypothesis status, consent, notification timing, or Self Model updates. Self-understanding explanation receives a DTO with aggregate statistics and allowlisted Entry references, never Markdown bodies. Only localhost AI endpoints are accepted; invalid JSON, invented statistics, unknown Entry IDs, or clinical and absolute claims fall back to deterministic wording. Every extracted value is reviewable, stale extraction results are rejected, and deterministic fallback behavior keeps recording available.
+AI may suggest templates, titles, structured values, wording for questions, and plain-language explanations of an already computed self-understanding candidate. AI must not decide facts, evidence strength, diagnosis, hypothesis status, consent, notification timing, or Self Model updates. Self-understanding explanation receives a versioned DTO with aggregate statistics and allowlisted Entry references, never Markdown bodies. Only localhost AI endpoints are accepted; invalid JSON, invented statistics, unknown Entry IDs, or clinical and absolute claims fall back to deterministic wording. Every extracted value is reviewable, stale extraction results are rejected, and deterministic fallback behavior keeps recording available.
 
 ## Supported clients
 
@@ -37,7 +37,7 @@ VS Code and Cursor are the primary desktop workflow. The CLI provides workspace,
 - Local AI provider boundary, manual ChatGPT prompt/result workflow, mock provider, disabled provider, extraction hashing, stale-result rejection, and privacy checks.
 - Workspace initialization, status, backup/restore checks, CLI extraction review, and VS Code Start, Status, Privacy, Templates, Review, Self Understanding, and Entries views.
 - Provisional inbox-note creation, non-blocking template suggestions, tracked-note save debounce, a single extraction retry, and explicit extraction approval before SQLite updates.
-- Self-understanding Practical v1: confirmed-value-only analysis, eight-record quality gate, condition/result filtering, stable/unstable/unknown period checks, deterministic Japanese explanations, optional validated localhost-AI wording, evidence links, ratings, and editable user-confirmed Self Model additions.
+- Self-understanding: confirmed-value-only analysis, eight-record quality gate, semantic-role-to-construct mapping, candidate history and deduplication, emerging/state-dependent/relatively-stable scopes, deterministic Japanese explanations, optional validated localhost-AI wording, evidence links, ratings, and editable user-confirmed Self Model additions.
 - Deterministic hypothesis evaluation, candidate generation primitives, evidence inspection, dynamic question support in the mobile experiment client, and `npm run verify`.
 
 ## Next implementation

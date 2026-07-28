@@ -13,11 +13,13 @@ import { SqliteEntryRepository } from "./entryRepository.ts";
 import { SqliteSearchDocumentRepository } from "./searchDocumentRepository.ts";
 import { SqliteTemplateRepository } from "./templateRepository.ts";
 import { SqlitePrivacyRepository } from "./privacyRepository.ts";
-import { MockTemplateGenerationProvider, UnavailableTemplateGenerationProvider, DisabledTemplateGenerationProvider, ManualChatGPTTemplateProvider, OpenAITemplateGenerationProvider, TEMPLATE_PROMPT_VERSION } from "../../../packages/templates/src/index.ts";
+import { SqliteSelfUnderstandingRepository } from "./selfUnderstandingRepository.ts";
+import { MockTemplateGenerationProvider, UnavailableTemplateGenerationProvider, DisabledTemplateGenerationProvider, ManualChatGPTTemplateProvider, OpenAITemplateGenerationProvider, TEMPLATE_PROMPT_VERSION, suggestSemanticRolesForTemplate, validateTemplateDraft } from "../../../packages/templates/src/index.ts";
 import {
   generateSelfUnderstanding,
   interpretSelfUnderstanding,
   OpenAICompatibleLocalInterpretationProvider,
+  validateSelfModelStatement,
   type UnderstandingRecord
 } from "../../../packages/self-understanding/src/index.ts";
 
@@ -30,6 +32,7 @@ const entryRepository = new SqliteEntryRepository(db);
 const searchDocumentRepository = new SqliteSearchDocumentRepository(db);
 const templateRepository = new SqliteTemplateRepository(db);
 const privacyRepository = new SqlitePrivacyRepository(db);
+const selfUnderstandingRepository = new SqliteSelfUnderstandingRepository(db);
 
 function ensureColumn(table: string, column: string, definition: string): void {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<Record<string, unknown>>;
@@ -62,6 +65,11 @@ ensureColumn("entry_field_values", "updated_at", "TEXT");
 ensureColumn("entry_template_fields", "sensitivity_level", "TEXT NOT NULL DEFAULT 'normal'");
 ensureColumn("entry_template_fields", "classification_source", "TEXT NOT NULL DEFAULT 'system_rule'");
 ensureColumn("entry_template_fields", "prohibited_secret_risk", "INTEGER NOT NULL DEFAULT 0");
+ensureColumn("entry_template_fields", "semantic_role", "TEXT");
+ensureColumn("entry_template_fields", "semantic_role_source", "TEXT");
+ensureColumn("entry_template_fields", "semantic_role_confidence", "REAL");
+ensureColumn("entry_template_fields", "semantic_role_confirmed", "INTEGER NOT NULL DEFAULT 0");
+ensureColumn("entry_template_fields", "semantic_merge_allowed", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("hypothesis_reviews", "analysis_start_at", "TEXT");
 ensureColumn("hypothesis_reviews", "analysis_end_at", "TEXT");
 ensureColumn("hypothesis_reviews", "template_version_id", "TEXT");
@@ -73,6 +81,12 @@ ensureColumn("self_model_candidates", "supporting_period_end", "TEXT");
 ensureColumn("self_model_candidates", "user_note", "TEXT NOT NULL DEFAULT ''");
 ensureColumn("self_model_candidates", "accepted_at", "TEXT");
 ensureColumn("self_model_candidates", "last_reviewed_at", "TEXT");
+ensureColumn("self_model_candidates", "construct_key", "TEXT");
+ensureColumn("self_model_candidates", "tendency_scope", "TEXT");
+ensureColumn("self_model_candidates", "source_analysis_periods_json", "TEXT NOT NULL DEFAULT '[]'");
+ensureColumn("self_model_candidates", "supporting_field_pairs_json", "TEXT NOT NULL DEFAULT '[]'");
+ensureColumn("self_model_candidates", "resolution_action", "TEXT NOT NULL DEFAULT 'new'");
+ensureColumn("self_model_candidates", "target_self_belief_id", "TEXT");
 ensureColumn("self_beliefs", "source_hypothesis_id", "TEXT");
 ensureColumn("self_beliefs", "status", "TEXT NOT NULL DEFAULT 'active'");
 ensureColumn("self_beliefs", "user_note", "TEXT NOT NULL DEFAULT ''");
@@ -80,6 +94,10 @@ ensureColumn("self_beliefs", "accepted_at", "TEXT");
 ensureColumn("self_beliefs", "last_reviewed_at", "TEXT");
 ensureColumn("self_beliefs", "supporting_period_start", "TEXT");
 ensureColumn("self_beliefs", "supporting_period_end", "TEXT");
+ensureColumn("self_beliefs", "construct_key", "TEXT");
+ensureColumn("self_beliefs", "tendency_scope", "TEXT");
+ensureColumn("self_beliefs", "source_analysis_periods_json", "TEXT NOT NULL DEFAULT '[]'");
+ensureColumn("self_beliefs", "supporting_field_pairs_json", "TEXT NOT NULL DEFAULT '[]'");
 db.exec("CREATE TABLE IF NOT EXISTS ai_http_access_audit_logs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, client_id TEXT NOT NULL, client_type TEXT NOT NULL, purpose TEXT NOT NULL, requested_parameter_ids_json TEXT NOT NULL, allowed_parameter_ids_json TEXT NOT NULL, denied_parameter_ids_json TEXT NOT NULL, requested_start_at TEXT, requested_end_at TEXT, returned_record_count INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, created_at TEXT NOT NULL)");
 
 const now = () => new Date().toISOString();
@@ -93,7 +111,7 @@ async function analyzeSelfUnderstandingWithInterpretation(
   userId: string,
   input: Record<string, unknown>
 ) {
-  const result = analyzeSelfUnderstandingPractical(userId, input);
+  const result = selfUnderstandingRepository.analyze(userId, input);
   if (!result.hypotheses.length) return result;
   const providerName = process.env.SELF_UNDERSTANDING_AI_PROVIDER ?? "disabled";
   let provider: OpenAICompatibleLocalInterpretationProvider | undefined;
@@ -316,6 +334,22 @@ const server = createServer(async (request, response) => {
       if (request.method === "GET" && parts.length === 3) return json(response, 200, templateRepository.detail(requestUrl.searchParams.get("userId") ?? "", parts[2]));
       if (request.method === "POST" && parts.length === 3 && parts[2] === "generate-draft") { const input = await body(request); const requestInput = { userId: String(input.userId ?? ""), theme: String(input.theme ?? ""), purpose: typeof input.purpose === "string" ? input.purpose : undefined }; const kind = process.env.AI_PROVIDER ?? "disabled"; if (kind === "manual_chatgpt") { const provider = new ManualChatGPTTemplateProvider(); return json(response, 200, { provider: kind, promptVersion: TEMPLATE_PROMPT_VERSION, prompt: provider.buildPrompt(requestInput), saved: false }); } const provider = kind === "mock" ? new MockTemplateGenerationProvider() : kind === "openai" ? new OpenAITemplateGenerationProvider({ apiKey: process.env.OPENAI_API_KEY ?? "", model: process.env.OPENAI_TEMPLATE_MODEL ?? "gpt-5.4-mini", reasoning: process.env.OPENAI_TEMPLATE_REASONING ?? "none" }) : new DisabledTemplateGenerationProvider(); const draft = await provider.generateTemplateDraft(requestInput); return json(response, 200, { draft, provider: kind, promptVersion: TEMPLATE_PROMPT_VERSION, saved: false }); }
       if (request.method === "POST" && parts.length === 3 && parts[2] === "validate-draft") { const input = await body(request); const provider = new ManualChatGPTTemplateProvider(); return json(response, 200, { draft: provider.parseResponse(String(input.response ?? "")), valid: true }); }
+      if (request.method === "POST" && parts.length === 3 && parts[2] === "suggest-semantic-roles") {
+        const input = await body(request);
+        const draft = validateTemplateDraft(input.draft);
+        const suggestions = suggestSemanticRolesForTemplate({
+          theme: draft.theme,
+          description: draft.description,
+          fields: draft.fields.map((field) => ({
+            fieldKey: field.fieldKey,
+            label: field.label,
+            description: field.description,
+            sensitivity: field.sensitivityLevel ?? field.sensitivity,
+            currentRole: field.semanticRole
+          }))
+        });
+        return json(response, 200, { suggestions, applied: false, approvalRequired: suggestions.some((item) => item.requiresConfirmation) });
+      }
       if (request.method === "POST" && parts.length === 3) { const input = await body(request); return json(response, 201, templateRepository.save(String(input.userId ?? ""), input)); }
       if (request.method === "POST" && parts.length === 4 && parts[3] === "entries") { const input = await body(request); return json(response, 201, templateRepository.createEntry(String(input.userId ?? ""), parts[2], input)); }
       if (request.method === "DELETE" && parts.length === 3) { const input = await body(request); templateRepository.archive(String(input.userId ?? requestUrl.searchParams.get("userId") ?? ""), parts[2]); return json(response, 200, { archived: true }); }
@@ -423,19 +457,145 @@ const server = createServer(async (request, response) => {
       const userId = requestUrl.searchParams.get("userId") ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, { items: db.prepare("SELECT * FROM hypothesis_reviews WHERE user_id=? ORDER BY created_at DESC").all(userId) });
     }
     if (request.method === "POST" && parts.join("/") === "v1/self-understanding/reviews") {
-      const input = await body(request); const userId = optionalString(input.userId) ?? ""; const rating = optionalString(input.rating) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); if (!["fits", "does_not_fit", "on_hold"].includes(rating)) return json(response, 400, { error: "hypothesis_review_invalid" }); const reviewId = id("hyp_review"); const candidateId = optionalString(input.candidateId) ?? ""; const createdAt = now(); const period = input.period && typeof input.period === "object" ? input.period as Record<string, unknown> : {}; const fieldPair = input.fieldPair && typeof input.fieldPair === "object" ? input.fieldPair : {}; db.prepare("INSERT INTO hypothesis_reviews(id,user_id,candidate_id,rating,note,analysis_start_at,analysis_end_at,template_version_id,field_pair_json,reviewed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(reviewId, userId, candidateId, rating, optionalString(input.note) ?? "", optionalString(period.startAt) ?? null, optionalString(period.endAt) ?? null, optionalString(input.templateVersionId) ?? null, JSON.stringify(fieldPair), createdAt, createdAt); let selfModelCandidateId: string | null = null; if (rating === "fits") { selfModelCandidateId = id("self_model_candidate"); db.prepare("INSERT INTO self_model_candidates(id,user_id,candidate_id,statement,status,source_hypothesis_id,supporting_period_start,supporting_period_end,user_note,created_at,last_reviewed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(selfModelCandidateId, userId, candidateId, optionalString(input.statement) ?? "", "proposed", candidateId, optionalString(period.startAt) ?? null, optionalString(period.endAt) ?? null, optionalString(input.note) ?? "", createdAt, createdAt); } return json(response, 201, { id: reviewId, candidateId, rating, selfModelUpdate: selfModelCandidateId ? "proposed" : "none", selfModelCandidateId });
+      const input = await body(request);
+      const userId = optionalString(input.userId) ?? "";
+      const rating = optionalString(input.rating) ?? "";
+      const candidateId = optionalString(input.candidateId) ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (!["fits", "does_not_fit", "on_hold"].includes(rating)) return json(response, 400, { error: "hypothesis_review_invalid" });
+      const snapshot = selfUnderstandingRepository.latestSnapshot(userId, candidateId) as any;
+      if (!snapshot) return json(response, 404, { error: "self_understanding_candidate_not_found" });
+      const period = snapshot.period as { startAt: string; endAt: string };
+      const fieldPair = {
+        condition: snapshot.interpretationInput.condition.fieldKey,
+        outcome: snapshot.interpretationInput.outcome.fieldKey
+      };
+      const createdAt = now();
+      const reviewId = id("hyp_review");
+      db.prepare("INSERT INTO hypothesis_reviews(id,user_id,candidate_id,rating,note,analysis_start_at,analysis_end_at,template_version_id,field_pair_json,reviewed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(reviewId, userId, candidateId, rating, optionalString(input.note) ?? "", period.startAt, period.endAt, optionalString(input.templateVersionId) ?? null, JSON.stringify(fieldPair), createdAt, createdAt);
+      let selfModelCandidateId: string | null = null;
+      if (rating === "fits") {
+        const statement = String(snapshot.selfModelCandidate ?? "");
+        if (!validateSelfModelStatement(statement)) return json(response, 400, { error: "self_model_statement_invalid" });
+        selfModelCandidateId = id("self_model_candidate");
+        db.prepare(`INSERT INTO self_model_candidates(
+          id,user_id,candidate_id,statement,status,source_hypothesis_id,
+          supporting_period_start,supporting_period_end,construct_key,tendency_scope,
+          source_analysis_periods_json,supporting_field_pairs_json,
+          resolution_action,target_self_belief_id,user_note,created_at,last_reviewed_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+          selfModelCandidateId,
+          userId,
+          candidateId,
+          statement,
+          "proposed",
+          candidateId,
+          period.startAt,
+          period.endAt,
+          snapshot.construct,
+          snapshot.tendencyScope,
+          JSON.stringify([period]),
+          JSON.stringify([{ conditionFieldKey: fieldPair.condition, outcomeFieldKey: fieldPair.outcome }]),
+          "new",
+          null,
+          optionalString(input.note) ?? "",
+          createdAt,
+          createdAt
+        );
+      }
+      const relatedItems = selfUnderstandingRepository.relatedSelfModelItems(userId, String(snapshot.construct));
+      return json(response, 201, { id: reviewId, candidateId, rating, selfModelUpdate: selfModelCandidateId ? "proposed" : "none", selfModelCandidateId, relatedItems, availableResolutionActions: ["new", "update_existing", "separate"] });
     }
     if (request.method === "GET" && parts.join("/") === "v1/self-understanding/self-model-candidates") {
       const userId = requestUrl.searchParams.get("userId") ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, { items: db.prepare("SELECT * FROM self_model_candidates WHERE user_id=? ORDER BY created_at DESC").all(userId) });
     }
+    if (request.method === "GET" && parts.join("/") === "v1/self-understanding/self-model-options") {
+      const userId = requestUrl.searchParams.get("userId") ?? "";
+      const candidateId = requestUrl.searchParams.get("candidateId") ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      const candidate = db.prepare("SELECT construct_key FROM self_model_candidates WHERE user_id=? AND id=?").get(userId, candidateId) as { construct_key: string | null } | undefined;
+      if (!candidate) return json(response, 404, { error: "self_model_candidate_not_found" });
+      const relatedItems = candidate.construct_key ? selfUnderstandingRepository.relatedSelfModelItems(userId, candidate.construct_key) : [];
+      return json(response, 200, { candidateId, constructKey: candidate.construct_key, actions: ["new", "update_existing", "separate"], relatedItems, automaticMerge: false });
+    }
     if (request.method === "POST" && parts.join("/") === "v1/self-understanding/self-model-candidates/edit") {
-      const input = await body(request); const userId = optionalString(input.userId) ?? ""; const candidateId = optionalString(input.candidateId) ?? ""; const statement = optionalString(input.statement)?.trim() ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); if (!statement || statement.length > 500 || /(ADHD|diagnos|診断|障害|疾患)/i.test(statement)) return json(response, 400, { error: "self_model_statement_invalid" }); const result = db.prepare("UPDATE self_model_candidates SET statement=?,user_note=?,last_reviewed_at=? WHERE user_id=? AND id=? AND status='proposed'").run(statement, optionalString(input.userNote) ?? "", now(), userId, candidateId); if (!result.changes) return json(response, 404, { error: "self_model_candidate_not_found" }); return json(response, 200, { candidateId, statement });
+      const input = await body(request);
+      const userId = optionalString(input.userId) ?? "";
+      const candidateId = optionalString(input.candidateId) ?? "";
+      const statement = optionalString(input.statement)?.trim() ?? "";
+      const resolutionAction = optionalString(input.resolutionAction) ?? "new";
+      const targetSelfBeliefId = optionalString(input.targetSelfBeliefId) ?? null;
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (!validateSelfModelStatement(statement)) return json(response, 400, { error: "self_model_statement_invalid" });
+      if (!["new", "update_existing", "separate"].includes(resolutionAction)) return json(response, 400, { error: "self_model_resolution_invalid" });
+      if (resolutionAction === "update_existing") {
+        const candidate = db.prepare("SELECT construct_key FROM self_model_candidates WHERE user_id=? AND id=?").get(userId, candidateId) as { construct_key: string | null } | undefined;
+        const target = targetSelfBeliefId ? db.prepare("SELECT id FROM self_beliefs WHERE user_id=? AND id=? AND construct_key=? AND status!='archived'").get(userId, targetSelfBeliefId, candidate?.construct_key ?? "") : undefined;
+        if (!target) return json(response, 400, { error: "self_model_update_target_invalid" });
+      }
+      const result = db.prepare("UPDATE self_model_candidates SET statement=?,user_note=?,resolution_action=?,target_self_belief_id=?,last_reviewed_at=? WHERE user_id=? AND id=? AND status='proposed'").run(statement, optionalString(input.userNote) ?? "", resolutionAction, targetSelfBeliefId, now(), userId, candidateId);
+      if (!result.changes) return json(response, 404, { error: "self_model_candidate_not_found" });
+      return json(response, 200, { candidateId, statement, resolutionAction, targetSelfBeliefId });
     }
     if (request.method === "POST" && parts.join("/") === "v1/self-understanding/self-model-candidates/review") {
-      const input = await body(request); const userId = optionalString(input.userId) ?? ""; const candidateId = optionalString(input.candidateId) ?? ""; const status = optionalString(input.status) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); if (!["accepted", "rejected"].includes(status)) return json(response, 400, { error: "self_model_review_invalid" }); const candidate = db.prepare("SELECT statement,source_hypothesis_id,supporting_period_start,supporting_period_end,user_note FROM self_model_candidates WHERE user_id=? AND id=? AND status='proposed'").get(userId, candidateId) as { statement: string; source_hypothesis_id: string | null; supporting_period_start: string | null; supporting_period_end: string | null; user_note: string } | undefined; if (!candidate) return json(response, 404, { error: "self_model_candidate_not_found" }); const reviewedAt = now(); db.exec("BEGIN IMMEDIATE"); try { db.prepare("UPDATE self_model_candidates SET status=?,reviewed_at=?,accepted_at=?,last_reviewed_at=? WHERE user_id=? AND id=?").run(status, reviewedAt, status === "accepted" ? reviewedAt : null, reviewedAt, userId, candidateId); const beliefId = status === "accepted" ? id("belief") : null; if (beliefId) db.prepare("INSERT INTO self_beliefs(id,user_id,statement,source_kind,source_hypothesis_id,status,user_note,accepted_at,last_reviewed_at,supporting_period_start,supporting_period_end,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(beliefId, userId, candidate.statement, "user", candidate.source_hypothesis_id, "active", candidate.user_note, reviewedAt, reviewedAt, candidate.supporting_period_start, candidate.supporting_period_end, reviewedAt); db.exec("COMMIT"); return json(response, 200, { candidateId, status, selfBeliefId: beliefId }); } catch (error) { db.exec("ROLLBACK"); throw error; }
+      const input = await body(request);
+      const userId = optionalString(input.userId) ?? "";
+      const candidateId = optionalString(input.candidateId) ?? "";
+      const status = optionalString(input.status) ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (!["accepted", "rejected"].includes(status)) return json(response, 400, { error: "self_model_review_invalid" });
+      const candidate = db.prepare(`SELECT statement,source_hypothesis_id,
+        supporting_period_start,supporting_period_end,user_note,construct_key,
+        tendency_scope,source_analysis_periods_json,supporting_field_pairs_json,
+        resolution_action,target_self_belief_id
+        FROM self_model_candidates
+        WHERE user_id=? AND id=? AND status='proposed'`).get(userId, candidateId) as any;
+      if (!candidate) return json(response, 404, { error: "self_model_candidate_not_found" });
+      if (!validateSelfModelStatement(String(candidate.statement))) return json(response, 400, { error: "self_model_statement_invalid" });
+      const reviewedAt = now();
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        db.prepare("UPDATE self_model_candidates SET status=?,reviewed_at=?,accepted_at=?,last_reviewed_at=? WHERE user_id=? AND id=?").run(status, reviewedAt, status === "accepted" ? reviewedAt : null, reviewedAt, userId, candidateId);
+        let beliefId: string | null = null;
+        if (status === "accepted" && candidate.resolution_action === "update_existing" && candidate.target_self_belief_id) {
+          const updated = db.prepare(`UPDATE self_beliefs SET statement=?,source_hypothesis_id=?,
+            user_note=?,last_reviewed_at=?,supporting_period_start=?,supporting_period_end=?,
+            tendency_scope=?,source_analysis_periods_json=?,supporting_field_pairs_json=?
+            WHERE user_id=? AND id=? AND construct_key=? AND status!='archived'`).run(
+            candidate.statement, candidate.source_hypothesis_id, candidate.user_note,
+            reviewedAt, candidate.supporting_period_start, candidate.supporting_period_end,
+            candidate.tendency_scope, candidate.source_analysis_periods_json,
+            candidate.supporting_field_pairs_json, userId,
+            candidate.target_self_belief_id, candidate.construct_key
+          );
+          if (!updated.changes) throw new Error("self_model_update_target_invalid");
+          beliefId = candidate.target_self_belief_id;
+        } else if (status === "accepted") {
+          beliefId = id("belief");
+          db.prepare(`INSERT INTO self_beliefs(
+            id,user_id,statement,source_kind,source_hypothesis_id,status,user_note,
+            accepted_at,last_reviewed_at,supporting_period_start,supporting_period_end,
+            construct_key,tendency_scope,source_analysis_periods_json,
+            supporting_field_pairs_json,created_at
+          ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+            beliefId, userId, candidate.statement, "user",
+            candidate.source_hypothesis_id, "active", candidate.user_note,
+            reviewedAt, reviewedAt, candidate.supporting_period_start,
+            candidate.supporting_period_end, candidate.construct_key,
+            candidate.tendency_scope, candidate.source_analysis_periods_json,
+            candidate.supporting_field_pairs_json, reviewedAt
+          );
+        }
+        db.exec("COMMIT");
+        return json(response, 200, { candidateId, status, selfBeliefId: beliefId, resolutionAction: candidate.resolution_action });
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
     }
     if (request.method === "POST" && parts.length === 2 && parts[0] === "v1" && parts[1] === "self-beliefs") {
       const input = await body(request); const userId = optionalString(input.userId) ?? ""; const statement = optionalString(input.statement) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (!validateSelfModelStatement(statement)) return json(response, 400, { error: "self_belief_statement_invalid" });
       const beliefId = id("belief"); db.prepare("INSERT INTO self_beliefs(id, user_id, statement, source_kind, created_at) VALUES (?, ?, ?, 'user', ?)").run(beliefId, userId, statement, now());
       return json(response, 201, { id: beliefId, userId, statement });
     }

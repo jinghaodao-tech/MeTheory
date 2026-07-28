@@ -24,12 +24,258 @@ type ExtractionView = { id: string; notePath?: string; status: string; result?: 
 class ReviewViewProvider { constructor(private readonly context: ExtensionContext) {} resolveWebviewView(view: any) { view.webview.options = { enableScripts: true }; const load = async () => { try { const list = JSON.parse((await cli(this.context, ["entry", "extraction-list", "--json"])).stdout) as Array<{ id: string }>; const records: ExtractionView[] = []; for (const item of list) records.push(JSON.parse((await cli(this.context, ["extraction", "review", item.id, "--json"])).stdout) as ExtractionView); view.webview.html = this.render(records); } catch (error) { view.webview.html = `<h2>Review</h2><p>${escapeHtml(error instanceof Error ? error.message : "error")}</p>`; } }; view.webview.onDidReceiveMessage(async (message: any) => { try { const record = String(message.id ?? ""); if (message.type === "edit") { const value = await window.showInputBox({ prompt: `Edit ${String(message.field)}`, value: String(message.value ?? "") }); if (value !== undefined) await cli(this.context, ["extraction", "edit", record, String(message.field), value, "--json"]); } else if (message.type === "approve") await cli(this.context, ["extraction", "approve", record, String(message.field), "--json"]); else if (message.type === "unknown") await cli(this.context, ["extraction", "decide", record, String(message.field), "unanswered", "--json"]); else if (message.type === "reject") await cli(this.context, ["entry", "extraction-reject", record, "--json"]); else if (message.type === "open") { const review = JSON.parse((await cli(this.context, ["extraction", "review", record, "--json"])).stdout) as ExtractionView; if (review.notePath) await commands.executeCommand("vscode.open", Uri.file(join(root(), review.notePath))); } else if (message.type === "apply") await cli(this.context, ["extraction", "apply", record, "--json"]); else if (message.type === "reextract") { const review = JSON.parse((await cli(this.context, ["extraction", "review", record, "--json"])).stdout) as ExtractionView; if (review.notePath) await cli(this.context, ["entry", "structure", review.notePath, "--json"]); } await load(); } catch (error) { window.showErrorMessage(error instanceof Error ? error.message : "Review action failed"); } }); void load(); } private render(records: ExtractionView[]) { const cards = records.map(record => { const values = record.result?.values ?? {}; const confidence = record.result?.confidence ?? {}; const decisions = record.result?.decisions ?? {}; const fields = Object.keys(values).map(field => `<li><b>${escapeHtml(field)}</b>: ${escapeHtml(String(values[field]))} <small>inferred · confidence ${escapeHtml(String(confidence[field] ?? ""))} · ${escapeHtml(decisions[field] ?? "review_required")}</small> <button data-a="edit" data-f="${escapeHtml(field)}" data-v="${escapeHtml(String(values[field]))}">Edit</button> <button data-a="approve" data-f="${escapeHtml(field)}">Approve</button> <button data-a="unknown" data-f="${escapeHtml(field)}">Unknown</button></li>`).join(""); const stale = (record as ExtractionView & { stale?: boolean }).stale ? "<p><b>Source changed. Re-extract before applying.</b></p>" : ""; return `<section><h3>${escapeHtml(record.id)} <small>${escapeHtml(record.status)}</small></h3>${stale}<ul>${fields || "<li>No extracted values</li>"}</ul><button data-a="apply">Apply approved values</button><button data-a="reextract">Re-extract</button><button data-a="open">Open note</button><button data-a="reject">Reject draft</button></section>`; }).join("") || "<p>No extraction drafts.</p>"; return `<!doctype html><html><body><h2>Review</h2>${cards}<script>const vscode=acquireVsCodeApi();document.body.onclick=(event)=>{const el=event.target;if(!(el instanceof HTMLElement)||!el.dataset.a)return;vscode.postMessage({type:el.dataset.a,id:el.closest('section')?.querySelector('h3')?.textContent?.split(' ')[0],field:el.dataset.f,value:el.dataset.v});};</script></body></html>`; } }
 class SelfUnderstandingViewProvider { constructor(private readonly context: ExtensionContext) {} resolveWebviewView(view: any) { view.webview.options = { enableScripts: true }; const loadCandidates = async () => { const payload = await api(`/v1/self-understanding/self-model-candidates?userId=${encodeURIComponent(process.env.METHEORY_USER_ID ?? "local-user")}`); return (payload.items as Array<{ id: string; statement: string; status: string }>).map(item => `<li>${escapeHtml(item.statement)} <small>${escapeHtml(item.status)}</small>${item.status === "proposed" ? ` <button data-a="self-model" data-id="${escapeHtml(item.id)}" data-status="accepted">Accept</button><button data-a="self-model" data-id="${escapeHtml(item.id)}" data-status="rejected">Reject</button>` : ""}</li>`).join(""); }; const render = async (result?: any) => { const hypotheses = result?.hypotheses ?? []; const shortage = result?.dataShortage ? `<p><b>Not enough confirmed data:</b> ${escapeHtml(result.dataShortage.message)}</p>` : ""; const cards = hypotheses.map((item: any) => `<section><h3>${escapeHtml(item.statement)}</h3><p>Confidence ${escapeHtml(String(item.confidence))} · ${escapeHtml(String(item.dataCount ?? 0))} records</p><p>Next: ${escapeHtml(String(item.nextAction ?? ""))}</p><p>Supporting: ${(item.supportingEntryIds ?? []).map((id: string) => `<button data-a="entry" data-path="${escapeHtml(id)}">${escapeHtml(id)}</button>`).join(" ") || "none"}</p><p>Contradicting: ${(item.contradictingEntryIds ?? []).map((id: string) => `<button data-a="entry" data-path="${escapeHtml(id)}">${escapeHtml(id)}</button>`).join(" ") || "none"}</p><button data-a="rating" data-id="${escapeHtml(item.id ?? item.candidate?.id ?? "")}" data-rating="fits" data-statement="${escapeHtml(item.selfModelCandidate ?? item.statement)}">Fits</button><button data-a="rating" data-id="${escapeHtml(item.id ?? item.candidate?.id ?? "")}" data-rating="does_not_fit">Does not fit</button><button data-a="rating" data-id="${escapeHtml(item.id ?? item.candidate?.id ?? "")}" data-rating="on_hold">On hold</button></section>`).join(""); view.webview.html = `<!doctype html><html><body><h2>Self Understanding</h2><label>Period <select id="days"><option value="7">1 week</option><option value="14">2 weeks</option><option value="28" selected>4 weeks</option></select></label><label> Minimum records <input id="minimum" type="number" min="2" value="4"/></label><button id="analyze">Analyze confirmed values</button>${shortage}${cards || "<p>Choose a period to analyze confirmed structured values.</p>"}<h3>Self Model proposals</h3><ul>${await loadCandidates()}</ul><script>const vscode=acquireVsCodeApi();document.getElementById('analyze').onclick=()=>vscode.postMessage({type:'analyze',days:document.getElementById('days').value,minimum:document.getElementById('minimum').value});document.body.onclick=(event)=>{const el=event.target;if(!(el instanceof HTMLElement)||!el.dataset.a)return;vscode.postMessage({type:el.dataset.a,id:el.dataset.id,rating:el.dataset.rating,statement:el.dataset.statement,status:el.dataset.status,path:el.dataset.path});};</script></body></html>`; }; view.webview.onDidReceiveMessage(async (message: any) => { try { if (message.type === "analyze") { await startService(this.context); const endAt = new Date(); const startAt = new Date(endAt.getTime() - Number(message.days ?? 28) * 86400000); await render(await api("/v1/self-understanding/analyze", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId: process.env.METHEORY_USER_ID ?? "local-user", startAt: startAt.toISOString(), endAt: endAt.toISOString(), minimumEntryCount: Number(message.minimum ?? 4) }) })); } else if (message.type === "rating") { await api("/v1/self-understanding/reviews", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId: process.env.METHEORY_USER_ID ?? "local-user", candidateId: message.id, rating: message.rating, statement: message.statement ?? "" }) }); await render(); } else if (message.type === "self-model") { await api("/v1/self-understanding/self-model-candidates/review", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId: process.env.METHEORY_USER_ID ?? "local-user", candidateId: message.id, status: message.status }) }); await render(); } else if (message.type === "entry") { const list = JSON.parse((await cli(this.context, ["entry", "list", "--json"])).stdout) as { items?: Array<{ id: string; externalSourceId?: string }> }; const entry = list.items?.find(item => item.id === message.path); if (entry?.externalSourceId) await commands.executeCommand("vscode.open", Uri.file(join(root(), entry.externalSourceId))); } } catch (error) { window.showErrorMessage(error instanceof Error ? error.message : "Self Understanding action failed"); } }); void render(); } }
 class PracticalSelfUnderstandingViewProvider { constructor(private readonly context: ExtensionContext) {} resolveWebviewView(view: any) { view.webview.options = { enableScripts: true }; let options: { templates: Array<{ id: string; name: string }>; fields: Array<{ template_id: string; field_key: string; label: string }> } = { templates: [], fields: [] }; const render = async (result?: any) => { const templateOptions = ["<option value=''>All templates</option>", ...options.templates.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`)].join(""); const fieldOptions = options.fields.map(item => `<option value="${escapeHtml(item.field_key)}" data-template="${escapeHtml(item.template_id)}">${escapeHtml(item.label)}</option>`).join(""); const shortage = result?.dataShortage ? `<section><h3>データ不足</h3><p>確認済みEntry: ${escapeHtml(String(result.entryCount))} / 必要: ${escapeHtml(String(result.minimumEntryCount))}。あと${escapeHtml(String(result.dataShortage.needed))}件必要です。</p><p>${escapeHtml(String(result.dataShortage.message))}</p><p>同じEntryで条件と結果を一緒に記録してください。</p></section>` : ""; const cards = (result?.hypotheses ?? []).map((item: any) => `<section><h3>${escapeHtml(item.statement)}</h3><p><b>${escapeHtml(item.statusLabelJa)}</b> · ${escapeHtml(item.period.startAt.slice(0, 10))} - ${escapeHtml(item.period.endAt.slice(0, 10))}</p><p>${escapeHtml(item.interpretation.plainExplanationJa)}</p><p>${escapeHtml(item.interpretation.supportingExplanationJa)} ${escapeHtml(item.interpretation.contradictingExplanationJa)}</p><p>${escapeHtml(item.interpretation.uncertaintyJa)}</p><p><b>次の確認:</b> ${escapeHtml(item.interpretation.nextExperiment.action)}</p><p>根拠: ${(item.supportingEntryIds ?? []).map((entryId: string) => `<button data-a="entry" data-entry="${escapeHtml(entryId)}">${escapeHtml(entryId)}</button>`).join(" ") || "なし"}</p><p>反証: ${(item.contradictingEntryIds ?? []).map((entryId: string) => `<button data-a="entry" data-entry="${escapeHtml(entryId)}">${escapeHtml(entryId)}</button>`).join(" ") || "なし"}</p><button data-a="rate" data-rating="fits" data-id="${escapeHtml(item.id)}" data-statement="${escapeHtml(item.selfModelCandidate)}" data-period="${escapeHtml(JSON.stringify(item.period))}" data-pair="${escapeHtml(JSON.stringify({ condition: item.candidate.conditionParameterId, outcome: item.candidate.outcomeParameterId }))}">合っている</button><button data-a="rate" data-rating="does_not_fit" data-id="${escapeHtml(item.id)}" data-period="${escapeHtml(JSON.stringify(item.period))}" data-pair="${escapeHtml(JSON.stringify({ condition: item.candidate.conditionParameterId, outcome: item.candidate.outcomeParameterId }))}">合っていない</button><button data-a="rate" data-rating="on_hold" data-id="${escapeHtml(item.id)}" data-period="${escapeHtml(JSON.stringify(item.period))}" data-pair="${escapeHtml(JSON.stringify({ condition: item.candidate.conditionParameterId, outcome: item.candidate.outcomeParameterId }))}">保留</button></section>`).join(""); const candidates = await api(`/v1/self-understanding/self-model-candidates?userId=${encodeURIComponent(process.env.METHEORY_USER_ID ?? "local-user")}`); const selfModel = (candidates.items as Array<{ id: string; statement: string; status: string }>).map(item => `<li>${escapeHtml(item.statement)} <small>${escapeHtml(item.status)}</small>${item.status === "proposed" ? ` <button data-a="edit-model" data-id="${escapeHtml(item.id)}" data-statement="${escapeHtml(item.statement)}">編集</button><button data-a="model" data-id="${escapeHtml(item.id)}" data-status="accepted">承認</button><button data-a="model" data-id="${escapeHtml(item.id)}" data-status="rejected">却下</button>` : ""}</li>`).join(""); view.webview.html = `<!doctype html><html><body><h2>Self Understanding</h2><label>期間 <select id="days"><option value="7">1週間</option><option value="14">2週間</option><option value="28" selected>4週間</option></select></label><label>テンプレート <select id="template">${templateOptions}</select></label><label>分析フィールド <select id="fields" multiple size="5">${fieldOptions}</select></label><button id="analyze">確認済み値を分析</button>${result?.explanationMode === "deterministic_fallback" ? "<p>標準説明を表示しています。</p>" : ""}${shortage}${cards || "<p>期間と対象を選んで分析してください。</p>"}<h3>Self Model候補</h3><ul>${selfModel}</ul><script>const vscode=acquireVsCodeApi();document.getElementById('template').onchange=()=>{for(const option of document.querySelectorAll('#fields option'))option.hidden=!!document.getElementById('template').value&&option.dataset.template!==document.getElementById('template').value};document.getElementById('analyze').onclick=()=>vscode.postMessage({type:'analyze',days:document.getElementById('days').value,templateId:document.getElementById('template').value,fieldKeys:Array.from(document.getElementById('fields').selectedOptions).map(o=>o.value)});document.body.onclick=e=>{const el=e.target;if(!(el instanceof HTMLElement)||!el.dataset.a)return;vscode.postMessage({type:el.dataset.a,id:el.dataset.id,rating:el.dataset.rating,statement:el.dataset.statement,status:el.dataset.status,entry:el.dataset.entry,period:el.dataset.period,pair:el.dataset.pair});};</script></body></html>`; }; view.webview.onDidReceiveMessage(async (message: any) => { try { if (message.type === "analyze") { await startService(this.context); const endAt = new Date(); const startAt = new Date(endAt.getTime() - Number(message.days ?? 28) * 86400000); await render(await api("/v1/self-understanding/analyze", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId: process.env.METHEORY_USER_ID ?? "local-user", startAt: startAt.toISOString(), endAt: endAt.toISOString(), templateId: message.templateId || undefined, fieldKeys: message.fieldKeys, minimumEntryCount: 8 }) })); } else if (message.type === "rate") { await api("/v1/self-understanding/reviews", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId: process.env.METHEORY_USER_ID ?? "local-user", candidateId: message.id, rating: message.rating, statement: message.statement ?? "", period: JSON.parse(message.period ?? "{}"), fieldPair: JSON.parse(message.pair ?? "{}") }) }); await render(); } else if (message.type === "edit-model") { const statement = await window.showInputBox({ prompt: "Self Model候補を編集", value: String(message.statement ?? "") }); if (statement !== undefined) await api("/v1/self-understanding/self-model-candidates/edit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId: process.env.METHEORY_USER_ID ?? "local-user", candidateId: message.id, statement }) }); await render(); } else if (message.type === "model") { await api("/v1/self-understanding/self-model-candidates/review", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId: process.env.METHEORY_USER_ID ?? "local-user", candidateId: message.id, status: message.status }) }); await render(); } else if (message.type === "entry") { const list = JSON.parse((await cli(this.context, ["entry", "list", "--json"])).stdout) as { items?: Array<{ id: string; externalSourceId?: string }> }; const entry = list.items?.find(item => item.id === message.entry); if (entry?.externalSourceId) await commands.executeCommand("vscode.open", Uri.file(join(root(), entry.externalSourceId))); } } catch (error) { window.showErrorMessage(error instanceof Error ? error.message : "Self Understanding action failed"); } }); void (async () => { try { await startService(this.context); options = await api(`/v1/self-understanding/options?userId=${encodeURIComponent(process.env.METHEORY_USER_ID ?? "local-user")}`); } catch { /* the empty selector still explains unavailable data */ } await render(); })(); } }
+class NonClinicalSelfUnderstandingViewProvider {
+  constructor(private readonly context: ExtensionContext) {}
+
+  resolveWebviewView(view: any) {
+    view.webview.options = { enableScripts: true };
+    let lastResult: any;
+    let options: {
+      templates: Array<{ id: string; name: string }>;
+      fields: Array<{
+        template_id: string;
+        field_key: string;
+        label: string;
+        value_type: string;
+      }>;
+    } = { templates: [], fields: [] };
+
+    const entryLinks = (ids: string[]) =>
+      ids
+        .map(
+          (entryId) =>
+            `<button data-a="entry" data-entry="${escapeHtml(entryId)}">${escapeHtml(entryId)}</button>`
+        )
+        .join(" ") || "なし";
+
+    const candidateCard = (item: any) => {
+      const dto = item.interpretationInput;
+      const statistics = dto.statistics;
+      return `<article>
+        <h4>${escapeHtml(item.statement)}</h4>
+        <p><b>${escapeHtml(item.statusLabelJa)}</b> · ${escapeHtml(item.tendencyScopeLabelJa)}</p>
+        <p>${escapeHtml(item.interpretation.plainExplanationJa)}</p>
+        <p><b>根拠:</b> ${entryLinks(item.supportingEntryIds ?? [])}</p>
+        <p><b>反証:</b> ${entryLinks(item.contradictingEntryIds ?? [])}</p>
+        <p><b>まだ不明:</b> ${escapeHtml(item.interpretation.uncertaintyJa)}</p>
+        <p><b>別の説明:</b> ${escapeHtml(item.interpretation.alternativeExplanationJa)}</p>
+        <p><b>次の確認:</b> ${escapeHtml(item.interpretation.nextExperiment.action)}</p>
+        <p><b>次に記録する項目:</b> ${escapeHtml(item.constructDefinition.suggestedObservationRoles.join("、") || "現在の条件と結果")}</p>
+        <details>
+          <summary>技術的な指標</summary>
+          <dl>
+            <dt>分析期間</dt><dd>${escapeHtml(item.period.startAt.slice(0, 10))} - ${escapeHtml(item.period.endAt.slice(0, 10))}</dd>
+            <dt>対象テンプレート</dt><dd>${escapeHtml((item.templateIds ?? []).join(", ") || "複数または未指定")}</dd>
+            <dt>条件</dt><dd>${escapeHtml(dto.condition.label)} (${escapeHtml(dto.condition.fieldKey)} / ${escapeHtml(dto.condition.semanticRole)})</dd>
+            <dt>結果</dt><dd>${escapeHtml(dto.outcome.label)} (${escapeHtml(dto.outcome.fieldKey)} / ${escapeHtml(dto.outcome.semanticRole)})</dd>
+            <dt>各グループ件数</dt><dd>${escapeHtml(String(statistics.groupACount))} / ${escapeHtml(String(statistics.groupBCount))}</dd>
+            <dt>欠損率</dt><dd>${escapeHtml(String(statistics.missingRate))}</dd>
+            <dt>差</dt><dd>${escapeHtml(String(statistics.difference))}</dd>
+            <dt>期間内安定性</dt><dd>${escapeHtml(statistics.temporalStability)}</dd>
+            <dt>統合候補</dt><dd>${escapeHtml((item.mergedCandidateIds ?? []).join(", ") || "なし")}</dd>
+          </dl>
+        </details>
+        <div class="actions">
+          <button data-a="rate" data-rating="fits" data-id="${escapeHtml(item.id)}">合っている</button>
+          <button data-a="rate" data-rating="does_not_fit" data-id="${escapeHtml(item.id)}">合っていない</button>
+          <button data-a="rate" data-rating="on_hold" data-id="${escapeHtml(item.id)}">保留</button>
+        </div>
+      </article>`;
+    };
+
+    const render = async (result?: any) => {
+      if (result) lastResult = result;
+      const activeResult = result ?? lastResult;
+      const templateOptions = [
+        "<option value=''>すべてのテンプレート</option>",
+        ...options.templates.map(
+          (item) =>
+            `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`
+        )
+      ].join("");
+      const fieldOptions = options.fields
+        .map(
+          (item) =>
+            `<option value="${escapeHtml(item.field_key)}" data-template="${escapeHtml(item.template_id)}">${escapeHtml(item.label)}</option>`
+        )
+        .join("");
+      const shortage = activeResult?.dataShortage
+        ? `<section><h3>データ不足</h3>
+            <p>確認済みEntry: ${escapeHtml(String(activeResult.entryCount))} / 必要: ${escapeHtml(String(activeResult.minimumEntryCount))}</p>
+            <p>${escapeHtml(String(activeResult.dataShortage.message))}</p>
+          </section>`
+        : "";
+      const groups = new Map<string, any[]>();
+      for (const item of activeResult?.hypotheses ?? []) {
+        const key = String(item.construct);
+        groups.set(key, [...(groups.get(key) ?? []), item]);
+      }
+      const hypotheses = [...groups.values()]
+        .map(
+          (items) =>
+            `<section class="construct">
+              <h3>${escapeHtml(items[0].constructDefinition.labelJa)}</h3>
+              <p>${escapeHtml(items[0].constructDefinition.descriptionJa)}</p>
+              ${items.map(candidateCard).join("")}
+            </section>`
+        )
+        .join("");
+      const candidatePayload = await api(
+        `/v1/self-understanding/self-model-candidates?userId=${encodeURIComponent(process.env.METHEORY_USER_ID ?? "local-user")}`
+      );
+      const selfModel = (candidatePayload.items as any[])
+        .map(
+          (item) =>
+            `<li>
+              <b>${escapeHtml(item.statement)}</b>
+              <small>${escapeHtml(item.construct_key ?? "uncategorized")} · ${escapeHtml(item.tendency_scope ?? "unknown")} · ${escapeHtml(item.status)}</small>
+              ${
+                item.status === "proposed"
+                  ? `<button data-a="edit-model" data-id="${escapeHtml(item.id)}" data-statement="${escapeHtml(item.statement)}">編集</button>
+                     <button data-a="model" data-id="${escapeHtml(item.id)}" data-status="accepted">承認</button>
+                     <button data-a="model" data-id="${escapeHtml(item.id)}" data-status="rejected">却下</button>`
+                  : ""
+              }
+            </li>`
+        )
+        .join("");
+      view.webview.html = `<!doctype html><html><head><style>
+        body{font-family:var(--vscode-font-family);color:var(--vscode-foreground);padding:12px}
+        section{margin:18px 0} article{border-top:1px solid var(--vscode-panel-border);padding:12px 0}
+        label{display:block;margin:8px 0} select{max-width:100%} button{margin:4px 6px 4px 0}
+        dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px} dt{font-weight:600}
+        small{display:block;opacity:.75;margin:4px 0}.actions{margin-top:8px}
+      </style></head><body>
+        <h2>Self Understanding</h2>
+        <label>期間 <select id="days"><option value="7">1週間</option><option value="14">2週間</option><option value="28" selected>4週間</option></select></label>
+        <label>テンプレート <select id="template">${templateOptions}</select></label>
+        <label>分析フィールド <select id="fields" multiple size="5">${fieldOptions}</select></label>
+        <button id="analyze">確認済み値を分析</button>
+        ${activeResult?.explanationMode === "deterministic_fallback" ? "<p>検証済みの標準説明を表示しています。</p>" : ""}
+        ${shortage}
+        ${hypotheses || "<p>期間と対象を選んで分析してください。</p>"}
+        <section><h3>Self Model候補</h3><ul>${selfModel || "<li>候補はありません。</li>"}</ul></section>
+        <script>
+          const vscode=acquireVsCodeApi();
+          document.getElementById('template').onchange=()=>{
+            const selected=document.getElementById('template').value;
+            for(const option of document.querySelectorAll('#fields option')) option.hidden=!!selected&&option.dataset.template!==selected;
+          };
+          document.getElementById('analyze').onclick=()=>vscode.postMessage({
+            type:'analyze',
+            days:document.getElementById('days').value,
+            templateId:document.getElementById('template').value,
+            fieldKeys:Array.from(document.getElementById('fields').selectedOptions).map(o=>o.value)
+          });
+          document.body.onclick=(event)=>{
+            const el=event.target;
+            if(!(el instanceof HTMLElement)||!el.dataset.a)return;
+            vscode.postMessage({type:el.dataset.a,id:el.dataset.id,rating:el.dataset.rating,status:el.dataset.status,entry:el.dataset.entry,statement:el.dataset.statement});
+          };
+        </script>
+      </body></html>`;
+    };
+
+    view.webview.onDidReceiveMessage(async (message: any) => {
+      try {
+        const userId = process.env.METHEORY_USER_ID ?? "local-user";
+        if (message.type === "analyze") {
+          await startService(this.context);
+          const endAt = new Date();
+          const startAt = new Date(
+            endAt.getTime() - Number(message.days ?? 28) * 86400000
+          );
+          await render(
+            await api("/v1/self-understanding/analyze", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                userId,
+                startAt: startAt.toISOString(),
+                endAt: endAt.toISOString(),
+                templateId: message.templateId || undefined,
+                fieldKeys: message.fieldKeys,
+                minimumEntryCount: 8
+              })
+            })
+          );
+        } else if (message.type === "rate") {
+          await api("/v1/self-understanding/reviews", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              userId,
+              candidateId: message.id,
+              rating: message.rating
+            })
+          });
+          await render();
+        } else if (message.type === "edit-model") {
+          const statement = await window.showInputBox({
+            prompt: "条件付きのSelf Model候補を編集",
+            value: String(message.statement ?? "")
+          });
+          if (statement !== undefined) {
+            await api("/v1/self-understanding/self-model-candidates/edit", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                userId,
+                candidateId: message.id,
+                statement
+              })
+            });
+          }
+          await render();
+        } else if (message.type === "model") {
+          await api("/v1/self-understanding/self-model-candidates/review", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              userId,
+              candidateId: message.id,
+              status: message.status
+            })
+          });
+          await render();
+        } else if (message.type === "entry") {
+          const list = JSON.parse(
+            (await cli(this.context, ["entry", "list", "--json"])).stdout
+          ) as { items?: Array<{ id: string; externalSourceId?: string }> };
+          const entry = list.items?.find((item) => item.id === message.entry);
+          if (entry?.externalSourceId) {
+            await commands.executeCommand(
+              "vscode.open",
+              Uri.file(join(root(), entry.externalSourceId))
+            );
+          }
+        }
+      } catch (error) {
+        window.showErrorMessage(
+          error instanceof Error ? error.message : "Self Understanding action failed"
+        );
+      }
+    });
+
+    void (async () => {
+      try {
+        await startService(this.context);
+        options = await api(
+          `/v1/self-understanding/options?userId=${encodeURIComponent(process.env.METHEORY_USER_ID ?? "local-user")}`
+        );
+      } catch {
+        // The empty selectors still explain that confirmed data is unavailable.
+      }
+      await render();
+    })();
+  }
+}
 class CliListProvider { constructor(private readonly context: ExtensionContext, private readonly args: string[], private readonly title: string) {} async getChildren() { try { const result = await cli(this.context, [...this.args, "--json"]); const payload = JSON.parse(result.stdout) as any; const rows = Array.isArray(payload) ? payload : payload.items ?? []; return rows.map((row: any) => ({ label: String(row.name ?? row.theme ?? row.entryId ?? row.id ?? "item"), description: String(row.description ?? row.status ?? row.provider ?? ""), tooltip: `${this.title}: ${String(row.id ?? row.entryId ?? "")}`, collapsibleState: 0 })); } catch (error) { return [{ label: `${this.title}: ${error instanceof Error ? error.message : "unavailable"}`, collapsibleState: 0 }]; } } getTreeItem(item: any) { return item; } }
 function escapeHtml(value: string) { return value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char] ?? char)); }
 function activeMarkdown() { const file = window.activeTextEditor?.document.uri.fsPath; if (!file || !file.endsWith(".md")) throw new Error("Open a Markdown file first."); return file; }
 async function runAiCommand(context: ExtensionContext, args: string[]) { const result = await cli(context, [...args, "--json"]); window.showInformationMessage(result.stdout.trim().slice(0, 1000) || "MeTheory completed."); }
 export function activate(context: ExtensionContext) {
-  context.subscriptions.push(window.registerWebviewViewProvider("metheory.start", new StartViewProvider(context)), window.registerWebviewViewProvider("metheory.status", new StatusViewProvider(context)), window.registerWebviewViewProvider("metheory.privacy", new PrivacyViewProvider(context)), window.registerWebviewViewProvider("metheory.review", new ReviewViewProvider(context)), window.registerWebviewViewProvider("metheory.selfUnderstanding", new PracticalSelfUnderstandingViewProvider(context)), window.registerTreeDataProvider("metheory.templates", new CliListProvider(context, ["template", "list"], "Templates")), window.registerTreeDataProvider("metheory.search", new CliListProvider(context, ["entry", "list"], "Entries")));
+  context.subscriptions.push(window.registerWebviewViewProvider("metheory.start", new StartViewProvider(context)), window.registerWebviewViewProvider("metheory.status", new StatusViewProvider(context)), window.registerWebviewViewProvider("metheory.privacy", new PrivacyViewProvider(context)), window.registerWebviewViewProvider("metheory.review", new ReviewViewProvider(context)), window.registerWebviewViewProvider("metheory.selfUnderstanding", new NonClinicalSelfUnderstandingViewProvider(context)), window.registerTreeDataProvider("metheory.templates", new CliListProvider(context, ["template", "list"], "Templates")), window.registerTreeDataProvider("metheory.search", new CliListProvider(context, ["entry", "list"], "Entries")));
   context.subscriptions.push(workspace.onDidSaveTextDocument((document: { languageId: string; uri: { fsPath: string }; getText(): string }) => { if (document.languageId !== "markdown" || !document.uri.fsPath.startsWith(join(root(), "notes"))) return; if (!/^---\r?\n[\s\S]*?^tracked:\s*true\s*$/m.test(document.getText())) return; void (async () => { try { await startService(context); await cli(context, ["entry", "sync", document.uri.fsPath, "--json"]); } catch (error) { window.showWarningMessage(`MeTheory could not sync this save: ${error instanceof Error ? error.message : "unavailable"}`); } })(); }));
   const register = (name: string, handler: () => Promise<void>) => context.subscriptions.push(commands.registerCommand(name, async () => { try { await handler(); } catch (error) { window.showErrorMessage(error instanceof Error ? error.message : "MeTheory command failed"); } }));
   register("metheory.initializeWorkspace", async () => runAiCommand(context, ["workspace", "init"]));

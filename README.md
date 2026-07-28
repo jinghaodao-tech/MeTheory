@@ -32,6 +32,7 @@ notification timing, hypothesis status, or Self Model updates.
 - `docs/implementation-roadmap.md`: phased implementation and beta criteria.
 - `docs/current-product-spec.md`: current product scope, boundaries, and implementation status.
 - `docs/self-understanding-practical-v1.md`: confirmed-value analysis and Self Model review flow.
+- `docs/self-understanding-construct-catalog.md`: allowlisted non-clinical constructs and semantic-role mapping.
 - `docs/notification-policy.md`: notification constraints and user controls.
 - `prompts/ai-templates.json`: versioned AI templates.
 - `schemas/domain-schema.json`: domain data contract.
@@ -332,6 +333,15 @@ fields, then analyze confirmed values. Rate a result as `fits`,
 Only a separate explicit acceptance adds it to Self Model. See
 [`docs/self-understanding-practical-v1.md`](docs/self-understanding-practical-v1.md)
 for the complete boundary and API workflow.
+
+Templates may attach an allowlisted semantic role to each field.
+`POST /v1/templates/suggest-semantic-roles` returns deterministic suggestions;
+ambiguous, sensitive, and role-changing suggestions still require approval.
+Analysis maps confirmed roles to a non-clinical construct and records history
+to distinguish emerging, state-dependent, and relatively stable evidence.
+Fields from different templates remain separate unless both explicitly permit a
+compatible semantic merge. See
+[`docs/self-understanding-construct-catalog.md`](docs/self-understanding-construct-catalog.md).
 
 From the workspace CLI, use
 `self-understanding analyze --from=2026-07-01T00:00:00.000Z --to=2026-07-28T00:00:00.000Z --template=<template-id> --field=<field-key>`.

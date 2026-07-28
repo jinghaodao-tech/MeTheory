@@ -20,6 +20,10 @@ CREATE TABLE IF NOT EXISTS self_beliefs (
   last_reviewed_at TEXT,
   supporting_period_start TEXT,
   supporting_period_end TEXT,
+  construct_key TEXT,
+  tendency_scope TEXT,
+  source_analysis_periods_json TEXT NOT NULL DEFAULT '[]',
+  supporting_field_pairs_json TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL
 ) STRICT;
 
@@ -224,6 +228,29 @@ CREATE TABLE IF NOT EXISTS hypothesis_reviews (
   created_at TEXT NOT NULL
 ) STRICT;
 CREATE INDEX IF NOT EXISTS hypothesis_reviews_user_candidate_idx ON hypothesis_reviews(user_id, candidate_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS self_understanding_analysis_history (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  candidate_id TEXT NOT NULL,
+  construct_key TEXT NOT NULL,
+  condition_role TEXT NOT NULL,
+  outcome_role TEXT NOT NULL,
+  relation TEXT NOT NULL CHECK (relation IN ('a_greater_than_b','a_less_than_b','approximately_equal')),
+  period_start_at TEXT NOT NULL,
+  period_end_at TEXT NOT NULL,
+  complete_pair_count INTEGER NOT NULL CHECK (complete_pair_count >= 0),
+  candidate_snapshot_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(user_id,candidate_id,period_start_at,period_end_at)
+) STRICT;
+CREATE INDEX IF NOT EXISTS self_understanding_history_lookup_idx
+  ON self_understanding_analysis_history(
+    user_id,
+    construct_key,
+    condition_role,
+    outcome_role,
+    period_start_at
+  );
 CREATE TABLE IF NOT EXISTS self_model_candidates (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -233,6 +260,12 @@ CREATE TABLE IF NOT EXISTS self_model_candidates (
   source_hypothesis_id TEXT,
   supporting_period_start TEXT,
   supporting_period_end TEXT,
+  construct_key TEXT,
+  tendency_scope TEXT,
+  source_analysis_periods_json TEXT NOT NULL DEFAULT '[]',
+  supporting_field_pairs_json TEXT NOT NULL DEFAULT '[]',
+  resolution_action TEXT NOT NULL DEFAULT 'new' CHECK (resolution_action IN ('new','update_existing','separate')),
+  target_self_belief_id TEXT REFERENCES self_beliefs(id) ON DELETE SET NULL,
   user_note TEXT NOT NULL DEFAULT '',
   accepted_at TEXT,
   last_reviewed_at TEXT,
@@ -259,7 +292,7 @@ CREATE INDEX IF NOT EXISTS search_documents_user_source_idx ON search_documents(
 
 CREATE TABLE IF NOT EXISTS entry_templates (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, name TEXT NOT NULL, theme TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', current_version_id TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, archived_at TEXT) STRICT;
 CREATE TABLE IF NOT EXISTS entry_template_versions (id TEXT PRIMARY KEY, template_id TEXT NOT NULL REFERENCES entry_templates(id) ON DELETE CASCADE, version_number INTEGER NOT NULL, generation_source TEXT NOT NULL CHECK(generation_source IN ('ai','user')), ai_provider TEXT, ai_model TEXT, prompt_version TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(template_id,version_number)) STRICT;
-CREATE TABLE IF NOT EXISTS entry_template_fields (id TEXT PRIMARY KEY, template_version_id TEXT NOT NULL REFERENCES entry_template_versions(id) ON DELETE CASCADE, field_key TEXT NOT NULL, label TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', input_type TEXT NOT NULL, value_type TEXT NOT NULL, required INTEGER NOT NULL CHECK(required IN(0,1)), display_order INTEGER NOT NULL, options_json TEXT NOT NULL DEFAULT '[]', minimum REAL, maximum REAL, unit TEXT, sensitivity TEXT NOT NULL CHECK(sensitivity IN('normal','sensitive')), reason TEXT NOT NULL, sensitivity_level TEXT NOT NULL DEFAULT 'normal' CHECK(sensitivity_level IN('normal','sensitive','highly_sensitive')), classification_source TEXT NOT NULL DEFAULT 'system_rule' CHECK(classification_source IN('ai_suggested','user_selected','system_rule')), prohibited_secret_risk INTEGER NOT NULL DEFAULT 0 CHECK(prohibited_secret_risk IN(0,1)), UNIQUE(template_version_id,field_key), UNIQUE(template_version_id,display_order)) STRICT;
+CREATE TABLE IF NOT EXISTS entry_template_fields (id TEXT PRIMARY KEY, template_version_id TEXT NOT NULL REFERENCES entry_template_versions(id) ON DELETE CASCADE, field_key TEXT NOT NULL, label TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', input_type TEXT NOT NULL, value_type TEXT NOT NULL, required INTEGER NOT NULL CHECK(required IN(0,1)), display_order INTEGER NOT NULL, options_json TEXT NOT NULL DEFAULT '[]', minimum REAL, maximum REAL, unit TEXT, sensitivity TEXT NOT NULL CHECK(sensitivity IN('normal','sensitive')), reason TEXT NOT NULL, sensitivity_level TEXT NOT NULL DEFAULT 'normal' CHECK(sensitivity_level IN('normal','sensitive','highly_sensitive')), classification_source TEXT NOT NULL DEFAULT 'system_rule' CHECK(classification_source IN('ai_suggested','user_selected','system_rule')), prohibited_secret_risk INTEGER NOT NULL DEFAULT 0 CHECK(prohibited_secret_risk IN(0,1)), semantic_role TEXT CHECK(semantic_role IS NULL OR semantic_role IN('mood','energy','fatigue','recovery','sleep_duration','sleep_quality','time_of_day','day_type','social_context','social_intensity','environment','noise_level','task_clarity','deadline_clarity','start_delay','initiation_difficulty','continuation_difficulty','focus','completion','satisfaction','uncertainty','decision_count','avoidance','self_rating','observed_behavior','other')), semantic_role_source TEXT CHECK(semantic_role_source IS NULL OR semantic_role_source IN('user','template_rule','ai_suggestion','legacy_inference')), semantic_role_confidence REAL CHECK(semantic_role_confidence IS NULL OR (semantic_role_confidence >= 0 AND semantic_role_confidence <= 1)), semantic_role_confirmed INTEGER NOT NULL DEFAULT 0 CHECK(semantic_role_confirmed IN(0,1)), semantic_merge_allowed INTEGER NOT NULL DEFAULT 0 CHECK(semantic_merge_allowed IN(0,1)), UNIQUE(template_version_id,field_key), UNIQUE(template_version_id,display_order)) STRICT;
 CREATE TABLE IF NOT EXISTS entry_field_values (id TEXT PRIMARY KEY, entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE, template_version_id TEXT NOT NULL REFERENCES entry_template_versions(id) ON DELETE RESTRICT, template_field_id TEXT NOT NULL REFERENCES entry_template_fields(id) ON DELETE RESTRICT, text_value TEXT, integer_value INTEGER, number_value REAL, boolean_value INTEGER, json_value TEXT, date_value TEXT, datetime_value TEXT, duration_seconds INTEGER, is_missing INTEGER NOT NULL DEFAULT 0 CHECK(is_missing IN(0,1)), source_content_hash TEXT, source_updated_at TEXT, confidence REAL, source TEXT, reviewed_at TEXT, updated_at TEXT, created_at TEXT NOT NULL, UNIQUE(entry_id,template_field_id)) STRICT;
 CREATE INDEX IF NOT EXISTS entry_templates_user_idx ON entry_templates(user_id,archived_at,updated_at);
 CREATE INDEX IF NOT EXISTS entry_template_versions_template_idx ON entry_template_versions(template_id,version_number);

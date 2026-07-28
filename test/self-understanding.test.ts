@@ -5,10 +5,15 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { SqliteTemplateRepository } from "../apps/api/src/templateRepository.ts";
+import { SqliteSelfUnderstandingRepository } from "../apps/api/src/selfUnderstandingRepository.ts";
 import {
   deterministicInterpretation,
+  deduplicateSelfUnderstandingHypotheses,
   generateSelfUnderstanding,
   interpretSelfUnderstanding,
+  mapConstruct,
+  tendencyScopeFor,
+  validateSelfModelStatement,
   validateInterpretation,
   type SelfUnderstandingInterpretationInput
 } from "../packages/self-understanding/src/index.ts";
@@ -316,6 +321,106 @@ test("review history infers a unique template version from its period and field 
       .prepare("SELECT template_version_id FROM hypothesis_reviews WHERE id=?")
       .get("review-1") as { template_version_id: string };
     assert.equal(review.template_version_id, template.currentVersion.id);
+  } finally {
+    database.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("semantic role pairs map only through deterministic non-clinical construct rules", () => {
+  assert.equal(mapConstruct("task_clarity", "start_delay").key, "task_initiation");
+  assert.equal(mapConstruct("social_intensity", "fatigue").key, "social_load");
+  assert.equal(mapConstruct("environment", "focus").key, "environment_fit");
+  assert.equal(mapConstruct("self_rating", "observed_behavior").key, "self_perception_gap");
+  assert.equal(mapConstruct("other", "other").key, "uncategorized");
+});
+
+test("tendency scope distinguishes one period, repeated state patterns, and relatively stable candidates", () => {
+  const current = { candidateId: "current", constructKey: "task_initiation" as const, conditionRole: "task_clarity" as const, outcomeRole: "start_delay" as const, relation: "a_less_than_b" as const, period: { startAt: "2026-07-01", endAt: "2026-07-28" }, completePairCount: 8 };
+  assert.equal(tendencyScopeFor({ current, history: [] }).scope, "single_period_state");
+  assert.equal(tendencyScopeFor({ current, history: [{ ...current, candidateId: "old", period: { startAt: "2026-06-01", endAt: "2026-06-28" } }] }).scope, "repeated_state_pattern");
+  assert.equal(tendencyScopeFor({ current: { ...current, completePairCount: 8 }, history: [{ ...current, candidateId: "old-1", completePairCount: 8, period: { startAt: "2026-06-01", endAt: "2026-06-28" } }, { ...current, candidateId: "old-2", completePairCount: 8, period: { startAt: "2026-05-01", endAt: "2026-05-28" } }] }).scope, "relatively_stable_candidate");
+  assert.equal(tendencyScopeFor({ current, history: [{ ...current, candidateId: "reversed", relation: "a_greater_than_b", period: { startAt: "2026-06-01", endAt: "2026-06-28" } }] }).scope, "unknown");
+});
+
+test("self rating and recorded behavior become a self perception gap without judging the rating", () => {
+  const input = pairedInput(8, (condition) => condition);
+  const result = generateSelfUnderstanding({
+    now: "2026-07-27T12:00:00.000Z",
+    parameters: [
+      { ...parameters[0], semanticRole: "self_rating", fieldKey: "self_rating_focus" },
+      { ...parameters[1], semanticRole: "observed_behavior", fieldKey: "task_started", valueType: "boolean", minimumValue: undefined, maximumValue: undefined, positiveValues: [true] }
+    ],
+    ...input
+  });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].construct, "self_perception_gap");
+  assert.match(result[0].interpretation.uncertaintyJa, /間違っているという意味ではありません/);
+});
+
+test("concept-level deduplication preserves merged candidate and evidence references", () => {
+  const base = generateSelfUnderstanding({ now: "2026-07-27T12:00:00.000Z", parameters, ...pairedInput(8, (condition) => condition ? 90 : 10) })[0] as any;
+  const duplicate = { ...base, id: "duplicate", candidate: { ...base.candidate, id: "duplicate", completePairCount: base.candidate.completePairCount - 1, candidateScore: base.candidate.candidateScore - 0.1 }, supportingEntryIds: [...base.supportingEntryIds], contradictingEntryIds: [...base.contradictingEntryIds] };
+  const result = deduplicateSelfUnderstandingHypotheses([base, duplicate]);
+  assert.equal(result.length, 1);
+  assert.deepEqual(result[0].mergedCandidateIds, ["duplicate"]);
+  assert.ok(result[0].supportingEntryIds.length > 0);
+  const other = { ...duplicate, id: "other", construct: "social_load", constructDefinition: { ...duplicate.constructDefinition, key: "social_load" } };
+  assert.equal(deduplicateSelfUnderstandingHypotheses([base, other]).length, 2);
+});
+
+test("AI output cannot add constructs, semantic roles, stronger tendency claims, or unsafe self model text", async () => {
+  const v2 = { ...interpretationInput, version: 2 as const, construct: { key: "task_initiation" as const, labelJa: "作業を始めやすい条件", descriptionJa: "開始条件" }, tendencyScope: "single_period_state" as const, condition: { ...interpretationInput.condition, semanticRole: "task_clarity" as const }, outcome: { ...interpretationInput.outcome, semanticRole: "start_delay" as const }, statistics: { ...interpretationInput.statistics, normalizedEffect: 0.4, sampleBalance: 1, missingRate: 0, repeatedPeriodCount: 1 }, alternativeExplanations: ["疲労"], mergedCandidateIds: [] };
+  const safe = deterministicInterpretation(v2);
+  const unsafeCases = [
+    { ...safe, construct: "social_load" },
+    { ...safe, tendencyScope: "relatively_stable_candidate" },
+    { ...safe, tendencyScopeExplanationJa: "複数期間で安定しています。" },
+    { ...safe, nextExperiment: { ...safe.nextExperiment, fieldsToRecord: ["social_intensity"] } }
+  ];
+  for (const output of unsafeCases) {
+    const result = await interpretSelfUnderstanding(v2, { id: "local", locality: "local", async generate() { return output; } });
+    assert.equal(result.mode, "deterministic_fallback");
+  }
+  assert.equal(validateSelfModelStatement("私は、予定が明確な日に始めやすい可能性がある。"), true);
+  assert.equal(validateSelfModelStatement("私はADHDです。"), false);
+  assert.equal(validateSelfModelStatement("私は必ずこういう性格です。"), false);
+});
+
+test("confirmed template values flow from semantic roles to a task initiation candidate", () => {
+  const directory = mkdtempSync(join(tmpdir(), "metheory-self-understanding-flow-"));
+  const database = new DatabaseSync(join(directory, "flow.sqlite3"));
+  try {
+    database.exec(readFileSync(join(process.cwd(), "db", "ts_mvp_schema.sql"), "utf8"));
+    database.prepare("INSERT INTO users(id,auth_subject,locale,timezone,created_at) VALUES(?,?,?,?,?)").run("flow-user", "flow-auth", "ja-JP", "Asia/Tokyo", "2026-07-01T00:00:00.000Z");
+    const templates = new SqliteTemplateRepository(database);
+    const template = templates.save("flow-user", {
+      approved: true,
+      theme: "作業",
+      name: "作業記録",
+      description: "予定の明確さと開始までの時間",
+      fields: [
+        { fieldKey: "task_clarity", label: "予定の明確さ", inputType: "choice", valueType: "choice", required: true, displayOrder: 1, options: [{ key: "clear", label: "明確" }, { key: "unclear", label: "不明確" }], sensitivity: "normal", semanticRole: "task_clarity", semanticRoleSource: "user", semanticRoleConfidence: 1, semanticRoleConfirmed: true, reason: "条件" },
+        { fieldKey: "start_delay", label: "作業開始までの時間", inputType: "number", valueType: "number", required: true, displayOrder: 2, minimum: 0, maximum: 120, sensitivity: "normal", semanticRole: "start_delay", semanticRoleSource: "user", semanticRoleConfidence: 1, semanticRoleConfirmed: true, reason: "結果" }
+      ]
+    }) as unknown as { id: string };
+    for (let index = 0; index < 8; index += 1) {
+      const clear = index % 2 === 0;
+      templates.createEntry("flow-user", template.id, {
+        recordedAt: `2026-07-${String(index + 1).padStart(2, "0")}T12:00:00.000Z`,
+        values: { task_clarity: clear ? "clear" : "unclear", start_delay: clear ? 10 : 60 }
+      });
+    }
+    const result = new SqliteSelfUnderstandingRepository(database).analyze("flow-user", {
+      startAt: "2026-07-01T00:00:00.000Z",
+      endAt: "2026-07-28T00:00:00.000Z"
+    });
+    assert.equal(result.hypotheses.length, 1);
+    assert.equal(result.hypotheses[0].construct, "task_initiation");
+    assert.equal(result.hypotheses[0].interpretationInput.condition.semanticRole, "task_clarity");
+    assert.equal(result.hypotheses[0].interpretationInput.outcome.semanticRole, "start_delay");
+    const historyCount = database.prepare("SELECT COUNT(*) AS count FROM self_understanding_analysis_history").get() as { count: number };
+    assert.equal(historyCount.count, 1);
   } finally {
     database.close();
     rmSync(directory, { recursive: true, force: true });

@@ -17,6 +17,12 @@ personality diagnosis feature.
   hypothesis.
 - No disease, disorder, diagnosis, probability, treatment, medication, or
   care recommendation is represented or stored.
+- Template fields have an allowlisted `semanticRole`. Roles map to the
+  non-clinical construct catalog, and ambiguous or sensitive suggestions need
+  confirmation. See [the catalog](self-understanding-construct-catalog.md).
+- Candidate history assigns `emerging`, `state_dependent`,
+  `relatively_stable`, or `uncertain` scope. This is evidence scope, not a
+  personality label.
 
 ## Explanation and AI
 
@@ -25,9 +31,10 @@ provider is disabled. It reports the observed conditions, counts, aggregate
 values, uncertainty, counterexamples, and a 7-day recording experiment.
 
 No note body, arbitrary SQL result, or database export is automatically sent to
-an AI provider. A future local-only explanation provider may receive only the
-validated `SelfUnderstandingInterpretationInput` DTO. It cannot change the
-evidence direction, candidate state, or Entry references.
+an AI provider. An optional local-only explanation provider receives only the
+versioned, validated `SelfUnderstandingInterpretationInputV2` DTO. It cannot
+change the construct, evidence direction, candidate state, or Entry references.
+Invalid output falls back to deterministic wording.
 
 ## Workflow
 
@@ -43,10 +50,11 @@ evidence direction, candidate state, or Entry references.
 
 ## Persistence
 
-`hypothesis_reviews` records the rating, analysis period, template version, and
-field pair. `self_model_candidates` retains the editable proposal and its
-source period. Accepted candidates create a new `self_beliefs` row; existing
-beliefs are not overwritten.
+`self_understanding_analysis_history` retains canonical candidate snapshots for
+deduplication and scope. `hypothesis_reviews` records the rating and source
+period. `self_model_candidates` and `self_beliefs` retain construct, scope,
+periods, and field pairs. Acceptance creates a new belief unless the user
+explicitly selects a compatible existing belief to update.
 
 ## Current limitations
 

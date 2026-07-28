@@ -1,0 +1,385 @@
+import type { DatabaseSync } from "node:sqlite";
+import {
+  generateSelfUnderstanding,
+  type CandidateHistory,
+  type UnderstandingRecord
+} from "../../../packages/self-understanding/src/index.ts";
+import {
+  inferSemanticRole,
+  isSelfUnderstandingSemanticRole,
+  semanticRoleNeedsConfirmation,
+  type SelfUnderstandingSemanticRole
+} from "../../../packages/templates/src/semanticRoles.ts";
+import type { CandidateParameter } from "../../../packages/domain/src/hypothesis/candidates.ts";
+
+type Row = Record<string, unknown>;
+
+function fieldValue(row: Row): unknown {
+  if (Number(row.is_missing ?? 0) === 1) return null;
+  if (row.boolean_value !== null && row.boolean_value !== undefined) {
+    return Number(row.boolean_value) === 1;
+  }
+  if (row.integer_value !== null && row.integer_value !== undefined) {
+    return Number(row.integer_value);
+  }
+  if (row.number_value !== null && row.number_value !== undefined) {
+    return Number(row.number_value);
+  }
+  if (row.json_value !== null && row.json_value !== undefined) {
+    try {
+      return JSON.parse(String(row.json_value));
+    } catch {
+      return null;
+    }
+  }
+  return (
+    row.text_value ??
+    row.date_value ??
+    row.datetime_value ??
+    row.duration_seconds ??
+    null
+  );
+}
+
+function candidateValueType(valueType: string) {
+  if (valueType === "choice") return "single_choice";
+  if (["integer", "number", "scale", "duration_seconds"].includes(valueType)) {
+    return "number";
+  }
+  return valueType;
+}
+
+function storedOrInferredRole(row: Row): SelfUnderstandingSemanticRole {
+  const stored = row.semantic_role;
+  if (isSelfUnderstandingSemanticRole(stored)) {
+    const suggestion = {
+      fieldKey: String(row.field_key),
+      semanticRole: stored,
+      confidence: Number(row.semantic_role_confidence ?? 0),
+      reasonJa: "保存済みの意味役割"
+    };
+    const confirmed = Number(row.semantic_role_confirmed ?? 0) === 1;
+    if (
+      confirmed ||
+      !semanticRoleNeedsConfirmation({
+        suggestion,
+        sensitivity: String(row.sensitivity_level ?? "normal") as
+          | "normal"
+          | "sensitive"
+          | "highly_sensitive"
+      })
+    ) {
+      return stored;
+    }
+  }
+  return inferSemanticRole({
+    fieldKey: String(row.field_key),
+    label: String(row.label ?? row.field_key),
+    description: String(row.description ?? ""),
+    templateTheme: String(row.template_theme ?? "")
+  }).semanticRole;
+}
+
+export class SqliteSelfUnderstandingRepository {
+  private readonly db: DatabaseSync;
+
+  constructor(db: DatabaseSync) {
+    this.db = db;
+  }
+
+  history(userId: string): CandidateHistory[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT candidate_id,construct_key,condition_role,outcome_role,relation,period_start_at,period_end_at,complete_pair_count FROM self_understanding_analysis_history WHERE user_id=? ORDER BY period_start_at"
+        )
+        .all(userId) as Row[]
+    ).flatMap((row) => {
+      if (
+        !isSelfUnderstandingSemanticRole(row.condition_role) ||
+        !isSelfUnderstandingSemanticRole(row.outcome_role)
+      ) {
+        return [];
+      }
+      return [
+        {
+          candidateId: String(row.candidate_id),
+          constructKey: String(row.construct_key) as CandidateHistory["constructKey"],
+          conditionRole: row.condition_role,
+          outcomeRole: row.outcome_role,
+          relation: String(row.relation) as CandidateHistory["relation"],
+          period: {
+            startAt: String(row.period_start_at),
+            endAt: String(row.period_end_at)
+          },
+          completePairCount: Number(row.complete_pair_count)
+        }
+      ];
+    });
+  }
+
+  analyze(userId: string, input: Record<string, unknown>) {
+    const endAt =
+      typeof input.endAt === "string" ? input.endAt : new Date().toISOString();
+    const startAt =
+      typeof input.startAt === "string"
+        ? input.startAt
+        : new Date(Date.parse(endAt) - 28 * 86400000).toISOString();
+    const minimumEntryCount = Math.max(
+      8,
+      Math.min(100, Number(input.minimumEntryCount ?? 8))
+    );
+    const templateId =
+      typeof input.templateId === "string" && input.templateId
+        ? input.templateId
+        : undefined;
+    const fieldKeys = Array.isArray(input.fieldKeys)
+      ? input.fieldKeys
+          .filter(
+            (item): item is string =>
+              typeof item === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(item)
+          )
+          .slice(0, 30)
+      : [];
+    const clauses = [
+      "e.user_id=?",
+      "e.archived_at IS NULL",
+      "ev.reviewed_at IS NOT NULL",
+      "e.recorded_at>=?",
+      "e.recorded_at<=?"
+    ];
+    const params: string[] = [userId, startAt, endAt];
+    if (templateId) {
+      clauses.push("e.template_id=?");
+      params.push(templateId);
+    }
+    if (fieldKeys.length) {
+      clauses.push(`f.field_key IN (${fieldKeys.map(() => "?").join(",")})`);
+      params.push(...fieldKeys);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT e.id,e.recorded_at,e.title,e.template_id,t.theme AS template_theme,
+          ev.template_version_id,f.field_key,f.label,f.description,f.value_type,
+          f.options_json,f.minimum,f.maximum,f.sensitivity_level,
+          f.semantic_role,f.semantic_role_source,f.semantic_role_confidence,
+          f.semantic_role_confirmed,f.semantic_merge_allowed,
+          ev.is_missing,ev.boolean_value,ev.integer_value,ev.number_value,
+          ev.text_value,ev.json_value,ev.date_value,ev.datetime_value,
+          ev.duration_seconds
+        FROM entries e
+        LEFT JOIN entry_templates t ON t.id=e.template_id
+        JOIN entry_field_values ev ON ev.entry_id=e.id
+        JOIN entry_template_fields f ON f.id=ev.template_field_id
+        WHERE ${clauses.join(" AND ")}
+        ORDER BY e.recorded_at`
+      )
+      .all(...params) as Row[];
+    const entryCount = new Set(rows.map((row) => String(row.id))).size;
+    const templateVersionIds = [
+      ...new Set(
+        rows
+          .map((row) =>
+            typeof row.template_version_id === "string"
+              ? row.template_version_id
+              : ""
+          )
+          .filter(Boolean)
+      )
+    ];
+    const filters = {
+      templateId: templateId ?? null,
+      templateVersionId:
+        templateVersionIds.length === 1 ? templateVersionIds[0] : null,
+      templateVersionIds,
+      fieldKeys
+    };
+    if (entryCount < minimumEntryCount) {
+      return {
+        status: "insufficient",
+        statusLabelJa: "データ不足",
+        period: { startAt, endAt },
+        filters,
+        entryCount,
+        minimumEntryCount,
+        dataShortage: {
+          needed: minimumEntryCount - entryCount,
+          message:
+            "確認済みの構造化記録が不足しています。条件と結果を同じEntryで記録してください。",
+          recommendedFields: fieldKeys
+        },
+        hypotheses: []
+      };
+    }
+    const definitions = new Map<string, CandidateParameter>();
+    const allowedValues: Record<
+      string,
+      Array<{ valueKey: string; labelJa: string }>
+    > = {};
+    const records = new Map<string, UnderstandingRecord>();
+    const observations: Array<{
+      episodeId: string;
+      parameterId: string;
+      value: unknown;
+      isMissing: boolean;
+      observedAt: string;
+    }> = [];
+    for (const row of rows) {
+      const rawValueType = String(row.value_type);
+      const valueType = candidateValueType(rawValueType);
+      if (!["boolean", "single_choice", "integer", "number"].includes(valueType)) {
+        continue;
+      }
+      const parameterId = `${String(row.template_version_id)}:${String(row.field_key)}`;
+      if (!definitions.has(parameterId)) {
+        let choices: Array<{ valueKey: string; labelJa: string }> = [];
+        try {
+          choices = (
+            JSON.parse(String(row.options_json ?? "[]")) as Array<{
+              key?: string;
+              label?: string;
+            }>
+          )
+            .map((choice) => ({
+              valueKey: String(choice.key ?? ""),
+              labelJa: String(choice.label ?? choice.key ?? "")
+            }))
+            .filter((choice) => choice.valueKey);
+        } catch {
+          choices = [];
+        }
+        allowedValues[parameterId] = choices;
+        definitions.set(parameterId, {
+          id: parameterId,
+          fieldKey: String(row.field_key),
+          templateId:
+            typeof row.template_id === "string" ? row.template_id : undefined,
+          templateVersionId: String(row.template_version_id),
+          semanticRole: storedOrInferredRole(row),
+          sensitivity: String(row.sensitivity_level ?? "normal"),
+          semanticMergeAllowed: Number(row.semantic_merge_allowed ?? 0) === 1,
+          nameJa: String(row.label ?? row.field_key),
+          valueType,
+          minimumValue:
+            typeof row.minimum === "number"
+              ? row.minimum
+              : valueType === "boolean" || valueType === "single_choice"
+                ? undefined
+                : 0,
+          maximumValue:
+            typeof row.maximum === "number"
+              ? row.maximum
+              : valueType === "boolean" || valueType === "single_choice"
+                ? undefined
+                : 100,
+          positiveValues:
+            storedOrInferredRole(row) === "completion"
+              ? ["completed", "started", true]
+              : undefined,
+          usableAsCondition: true,
+          usableAsOutcome: true
+        });
+      }
+      const value = fieldValue(row);
+      observations.push({
+        episodeId: String(row.id),
+        parameterId,
+        value,
+        isMissing: value === null,
+        observedAt: String(row.recorded_at)
+      });
+      const record = records.get(String(row.id)) ?? {
+        id: String(row.id),
+        recordedAt: String(row.recorded_at),
+        title: String(row.title),
+        conditionValues: {},
+        outcomeValues: {}
+      };
+      record.conditionValues[parameterId] = value;
+      record.outcomeValues[parameterId] = value;
+      records.set(String(row.id), record);
+    }
+    const hypotheses = generateSelfUnderstanding({
+      parameters: [...definitions.values()],
+      observations,
+      records: [...records.values()],
+      allowedValues,
+      history: this.history(userId),
+      now: endAt,
+      config: { minimumTotalSamples: minimumEntryCount, maximumCandidates: 5 }
+    });
+    const createdAt = new Date().toISOString();
+    const save = this.db.prepare(
+      `INSERT INTO self_understanding_analysis_history(
+        id,user_id,candidate_id,construct_key,condition_role,outcome_role,
+        relation,period_start_at,period_end_at,complete_pair_count,
+        candidate_snapshot_json,created_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(user_id,candidate_id,period_start_at,period_end_at)
+      DO UPDATE SET
+        construct_key=excluded.construct_key,
+        condition_role=excluded.condition_role,
+        outcome_role=excluded.outcome_role,
+        relation=excluded.relation,
+        complete_pair_count=excluded.complete_pair_count,
+        candidate_snapshot_json=excluded.candidate_snapshot_json`
+    );
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const hypothesis of hypotheses) {
+        save.run(
+          `analysis_${userId}_${hypothesis.id}_${startAt}_${endAt}`,
+          userId,
+          hypothesis.id,
+          hypothesis.construct,
+          hypothesis.interpretationInput.condition.semanticRole,
+          hypothesis.interpretationInput.outcome.semanticRole,
+          hypothesis.candidate.relation,
+          startAt,
+          endAt,
+          hypothesis.candidate.completePairCount,
+          JSON.stringify(hypothesis),
+          createdAt
+        );
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return {
+      status: hypotheses.length ? "ready" : "insufficient",
+      statusLabelJa: hypotheses.length
+        ? "分析候補あり"
+        : "比較可能な差が不足",
+      period: { startAt, endAt },
+      filters,
+      entryCount,
+      minimumEntryCount,
+      hypotheses,
+      explanationMode: "deterministic_fallback"
+    };
+  }
+
+  latestSnapshot(userId: string, candidateId: string) {
+    const row = this.db
+      .prepare(
+        "SELECT candidate_snapshot_json FROM self_understanding_analysis_history WHERE user_id=? AND candidate_id=? ORDER BY created_at DESC LIMIT 1"
+      )
+      .get(userId, candidateId) as { candidate_snapshot_json: string } | undefined;
+    if (!row) return undefined;
+    try {
+      return JSON.parse(row.candidate_snapshot_json) as Record<string, unknown>;
+    } catch {
+      return undefined;
+    }
+  }
+
+  relatedSelfModelItems(userId: string, constructKey: string) {
+    return this.db
+      .prepare(
+        "SELECT id,statement,status,construct_key,tendency_scope,last_reviewed_at FROM self_beliefs WHERE user_id=? AND construct_key=? AND status!='archived' ORDER BY last_reviewed_at DESC,created_at DESC"
+      )
+      .all(userId, constructKey);
+  }
+}
