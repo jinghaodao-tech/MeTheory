@@ -64,6 +64,14 @@ $codex = Resolve-Executable "codex" @(
 )
 Report-Check "codex is installed" ($null -ne $codex)
 
+$git = Resolve-Executable "git" @(
+    "C:\Program Files\Git\cmd\git.exe",
+    "C:\Program Files (x86)\Git\cmd\git.exe",
+    (Join-Path $env:LOCALAPPDATA "Programs\Git\cmd\git.exe"),
+    (Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\native\git\cmd\git.exe")
+)
+Report-Check "git is installed" ($null -ne $git)
+
 $healthOk = $false
 $healthStatus = $null
 if (-not [string]::IsNullOrWhiteSpace($env:REVIEW_BRIDGE_TOKEN)) {

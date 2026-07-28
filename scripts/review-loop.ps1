@@ -26,7 +26,9 @@ function Resolve-Executable {
 
 $git = Resolve-Executable "git" @(
     "C:\Program Files\Git\cmd\git.exe",
-    "C:\Program Files (x86)\Git\cmd\git.exe"
+    "C:\Program Files (x86)\Git\cmd\git.exe",
+    (Join-Path $env:LOCALAPPDATA "Programs\Git\cmd\git.exe"),
+    (Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\native\git\cmd\git.exe")
 )
 $gh = Resolve-Executable "gh" @(
     "C:\Program Files\GitHub CLI\gh.exe",
