@@ -26,14 +26,6 @@ function Resolve-GhCommand {
 }
 
 $gh = Resolve-GhCommand
-$currentBranch = (git branch --show-current 2>$null).Trim()
-if ($LASTEXITCODE -ne 0 -or -not $currentBranch) {
-    throw "Could not determine the current branch."
-}
-if ($currentBranch -ne $expectedBranch) {
-    throw "Run this trigger from $expectedBranch. Current branch: $currentBranch"
-}
-
 $raw = & $gh pr view $PrNumber --repo $repository --json headRefName,headRefOid,url,state,isDraft,baseRefName
 if ($LASTEXITCODE -ne 0) { throw "Could not read PR #$PrNumber from GitHub." }
 $pr = $raw | ConvertFrom-Json
