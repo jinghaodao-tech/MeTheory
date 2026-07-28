@@ -65,24 +65,35 @@ $codex = Resolve-Executable "codex" @(
 Report-Check "codex is installed" ($null -ne $codex)
 
 $healthOk = $false
+$healthStatus = $null
 if (-not [string]::IsNullOrWhiteSpace($env:REVIEW_BRIDGE_TOKEN)) {
     try {
         $previousErrorAction = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         $healthRaw = & curl.exe -sS `
             -H "Authorization: Bearer $env:REVIEW_BRIDGE_TOKEN" `
+            -w "`n__HTTP_STATUS__:%{http_code}" `
             "$bridgeUrl/health" 2>$null
         $curlExitCode = $LASTEXITCODE
         $ErrorActionPreference = $previousErrorAction
         if ($curlExitCode -eq 0) {
-            $health = $healthRaw | ConvertFrom-Json
-            $healthOk = ($health.ok -eq $true -and $health.service -eq "metheory-review-bridge")
+            $healthText = ($healthRaw -join "`n")
+            $statusMatch = [regex]::Match($healthText, "__HTTP_STATUS__:(\d{3})$")
+            if ($statusMatch.Success) {
+                $healthStatus = [int]$statusMatch.Groups[1].Value
+                $healthBody = $healthText.Substring(0, $statusMatch.Index).Trim()
+                if ($healthStatus -eq 200) {
+                    $health = $healthBody | ConvertFrom-Json
+                    $healthOk = ($health.ok -eq $true -and $health.service -eq "metheory-review-bridge")
+                }
+            }
         }
     } catch {
         $healthOk = $false
     }
 }
-Report-Check "Review Bridge health check" $healthOk
+$healthLabel = if ($null -ne $healthStatus) { "Review Bridge health check (HTTP $healthStatus)" } else { "Review Bridge health check" }
+Report-Check $healthLabel $healthOk
 
 $openApi = Join-Path $PSScriptRoot "..\custom-gpt\openapi.yaml"
 $openApiText = if (Test-Path -LiteralPath $openApi) { Get-Content -Raw $openApi } else { "" }
