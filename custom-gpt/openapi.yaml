@@ -37,6 +37,8 @@ paths:
                   prNumber: { type: integer }
                   title: { type: string }
                   body: { type: string }
+                  bodyTruncated: { type: boolean }
+                  bodyCharCount: { type: integer }
                   headSha: { type: string }
                   headRef: { type: string }
                   baseRef: { type: string }
@@ -45,6 +47,7 @@ paths:
                   deletions: { type: integer }
                   diff: { type: string }
                   diffTruncated: { type: boolean }
+                  diffCharCount: { type: integer }
   /api/review-instructions:
     post:
       operationId: saveCodexReviewInstruction
@@ -105,6 +108,7 @@ paths:
                   status: { type: string }
                   fingerprint: { type: string }
 components:
+  schemas: {}
   securitySchemes:
     bearerAuth:
       type: http

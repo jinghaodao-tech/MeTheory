@@ -88,6 +88,42 @@ function reviewBody(overrides = {}) {
   };
 }
 
+test("pull request responses cap large body and diff payloads", async () => {
+  const environment = env();
+  environment.GITHUB_TOKEN = "github-test-token";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const accept = new Headers(init?.headers).get("accept");
+    if (accept === "application/vnd.github.v3.diff") {
+      return new Response("d".repeat(200_000), { status: 200 });
+    }
+    return new Response(JSON.stringify({
+      title: "Large PR",
+      body: "b".repeat(20_000),
+      state: "open",
+      draft: false,
+      base: { ref: "main" },
+      head: { ref: "agent/ai-review-loop", sha: "abcdef1234567" },
+      changed_files: 100,
+      additions: 1000,
+      deletions: 100,
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const response = await call(environment, "GET", "/api/pr/jinghaodao-tech/MeTheory/12");
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.body.length, 8_000);
+    assert.equal(payload.bodyTruncated, true);
+    assert.equal(payload.bodyCharCount, 20_000);
+    assert.equal(payload.diff.length, 60_000);
+    assert.equal(payload.diffTruncated, true);
+    assert.equal(payload.diffCharCount, 200_000);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("review bridge requires bearer auth and allowlists the repository", async () => {
   const environment = env();
   assert.equal((await call(environment, "GET", "/health", undefined, "")).status, 401);

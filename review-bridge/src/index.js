@@ -30,6 +30,15 @@ function isRepository(value) {
   return typeof value === "string" && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value);
 }
 
+function capText(value, maximum) {
+  const text = typeof value === "string" ? value : "";
+  return {
+    value: text.length > maximum ? text.slice(0, maximum) : text,
+    truncated: text.length > maximum,
+    length: text.length,
+  };
+}
+
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -130,16 +139,17 @@ async function fetchPullRequest(repository, prNumber, env) {
     };
   }
 
-  const diff = await diffResponse.text();
-  const maxDiffChars = 180_000;
-  const truncated = diff.length > maxDiffChars;
+  const diff = capText(await diffResponse.text(), 60_000);
+  const body = capText(pr.body || "", 8_000);
 
   return {
     value: {
       repository,
       prNumber,
       title: pr.title,
-      body: pr.body || "",
+       body: body.value,
+       bodyTruncated: body.truncated,
+       bodyCharCount: body.length,
       state: pr.state,
       draft: Boolean(pr.draft),
       baseRef: pr.base?.ref || "",
@@ -148,8 +158,9 @@ async function fetchPullRequest(repository, prNumber, env) {
       changedFiles: pr.changed_files,
       additions: pr.additions,
       deletions: pr.deletions,
-      diff: truncated ? diff.slice(0, maxDiffChars) : diff,
-      diffTruncated: truncated,
+       diff: diff.value,
+       diffTruncated: diff.truncated,
+       diffCharCount: diff.length,
     },
   };
 }
