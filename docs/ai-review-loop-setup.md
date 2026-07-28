@@ -99,6 +99,16 @@ repository, a 30-second interval, and automatic push disabled:
 .\scripts\start-review-watcher.ps1 -PrNumber 12
 ```
 
+Prepare a safe custom GPT review trigger from the working branch. This reads only PR metadata,
+prints a prompt containing the current head SHA, and never handles or stores Review Bridge tokens:
+
+```powershell
+.\scripts\trigger-gpt-review.ps1 -PrNumber 12
+```
+
+Add `-OpenBrowser` when the PR page should open automatically. The custom GPT itself must still
+be run through the ChatGPT UI; the Plus subscription is not treated as an external API.
+
 The lower-level one-shot command is:
 
 ```powershell
