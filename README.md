@@ -34,7 +34,6 @@ notification timing, hypothesis status, or Self Model updates.
 - `docs/self-understanding-practical-v1.md`: confirmed-value analysis and Self Model review flow.
 - `docs/self-understanding-construct-catalog.md`: allowlisted non-clinical constructs and semantic-role mapping.
 - `docs/external-assets.md`: local structured output, ActivityWatch, baseline self-perception, question quality, fixed charts, and provenance.
-- `docs/ai-review-loop-setup.md`: optional ChatGPT Review Bridge to local Codex improvement loop.
 - `docs/notification-policy.md`: notification constraints and user controls.
 - `prompts/ai-templates.json`: versioned AI templates.
 - `schemas/domain-schema.json`: domain data contract.
@@ -352,13 +351,3 @@ compatible semantic merge. See
 
 From the workspace CLI, use
 `self-understanding analyze --from=2026-07-01T00:00:00.000Z --to=2026-07-28T00:00:00.000Z --template=<template-id> --field=<field-key>`.
-
-## ChatGPT review loop
-
-The optional `review-bridge/` Worker and D1 integration lets a normal ChatGPT
-custom GPT review a Draft PR and store only structured blocking issues. The
-local `scripts/review-loop.ps1` checks the current PR SHA before starting Codex,
-passes blocking issues only, runs `npm run verify` outside Codex, and never
-commits, pushes, creates branches, or merges unless an explicit push script is
-enabled by the operator. Suggestions are retained for context but are not
-automatically implemented. See [`docs/ai-review-loop-setup.md`](docs/ai-review-loop-setup.md).
