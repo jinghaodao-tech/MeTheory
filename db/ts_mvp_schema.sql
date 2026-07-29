@@ -293,6 +293,7 @@ CREATE TABLE IF NOT EXISTS external_observations (
   source TEXT NOT NULL CHECK(source IN('activitywatch','manual_import','experiment')),
   source_event_id TEXT,
   observed_at TEXT NOT NULL,
+  local_date TEXT,
   duration_seconds REAL,
   semantic_role TEXT NOT NULL CHECK(semantic_role IN('observed_behavior','task_continuation','time_of_day','environment')),
   category TEXT NOT NULL CHECK(category IN('coding','writing','browser','communication','idle','other')),
@@ -300,9 +301,9 @@ CREATE TABLE IF NOT EXISTS external_observations (
   privacy_level TEXT NOT NULL CHECK(privacy_level IN('normal','sensitive')),
   imported_at TEXT NOT NULL,
   user_confirmed INTEGER NOT NULL DEFAULT 0 CHECK(user_confirmed IN(0,1)),
+  review_state TEXT NOT NULL DEFAULT 'imported' CHECK(review_state IN('imported','reviewed','excluded')),
   original_reference TEXT,
-  transform_version TEXT NOT NULL DEFAULT 'activitywatch-v1',
-  UNIQUE(user_id, source, source_event_id)
+  transform_version TEXT NOT NULL DEFAULT 'activitywatch-v1'
 ) STRICT;
 CREATE INDEX IF NOT EXISTS external_observations_user_time_idx ON external_observations(user_id, observed_at);
 CREATE UNIQUE INDEX IF NOT EXISTS external_observations_fingerprint_idx ON external_observations(user_id, source, id);
@@ -310,7 +311,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS external_observations_fingerprint_idx ON exter
 CREATE TABLE IF NOT EXISTS baseline_self_perceptions (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  source TEXT NOT NULL CHECK(source = 'ipip'),
+  source TEXT NOT NULL CHECK(source = 'baseline_self_perception'),
   item_set_version TEXT NOT NULL,
   item_key TEXT NOT NULL,
   original_item_reference TEXT,

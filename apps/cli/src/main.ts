@@ -139,6 +139,13 @@ async function selfModelCandidates() { console.log(JSON.stringify(await request(
 async function selfModelReview(args: string[]) { if (!args[0] || !["accepted", "rejected"].includes(args[1] ?? "")) throw new Error("self_model_review_invalid"); console.log(JSON.stringify(await request("/v1/self-understanding/self-model-candidates/review", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, candidateId: args[0], status: args[1] }) }), null, 2)); }
 async function activityWatchCommand(subcommand: string, args: string[]) {
   if (subcommand === "status" || subcommand === "buckets") return console.log(JSON.stringify(await request(`/v1/activitywatch/${subcommand}`), null, 2));
+  if (subcommand === "list") return console.log(JSON.stringify(await request(`/v1/activitywatch/observations?userId=${encodeURIComponent(userId)}`), null, 2));
+  if (subcommand === "review") {
+    const observationId = args[0] ?? "";
+    const reviewState = args.find((item) => item.startsWith("--state="))?.slice(8) ?? "";
+    if (!observationId || !["reviewed", "excluded"].includes(reviewState)) throw new Error("activitywatch_review_state_required");
+    return console.log(JSON.stringify(await request(`/v1/activitywatch/observations/${encodeURIComponent(observationId)}/review`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, reviewState }) }), null, 2));
+  }
   const startAt = args.find(item => item.startsWith("--from="))?.slice(7) ?? "";
   const endAt = args.find(item => item.startsWith("--to="))?.slice(5) ?? "";
   const bucketIds = args.filter(item => item.startsWith("--bucket=")).map(item => item.slice(9)).filter(Boolean);
@@ -214,7 +221,7 @@ async function main() { const [, , command, sub, ...args] = process.argv;
   if (command === "backup" && sub === "create") return backupCreate(args[0] ?? "manual");
   if (command === "backup" && sub === "list") return backupList();
   if (command === "backup" && sub === "restore" && args[0]) return backupRestore(args[0]);
-  console.error("usage: activitywatch status|buckets|preview --bucket=<id> --from=<iso> --to=<iso>|import ... --confirm; self-understanding baseline items|list|answer <itemKey> <1-5>|disable; workspace init|status|sync|watch; ..."); process.exitCode = 1;
+  console.error("usage: activitywatch status|buckets|preview --bucket=<id> --from=<iso> --to=<iso>|import ... --confirm|list|review <id> --state=reviewed|excluded; self-understanding baseline items|list|answer <itemKey> <1-5>|disable; workspace init|status|sync|watch; ..."); process.exitCode = 1;
 }
 
 main().catch(error => { mkdirSync(join(root, ".metheory", "logs"), { recursive: true }); appendFileSync(join(root, ".metheory", "logs", "cli.log"), `${new Date().toISOString()} ${error instanceof Error ? error.message : "error"}\n`); console.error(error instanceof Error ? error.message : "error"); process.exitCode = 1; });

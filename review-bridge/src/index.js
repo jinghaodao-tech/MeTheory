@@ -39,6 +39,222 @@ function capText(value, maximum) {
   };
 }
 
+const repositoryReviewRoots = [
+  "apps/",
+  "packages/",
+  "scripts/",
+  "review-bridge/",
+  "review-trigger/",
+  "custom-gpt/",
+  "docs/",
+  "test/",
+  "tools/",
+];
+
+const repositoryReviewRootFiles = new Set([
+  ".gitignore",
+  "README.md",
+  "package.json",
+  "package-lock.json",
+]);
+
+const repositoryReviewTextExtensions = new Set([
+  ".cjs",
+  ".css",
+  ".cts",
+  ".html",
+  ".js",
+  ".json",
+  ".md",
+  ".mjs",
+  ".mts",
+  ".ps1",
+  ".sql",
+  ".toml",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".yaml",
+  ".yml",
+]);
+
+const repositoryReviewBinaryExtensions = new Set([
+  ".7z",
+  ".bin",
+  ".dll",
+  ".exe",
+  ".gif",
+  ".ico",
+  ".jpg",
+  ".jpeg",
+  ".pdf",
+  ".png",
+  ".sqlite",
+  ".sqlite3",
+  ".svg",
+  ".webp",
+  ".zip",
+]);
+
+function repositoryPathReason(filePath) {
+  const normalized = filePath.replaceAll("\\", "/");
+  const segments = normalized.split("/");
+  if (segments.includes("..") || normalized.startsWith("/")) return "unsafe_path";
+  if (segments.some((segment) => [".git", ".github", "node_modules", "dist", "build", "coverage", ".ai"].includes(segment))) return "excluded_path";
+  if (segments.some((segment) => segment === ".env" || segment.startsWith(".env."))) return "secret_file";
+  if (normalized.endsWith(".sqlite-shm") || normalized.endsWith(".sqlite-wal") || normalized.endsWith(".db")) return "generated_database";
+  if (/\u0000/.test(normalized)) return "unsafe_path";
+  return null;
+}
+
+function isRepositoryReviewPath(filePath) {
+  return repositoryReviewRootFiles.has(filePath) || /^tsconfig[^/]*\.json$/.test(filePath) || repositoryReviewRoots.some((root) => filePath.startsWith(root));
+}
+
+function isTextRepositoryPath(filePath) {
+  const base = filePath.split("/").at(-1) || "";
+  if (["Dockerfile", "LICENSE", "Makefile"].includes(base)) return true;
+  const extension = base.includes(".") ? `.${base.split(".").at(-1)}`.toLowerCase() : "";
+  return repositoryReviewTextExtensions.has(extension) && !repositoryReviewBinaryExtensions.has(extension);
+}
+
+function decodeGitHubBlob(content) {
+  const binary = atob(String(content || "").replaceAll(/\s/g, ""));
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+async function fetchRepositoryReviewContext(repository, ref, env) {
+  if (!allowedRepositories(env).has(repository)) {
+    return { response: fail(403, "repository_not_allowed", "Repository is not allowlisted.") };
+  }
+  if (typeof ref !== "string" || !ref.trim() || ref.length > 200 || /[\u0000-\u001f\u007f]/.test(ref)) {
+    return { response: fail(400, "invalid_ref", "ref must be a branch, tag, or commit SHA.") };
+  }
+
+  const token = String(env.GITHUB_TOKEN || "");
+  if (!token) return { response: fail(500, "github_token_missing", "GITHUB_TOKEN is not configured.") };
+  const headers = {
+    accept: "application/vnd.github+json",
+    authorization: `Bearer ${token}`,
+    "x-github-api-version": "2022-11-28",
+    "user-agent": "metheory-review-bridge",
+  };
+  const commitResponse = await fetch(`https://api.github.com/repos/${repository}/commits/${encodeURIComponent(ref)}`, { headers });
+  if (!commitResponse.ok) return { response: fail(commitResponse.status === 404 ? 404 : commitResponse.status, "github_ref_not_found", "Could not resolve the repository ref.") };
+  const commit = await commitResponse.json();
+  const headSha = typeof commit.sha === "string" ? commit.sha : "";
+  const treeSha = typeof commit.commit?.tree?.sha === "string" ? commit.commit.tree.sha : "";
+  if (!isSha(headSha) || !isSha(treeSha)) return { response: fail(502, "github_ref_invalid", "GitHub returned an invalid repository ref.") };
+
+  const treeResponse = await fetch(`https://api.github.com/repos/${repository}/git/trees/${treeSha}?recursive=1`, { headers });
+  if (!treeResponse.ok) return { response: fail(treeResponse.status, "github_tree_fetch_failed", "Could not fetch the repository tree.") };
+  const tree = await treeResponse.json();
+  if (!Array.isArray(tree.tree)) return { response: fail(502, "github_tree_invalid", "GitHub returned an invalid repository tree.") };
+
+  const maxFileCharacters = 100_000;
+  const maxTotalCharacters = 600_000;
+  const maxFiles = 300;
+  const excludedFiles = [];
+  const addExcluded = (filePath, reason) => {
+    if (excludedFiles.length < maxFiles) excludedFiles.push({ path: filePath, reason });
+  };
+  const entries = tree.tree.filter((entry) => typeof entry?.path === "string" && entry.type !== "tree");
+  const files = [];
+  let totalCharacters = 0;
+  let truncated = Boolean(tree.truncated);
+
+  for (const entry of entries) {
+    const filePath = entry.path;
+    const pathReason = repositoryPathReason(filePath);
+    if (pathReason) {
+      addExcluded(filePath, pathReason);
+      continue;
+    }
+    if (!isRepositoryReviewPath(filePath)) {
+      addExcluded(filePath, "outside_review_scope");
+      continue;
+    }
+    if (entry.type === "commit" || entry.mode === "160000") {
+      addExcluded(filePath, "submodule");
+      continue;
+    }
+    if (entry.mode === "120000") {
+      addExcluded(filePath, "symlink");
+      continue;
+    }
+    if (!isTextRepositoryPath(filePath)) {
+      addExcluded(filePath, "binary_or_unsupported");
+      continue;
+    }
+    if (files.length >= maxFiles) {
+      truncated = true;
+      addExcluded(filePath, "file_count_limit");
+      continue;
+    }
+    if (Number(entry.size) > maxFileCharacters) {
+      truncated = true;
+      addExcluded(filePath, "file_size_limit");
+      continue;
+    }
+    if (totalCharacters >= maxTotalCharacters) {
+      truncated = true;
+      addExcluded(filePath, "total_size_limit");
+      continue;
+    }
+
+    const blobResponse = await fetch(`https://api.github.com/repos/${repository}/git/blobs/${entry.sha}`, { headers });
+    if (!blobResponse.ok) {
+      addExcluded(filePath, "github_blob_fetch_failed");
+      continue;
+    }
+    const blob = await blobResponse.json();
+    let content;
+    try {
+      content = decodeGitHubBlob(blob.content);
+    } catch {
+      addExcluded(filePath, "binary_content");
+      continue;
+    }
+    if (content.length > maxFileCharacters) {
+      truncated = true;
+      addExcluded(filePath, "file_size_limit");
+      continue;
+    }
+    if (totalCharacters + content.length > maxTotalCharacters) {
+      truncated = true;
+      addExcluded(filePath, "total_size_limit");
+      continue;
+    }
+    files.push({ path: filePath, content, truncated: false });
+    totalCharacters += content.length;
+  }
+
+  return {
+    value: {
+      repository,
+      ref,
+      headSha,
+      files,
+      excludedFiles,
+      truncated,
+      totalFiles: entries.length,
+      includedFiles: files.length,
+      totalCharacters,
+      excludedFilesTruncated: excludedFiles.length >= maxFiles,
+    },
+  };
+}
+
+function parseLinkHeader(value) {
+  const links = {};
+  for (const part of String(value || "").split(",")) {
+    const match = part.match(/<([^>]+)>;\s*rel="([^"]+)"/);
+    if (match) links[match[2]] = match[1];
+  }
+  return links;
+}
+
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -76,6 +292,7 @@ function rowToPayload(row) {
     acceptanceCriteria: JSON.parse(row.acceptance_criteria_json),
     constraints: JSON.parse(row.constraints_json),
     reviewCycle: row.review_cycle,
+    reviewScope: row.review_scope || "pr",
     status: row.status,
     fingerprint: row.fingerprint,
     claimedAt: row.claimed_at,
@@ -141,6 +358,39 @@ async function fetchPullRequest(repository, prNumber, env) {
 
   const diff = capText(await diffResponse.text(), 60_000);
   const body = capText(pr.body || "", 8_000);
+  const files = [];
+  let filesUrl = `https://api.github.com/repos/${repository}/pulls/${prNumber}/files?per_page=100`;
+
+  while (filesUrl && files.length < 300) {
+    const filesResponse = await fetch(filesUrl, { headers });
+    if (!filesResponse.ok) {
+      return {
+        response: fail(
+          filesResponse.status,
+          "github_files_fetch_failed",
+          "Could not fetch pull request files.",
+        ),
+      };
+    }
+    const page = await filesResponse.json();
+    for (const file of safeArray(page)) {
+      const patch = capText(file.patch || "", 60_000);
+      files.push({
+        filename: file.filename || "",
+        status: file.status || "",
+        additions: file.additions,
+        deletions: file.deletions,
+        changes: file.changes,
+        previousFilename: file.previous_filename || undefined,
+        patch: patch.value,
+        patchTruncated: patch.truncated,
+        patchCharCount: patch.length,
+        blobUrl: file.blob_url || "",
+        rawUrl: file.raw_url || "",
+      });
+    }
+    filesUrl = parseLinkHeader(filesResponse.headers.get("link")).next;
+  }
 
   return {
     value: {
@@ -161,6 +411,8 @@ async function fetchPullRequest(repository, prNumber, env) {
        diff: diff.value,
        diffTruncated: diff.truncated,
        diffCharCount: diff.length,
+      files,
+      filesTruncated: Number(pr.changed_files || 0) > files.length,
     },
   };
 }
@@ -178,6 +430,7 @@ async function createInstruction(request, env) {
   const headSha = body.headSha;
   const result = body.result;
   const reviewCycle = Number(body.reviewCycle ?? 1);
+  const reviewScope = body.reviewScope === undefined ? "pr" : body.reviewScope;
 
   if (!isRepository(repository) || !allowedRepositories(env).has(repository)) {
     return fail(400, "invalid_repository", "Repository is invalid or not allowlisted.");
@@ -193,6 +446,9 @@ async function createInstruction(request, env) {
   }
   if (!Number.isInteger(reviewCycle) || reviewCycle < 1 || reviewCycle > 10) {
     return fail(400, "invalid_review_cycle", "reviewCycle must be between 1 and 10.");
+  }
+  if (!["pr", "repository"].includes(reviewScope)) {
+    return fail(400, "invalid_review_scope", "reviewScope must be pr or repository.");
   }
 
   const blockingIssues = safeArray(body.blockingIssues)
@@ -226,6 +482,7 @@ async function createInstruction(request, env) {
     headSha,
     reviewCycle,
     result,
+    reviewScope,
     blockingIssues,
   });
   const fingerprint = await sha256Hex(fingerprintInput);
@@ -249,8 +506,8 @@ async function createInstruction(request, env) {
     `INSERT OR IGNORE INTO review_instructions (
       id, repository, pr_number, head_sha, result, objective,
       blocking_issues_json, suggestions_json, acceptance_criteria_json,
-      constraints_json, review_cycle, status, fingerprint, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+      constraints_json, review_cycle, review_scope, status, fingerprint, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
   )
     .bind(
       id,
@@ -264,6 +521,7 @@ async function createInstruction(request, env) {
       JSON.stringify(acceptanceCriteria),
       JSON.stringify(constraints),
       reviewCycle,
+      reviewScope,
       fingerprint,
       now,
       now,
@@ -405,6 +663,24 @@ export default {
     if (request.method === "GET" && prMatch) {
       const repository = `${decodeURIComponent(prMatch[1])}/${decodeURIComponent(prMatch[2])}`;
       const result = await fetchPullRequest(repository, Number(prMatch[3]), env);
+      return result.response || json(result.value);
+    }
+
+    const repositoryMatch = url.pathname.match(
+      /^\/api\/repository\/([^/]+)\/([^/]+)\/review-context$/,
+    );
+    if (request.method === "GET" && repositoryMatch) {
+      let repository;
+      try {
+        repository = `${decodeURIComponent(repositoryMatch[1])}/${decodeURIComponent(repositoryMatch[2])}`;
+      } catch {
+        return fail(400, "invalid_repository", "Repository path is invalid.");
+      }
+      const result = await fetchRepositoryReviewContext(
+        repository,
+        url.searchParams.get("ref") || "",
+        env,
+      );
       return result.response || json(result.value);
     }
 

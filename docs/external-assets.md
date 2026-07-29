@@ -34,10 +34,30 @@ chat, keystrokes, email subjects, file bodies, and raw bucket payloads are not
 stored. ActivityWatch data means observed application activity or continuation;
 it does not mean focus, productivity, or satisfaction.
 
+An import is deliberately not analysis-ready. Every imported observation starts
+as `reviewState: "imported"` and `userConfirmed: false`. Inspect the local list
+and explicitly retain or exclude each observation before analysis:
+
+```text
+metheory activitywatch list
+metheory activitywatch review <observation-id> --state=reviewed
+metheory activitywatch review <observation-id> --state=excluded
+```
+
+Only `reviewed` observations are grouped by local date. The analyzer joins a
+daily summary to at most one Entry on that date, so a single day of activity
+cannot be counted repeatedly when several notes were written. The summary
+contains active, coding, writing, browser, and communication duration, session
+count, longest session, first/last activity time, and source observation IDs.
+It remains a record of observed activity, not evidence of focus or output
+quality.
+
 ## Baseline self-perception
 
-The initial ten short items are original Japanese paraphrases inspired by the
-IPIP domain, not copied official items and not an official IPIP score. They are
+The initial ten short items are original Japanese self-perception prompts
+inspired by IPIP domains, not copied official items and not an official IPIP
+score. They use the source `baseline_self_perception` and item-set version
+`ipip-inspired-baseline-ja-v1`; neither name represents an official scale. They are
 stored separately from observed behavior with `itemSetVersion`, source,
 response scale, provenance, confirmation, and a user-controlled
 `useForSelfUnderstanding` flag. Users may answer later, edit progress, disable
@@ -63,5 +83,5 @@ privacy level. Subjective baseline data and observed ActivityWatch data remain
 separate during analysis.
 
 The shared source allowlist is `user_entry`, `ai_extraction`, `activitywatch`,
-`ipip_baseline`, `manual_import`, and `experiment`. A `prohibited` value is
+`baseline_self_perception`, `manual_import`, and `experiment`. A `prohibited` value is
 rejected before persistence.

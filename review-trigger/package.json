@@ -1,0 +1,17 @@
+{
+  "name": "metheory-chatgpt-review-trigger",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/core.js && node --check src/cli.js",
+    "setup": "node src/cli.js setup",
+    "trigger": "node src/cli.js trigger"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "playwright-core": "^1.54.0"
+  }
+}

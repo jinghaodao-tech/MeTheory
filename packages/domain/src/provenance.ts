@@ -1,4 +1,4 @@
-export type StructuredValueSource = "user_entry" | "ai_extraction" | "activitywatch" | "ipip_baseline" | "manual_import" | "experiment";
+export type StructuredValueSource = "user_entry" | "ai_extraction" | "activitywatch" | "baseline_self_perception" | "manual_import" | "experiment";
 export type PrivacyLevel = "normal" | "sensitive" | "highly_sensitive" | "prohibited";
 export type ValueProvenance = {
   source: StructuredValueSource;

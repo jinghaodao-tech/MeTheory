@@ -9,9 +9,19 @@ $requiredFiles = @(
     "scripts\review-loop.ps1",
     "scripts\watch-review-loop.ps1",
     "scripts\start-review-watcher.ps1",
+    "scripts\trigger-gpt-review.ps1",
+    "scripts\setup-chatgpt-review-trigger.ps1",
     "scripts\check-review-loop.ps1",
+    "scripts\review-loop-status-lib.ps1",
+    "scripts\status-review-loop.ps1",
+    "scripts\watch-review-status.ps1",
+    "scripts\tail-review-loop.ps1",
+    "scripts\check-review-processes.ps1",
     "custom-gpt\openapi.yaml",
-    "custom-gpt\instructions.md"
+    "custom-gpt\instructions.md",
+    "review-trigger\src\core.js",
+    "review-trigger\src\cli.js",
+    "review-trigger\package.json"
 )
 
 $failures = 0
@@ -39,6 +49,7 @@ function Report-Check {
 }
 
 Report-Check "REVIEW_BRIDGE_TOKEN is configured" (-not [string]::IsNullOrWhiteSpace($env:REVIEW_BRIDGE_TOKEN))
+Report-Check "CHATGPT_REVIEW_GPT_URL is configured" (-not [string]::IsNullOrWhiteSpace($env:CHATGPT_REVIEW_GPT_URL))
 
 $gh = Resolve-Executable "gh" @(
     "C:\Program Files\GitHub CLI\gh.exe",
@@ -63,6 +74,8 @@ $codex = Resolve-Executable "codex" @(
     (Join-Path $env:APPDATA "npm\codex.exe")
 )
 Report-Check "codex is installed" ($null -ne $codex)
+Report-Check "node is installed" ($null -ne (Get-Command node -ErrorAction SilentlyContinue))
+Report-Check "npm is installed" ($null -ne (Get-Command npm.cmd -ErrorAction SilentlyContinue))
 
 $git = Resolve-Executable "git" @(
     "C:\Program Files\Git\cmd\git.exe",
@@ -113,6 +126,25 @@ Report-Check "OpenAPI uses the deployed Worker URL" (
 foreach ($relativePath in $requiredFiles) {
     Report-Check "file exists: $relativePath" (Test-Path -LiteralPath (Join-Path $PSScriptRoot "..\$relativePath"))
 }
+
+$repoRoot = Split-Path -Parent $PSScriptRoot
+foreach ($ignoredPath in @(".ai\review-loop-status.json", ".ai\review-loop.log", ".ai\review-loop.lock")) {
+    $ignoredOutput = & $git -C $repoRoot check-ignore -q -- $ignoredPath 2>$null
+    Report-Check "Git ignores $ignoredPath" ($LASTEXITCODE -eq 0)
+}
+$statusPath = Join-Path $repoRoot ".ai\review-loop-status.json"
+if (Test-Path -LiteralPath $statusPath) {
+    $statusReadable = $false
+    try { Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json | Out-Null; $statusReadable = $true } catch { $statusReadable = $false }
+    Report-Check "review loop status JSON is readable" $statusReadable
+} else {
+    Write-Host "INFO  review loop status JSON will be created when the watcher starts"
+}
+
+$profileDirectory = Join-Path $PSScriptRoot "..\.ai\chatgpt-profile"
+Report-Check "dedicated ChatGPT browser profile exists" (Test-Path -LiteralPath $profileDirectory)
+$playwrightDirectory = Join-Path $PSScriptRoot "..\review-trigger\node_modules\playwright-core"
+Report-Check "review trigger dependencies are installed" (Test-Path -LiteralPath $playwrightDirectory)
 
 if ($failures -gt 0) {
     Write-Host "Review loop setup check failed: $failures check(s) need attention."

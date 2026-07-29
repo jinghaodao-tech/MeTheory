@@ -30,9 +30,9 @@ class FakeD1Statement {
   async run() {
     const { sql, args } = this;
     if (sql.startsWith("INSERT OR IGNORE")) {
-      const [id, repository, pr_number, head_sha, result, objective, blocking, suggestions, acceptance, constraints, review_cycle, fingerprint, created_at, updated_at] = args;
+      const [id, repository, pr_number, head_sha, result, objective, blocking, suggestions, acceptance, constraints, review_cycle, review_scope, fingerprint, created_at, updated_at] = args;
       if (!this.db.rows.some((row) => row.repository === repository && row.pr_number === pr_number && row.head_sha === head_sha && row.review_cycle === review_cycle) && !this.db.rows.some((row) => row.fingerprint === fingerprint)) {
-        this.db.rows.push({ id, repository, pr_number, head_sha, result, objective, blocking_issues_json: blocking, suggestions_json: suggestions, acceptance_criteria_json: acceptance, constraints_json: constraints, review_cycle, status: "pending", fingerprint, claimed_at: null, completed_at: null, failure_message: null, created_at, updated_at });
+        this.db.rows.push({ id, repository, pr_number, head_sha, result, objective, blocking_issues_json: blocking, suggestions_json: suggestions, acceptance_criteria_json: acceptance, constraints_json: constraints, review_cycle, review_scope, status: "pending", fingerprint, claimed_at: null, completed_at: null, failure_message: null, created_at, updated_at });
       }
       return { meta: { changes: 1 } };
     }
@@ -97,6 +97,20 @@ test("pull request responses cap large body and diff payloads", async () => {
     if (accept === "application/vnd.github.v3.diff") {
       return new Response("d".repeat(200_000), { status: 200 });
     }
+    if (String(input).includes("/files?")) {
+      return new Response(JSON.stringify([
+        {
+          filename: "review-bridge/src/index.js",
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          changes: 2,
+          patch: "p".repeat(70_000),
+          blob_url: "https://github.example/blob",
+          raw_url: "https://github.example/raw",
+        },
+      ]), { status: 200, headers: { "content-type": "application/json" } });
+    }
     return new Response(JSON.stringify({
       title: "Large PR",
       body: "b".repeat(20_000),
@@ -119,6 +133,11 @@ test("pull request responses cap large body and diff payloads", async () => {
     assert.equal(payload.diff.length, 60_000);
     assert.equal(payload.diffTruncated, true);
     assert.equal(payload.diffCharCount, 200_000);
+    assert.equal(payload.files[0].filename, "review-bridge/src/index.js");
+    assert.equal(payload.files[0].patch.length, 60_000);
+    assert.equal(payload.files[0].patchTruncated, true);
+    assert.equal(payload.files[0].patchCharCount, 70_000);
+    assert.equal(payload.filesTruncated, true);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -152,4 +171,57 @@ test("claim is a single conditional state transition", async () => {
   assert.equal(secondClaim.status, 409);
   const completed = await call(environment, "POST", `/api/review-instructions/${created.id}/complete`, {});
   assert.equal(completed.status, 200);
+});
+
+test("repository review context resolves refs and excludes unsafe or binary files", async () => {
+  const environment = env();
+  environment.GITHUB_TOKEN = "github-test-token";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.includes("/commits/")) return new Response(JSON.stringify({ sha: "abcdef1234567", commit: { tree: { sha: "1234567890abcdef1234567890abcdef12345678" } } }), { status: 200 });
+    if (url.includes("/git/trees/")) return new Response(JSON.stringify({ tree: [
+      { path: "README.md", type: "blob", sha: "blob-readme", size: 10 },
+      { path: "apps/api.ts", type: "blob", sha: "blob-api", size: 10 },
+      { path: ".env", type: "blob", sha: "blob-env", size: 10 },
+      { path: "node_modules/x.js", type: "blob", sha: "blob-node", size: 10 },
+      { path: "images/logo.png", type: "blob", sha: "blob-png", size: 10 },
+      { path: "packages/link", type: "blob", mode: "120000", sha: "blob-link", size: 10 },
+      { path: "packages/submodule", type: "commit", mode: "160000", sha: "blob-sub", size: 10 },
+      { path: "tools/too-large.ts", type: "blob", sha: "blob-large", size: 100001 },
+      { path: "outside.txt", type: "blob", sha: "blob-outside", size: 10 },
+    ] }), { status: 200 });
+    if (url.includes("blob-readme")) return new Response(JSON.stringify({ content: Buffer.from("# MeTheory").toString("base64") }), { status: 200 });
+    if (url.includes("blob-api")) return new Response(JSON.stringify({ content: Buffer.from("export const ok = true;").toString("base64") }), { status: 200 });
+    throw new Error(`unexpected GitHub request: ${url}`);
+  };
+  try {
+    const response = await call(environment, "GET", "/api/repository/jinghaodao-tech/MeTheory/review-context?ref=agent%2Fai-review-loop");
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.headSha, "abcdef1234567");
+    assert.deepEqual(payload.files.map((file) => file.path), ["README.md", "apps/api.ts"]);
+    assert.ok(payload.excludedFiles.some((file) => file.path === ".env" && file.reason === "secret_file"));
+    assert.ok(payload.excludedFiles.some((file) => file.path === "packages/link" && file.reason === "symlink"));
+    assert.ok(payload.excludedFiles.some((file) => file.path === "packages/submodule" && file.reason === "submodule"));
+    assert.ok(payload.excludedFiles.some((file) => file.path === "tools/too-large.ts" && file.reason === "file_size_limit"));
+    assert.ok(!JSON.stringify(payload).includes("github-test-token"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("repository review context rejects disallowed repositories and missing refs", async () => {
+  const environment = env();
+  environment.GITHUB_TOKEN = "github-test-token";
+  assert.equal((await call(environment, "GET", "/api/repository/someone/else/review-context?ref=main")).status, 403);
+  assert.equal((await call(environment, "GET", "/api/repository/jinghaodao-tech/MeTheory/review-context")).status, 400);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("not found", { status: 404 });
+  try {
+    const response = await call(environment, "GET", "/api/repository/jinghaodao-tech/MeTheory/review-context?ref=missing");
+    assert.equal(response.status, 404);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

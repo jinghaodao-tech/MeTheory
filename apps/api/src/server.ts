@@ -25,7 +25,7 @@ import {
   baselineItems,
   createBaselineResponse
 } from "../../../packages/self-understanding/src/index.ts";
-import { ActivityWatchAdapter } from "../../../packages/domain/src/activitywatch.ts";
+import { ActivityWatchAdapter, summarizeActivityWatchDaily } from "../../../packages/domain/src/activitywatch.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.METHEORY_DB ?? resolve(root, "data", "metheory.sqlite3");
@@ -112,6 +112,53 @@ ensureColumn("self_understanding_analysis_history", "outcome_field_key", "TEXT")
 ensureColumn("self_understanding_analysis_history", "outcome_scale_fingerprint", "TEXT");
 ensureColumn("self_understanding_analysis_history", "source_entry_ids_json", "TEXT NOT NULL DEFAULT '[]'");
 ensureColumn("self_understanding_analysis_history", "source_entry_fingerprint", "TEXT NOT NULL DEFAULT ''");
+ensureColumn("external_observations", "review_state", "TEXT NOT NULL DEFAULT 'imported'");
+ensureColumn("external_observations", "local_date", "TEXT");
+
+function migrateBaselineSelfPerceptionSource(): void {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='baseline_self_perceptions'").get() as { sql?: string } | undefined;
+  if (!row?.sql?.includes("source = 'ipip'")) return;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`CREATE TABLE baseline_self_perceptions_next (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      source TEXT NOT NULL CHECK(source = 'baseline_self_perception'),
+      item_set_version TEXT NOT NULL,
+      item_key TEXT NOT NULL,
+      original_item_reference TEXT,
+      statement_ja TEXT NOT NULL,
+      response INTEGER NOT NULL CHECK(response >= 1 AND response <= 5),
+      response_minimum INTEGER NOT NULL DEFAULT 1,
+      response_maximum INTEGER NOT NULL DEFAULT 5,
+      recorded_at TEXT NOT NULL,
+      user_confirmed INTEGER NOT NULL DEFAULT 1 CHECK(user_confirmed IN(0,1)),
+      use_for_self_understanding INTEGER NOT NULL DEFAULT 1 CHECK(use_for_self_understanding IN(0,1)),
+      privacy_level TEXT NOT NULL DEFAULT 'normal' CHECK(privacy_level = 'normal'),
+      provenance_json TEXT NOT NULL DEFAULT '{}',
+      deleted_at TEXT,
+      UNIQUE(user_id, item_set_version, item_key)
+    ) STRICT`);
+    db.exec(`INSERT INTO baseline_self_perceptions_next(
+      id,user_id,source,item_set_version,item_key,original_item_reference,statement_ja,response,
+      response_minimum,response_maximum,recorded_at,user_confirmed,use_for_self_understanding,
+      privacy_level,provenance_json,deleted_at
+    ) SELECT id,user_id,'baseline_self_perception',
+      CASE WHEN item_set_version='ipip-paraphrase-ja-v1' THEN 'ipip-inspired-baseline-ja-v1' ELSE item_set_version END,
+      item_key,original_item_reference,statement_ja,response,response_minimum,response_maximum,
+      recorded_at,user_confirmed,use_for_self_understanding,privacy_level,provenance_json,deleted_at
+      FROM baseline_self_perceptions`);
+    db.exec("DROP TABLE baseline_self_perceptions");
+    db.exec("ALTER TABLE baseline_self_perceptions_next RENAME TO baseline_self_perceptions");
+    db.exec("CREATE INDEX IF NOT EXISTS baseline_self_perceptions_user_idx ON baseline_self_perceptions(user_id, deleted_at, recorded_at)");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+migrateBaselineSelfPerceptionSource();
 db.exec("CREATE TABLE IF NOT EXISTS ai_http_access_audit_logs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, client_id TEXT NOT NULL, client_type TEXT NOT NULL, purpose TEXT NOT NULL, requested_parameter_ids_json TEXT NOT NULL, allowed_parameter_ids_json TEXT NOT NULL, denied_parameter_ids_json TEXT NOT NULL, requested_start_at TEXT, requested_end_at TEXT, returned_record_count INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, created_at TEXT NOT NULL)");
 
 const now = () => new Date().toISOString();
@@ -481,16 +528,28 @@ const server = createServer(async (request, response) => {
         const endAt = optionalString(input.endAt) ?? "";
         if (!bucketIds.length || !startAt || !endAt || Date.parse(startAt) >= Date.parse(endAt)) return json(response, 400, { error: "activitywatch_period_invalid" });
         const observations = await adapter.preview(bucketIds, startAt, endAt);
-        if (parts[2] === "preview") return json(response, 200, { source: "activitywatch", startAt, endAt, count: observations.length, items: observations });
+        if (parts[2] === "preview") return json(response, 200, { source: "activitywatch", startAt, endAt, count: observations.length, items: observations, dailySummaries: summarizeActivityWatchDaily(observations) });
         if (input.confirm !== true) return json(response, 400, { error: "activitywatch_import_confirmation_required" });
         const userId = optionalString(input.userId) ?? "";
         if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
         let imported = 0;
         for (const observation of observations) {
-          const result = db.prepare("INSERT OR IGNORE INTO external_observations(id,user_id,source,source_event_id,observed_at,duration_seconds,semantic_role,category,project_label,privacy_level,imported_at,user_confirmed,original_reference,transform_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(observation.id, userId, observation.source, observation.sourceEventId ?? null, observation.observedAt, observation.durationSeconds ?? null, observation.semanticRole, observation.category, observation.projectLabel ?? null, observation.privacyLevel, observation.importedAt, 1, observation.sourceEventId ?? null, "activitywatch-v1");
+          const result = db.prepare("INSERT OR IGNORE INTO external_observations(id,user_id,source,source_event_id,observed_at,local_date,duration_seconds,semantic_role,category,project_label,privacy_level,imported_at,user_confirmed,review_state,original_reference,transform_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(observation.id, userId, observation.source, observation.sourceEventId ?? null, observation.observedAt, observation.localDate, observation.durationSeconds ?? null, observation.semanticRole, observation.category, observation.projectLabel ?? null, observation.privacyLevel, observation.importedAt, 0, "imported", observation.sourceEventId ?? null, "activitywatch-v1");
           imported += Number(result.changes ?? 0);
         }
-        return json(response, 201, { source: "activitywatch", count: observations.length, imported, skipped: observations.length - imported });
+        return json(response, 201, { source: "activitywatch", count: observations.length, imported, skipped: observations.length - imported, reviewState: "imported" });
+      }
+      if (request.method === "GET" && parts[2] === "observations") {
+        const userId = requestUrl.searchParams.get("userId") ?? "";
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        return json(response, 200, { items: db.prepare("SELECT * FROM external_observations WHERE user_id=? AND source='activitywatch' ORDER BY observed_at DESC").all(userId) });
+      }
+      if (request.method === "POST" && parts.length === 5 && parts[2] === "observations" && parts[4] === "review") {
+        const input = await body(request); const userId = optionalString(input.userId) ?? ""; const reviewState = optionalString(input.reviewState) ?? "";
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        if (!['reviewed', 'excluded'].includes(reviewState)) return json(response, 400, { error: "activitywatch_review_state_invalid" });
+        const result = db.prepare("UPDATE external_observations SET review_state=?,user_confirmed=? WHERE id=? AND user_id=? AND source='activitywatch'").run(reviewState, reviewState === "reviewed" ? 1 : 0, parts[3], userId);
+        return Number(result.changes ?? 0) ? json(response, 200, { id: parts[3], reviewState }) : json(response, 404, { error: "activitywatch_observation_not_found" });
       }
     }
     if (parts[0] === "v1" && parts[1] === "self-understanding" && parts[2] === "baseline") {

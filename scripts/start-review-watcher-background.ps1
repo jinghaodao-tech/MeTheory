@@ -1,6 +1,10 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [Parameter(Mandatory)][ValidateRange(1, 2147483647)][int]$PrNumber
+    [Parameter(Mandatory)][ValidateRange(1, 2147483647)][int]$PrNumber,
+    [switch]$FullRepositoryReview,
+    [switch]$ForceReview,
+    [switch]$PushOnSuccess,
+    [string]$PushScript = ".\scripts\commit-and-push-review-fix.ps1"
 )
 
 Set-StrictMode -Version Latest
@@ -19,12 +23,12 @@ if (-not (Test-Path -LiteralPath $starter)) {
     throw "Watcher starter not found: $starter"
 }
 
-$arguments = @(
-    "-NoProfile",
-    "-ExecutionPolicy", "Bypass",
-    "-File", $starter,
-    "-PrNumber", $PrNumber
-)
+$invocation = "& '" + $starter.Replace("'", "''") + "' -PrNumber $PrNumber"
+if ($FullRepositoryReview) { $invocation += " -FullRepositoryReview" }
+if ($ForceReview) { $invocation += " -ForceReview" }
+if ($PushOnSuccess) { $invocation += " -PushOnSuccess -PushScript '" + $PushScript.Replace("'", "''") + "'" }
+$encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($invocation))
+$arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand)
 
 if ($PSCmdlet.ShouldProcess("PR #$PrNumber", "Start a hidden background review watcher")) {
     $process = Start-Process `

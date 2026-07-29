@@ -132,6 +132,19 @@ function entryFingerprint(ids: string[]): string {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
+type ReviewedActivityWatchRow = {
+  id: string;
+  observed_at: string;
+  local_date: string | null;
+  duration_seconds: number | null;
+  category: string;
+  semantic_role: string;
+};
+
+function localDate(value: string): string {
+  return value.slice(0, 10);
+}
+
 export class SqliteSelfUnderstandingRepository {
   private readonly db: DatabaseSync;
 
@@ -240,6 +253,8 @@ export class SqliteSelfUnderstandingRepository {
     const excludedFields: ExcludedAnalysisField[] = [];
     const excludedKeys = new Set<string>();
     const entryCount = new Set(rows.map((row) => String(row.id))).size;
+    const externalObservationCount = Number((this.db.prepare("SELECT COUNT(*) AS count FROM external_observations WHERE user_id=? AND source='activitywatch' AND user_confirmed=1 AND review_state='reviewed' AND observed_at>=? AND observed_at<=?").get(userId, startAt, endAt) as { count: number }).count);
+    const baselineResponseCount = Number((this.db.prepare("SELECT COUNT(*) AS count FROM baseline_self_perceptions WHERE user_id=? AND deleted_at IS NULL AND user_confirmed=1 AND use_for_self_understanding=1").get(userId) as { count: number }).count);
     const templateVersionIds = [
       ...new Set(
         rows
@@ -273,7 +288,12 @@ export class SqliteSelfUnderstandingRepository {
             "確認済みの構造化記録が不足しています。条件と結果を同じEntryで記録してください。",
           recommendedFields: fieldKeys
         },
-        dataQuality: { entryCount, confirmedValueCount: rows.length, excludedFieldCount: excludedFields.length, minimumEntryCount },
+        dataQuality: { entryCount, externalObservationCount, baselineResponseCount, confirmedValueCount: rows.length, excludedFieldCount: excludedFields.length, minimumEntryCount },
+        sourceSummary: [
+          { source: "user_entry", count: entryCount, enabled: true },
+          { source: "activitywatch", count: externalObservationCount, enabled: externalObservationCount > 0 },
+          { source: "baseline_self_perception", count: baselineResponseCount, enabled: baselineResponseCount > 0 }
+        ],
         excludedFields,
         hypotheses: []
       };
@@ -383,6 +403,46 @@ export class SqliteSelfUnderstandingRepository {
       record.outcomeValues[parameterId] = value;
       records.set(String(row.id), record);
     }
+
+    // Imported ActivityWatch events become analysis inputs only after individual review.
+    // One earliest Entry per local date is selected to avoid multiplying one day of activity.
+    const reviewedActivityRows = this.db.prepare("SELECT id,observed_at,local_date,duration_seconds,category,semantic_role FROM external_observations WHERE user_id=? AND source='activitywatch' AND user_confirmed=1 AND review_state='reviewed' AND observed_at>=? AND observed_at<=? ORDER BY observed_at,id").all(userId, startAt, endAt) as ReviewedActivityWatchRow[];
+    const activityByDate = new Map<string, { active: number; coding: number; writing: number; browser: number; communication: number; sessions: number; longest: number }>();
+    for (const row of reviewedActivityRows) {
+      const date = row.local_date ?? localDate(row.observed_at);
+      const summary = activityByDate.get(date) ?? { active: 0, coding: 0, writing: 0, browser: 0, communication: 0, sessions: 0, longest: 0 };
+      const duration = Math.max(0, Number(row.duration_seconds ?? 0));
+      summary.active += duration;
+      summary.sessions += 1;
+      summary.longest = Math.max(summary.longest, duration);
+      if (row.category === "coding") summary.coding += duration;
+      if (row.category === "writing") summary.writing += duration;
+      if (row.category === "browser") summary.browser += duration;
+      if (row.category === "communication") summary.communication += duration;
+      activityByDate.set(date, summary);
+    }
+    const entryByDate = new Map<string, UnderstandingRecord>();
+    for (const record of records.values()) if (!entryByDate.has(localDate(record.recordedAt))) entryByDate.set(localDate(record.recordedAt), record);
+    const activityMetrics: Array<[string, string, "observed_behavior" | "task_continuation", (summary: { active: number; coding: number; writing: number; browser: number; communication: number; sessions: number; longest: number }) => number]> = [
+      ["activitywatch_active_duration_seconds", "ActivityWatch active duration", "observed_behavior", (summary) => summary.active],
+      ["activitywatch_coding_duration_seconds", "ActivityWatch coding duration", "observed_behavior", (summary) => summary.coding],
+      ["activitywatch_writing_duration_seconds", "ActivityWatch writing duration", "observed_behavior", (summary) => summary.writing],
+      ["activitywatch_browser_duration_seconds", "ActivityWatch browser duration", "observed_behavior", (summary) => summary.browser],
+      ["activitywatch_communication_duration_seconds", "ActivityWatch communication duration", "observed_behavior", (summary) => summary.communication],
+      ["activitywatch_session_count", "ActivityWatch session count", "observed_behavior", (summary) => summary.sessions],
+      ["activitywatch_longest_session_seconds", "ActivityWatch longest session", "task_continuation", (summary) => summary.longest]
+    ];
+    for (const [date, summary] of activityByDate) {
+      const record = entryByDate.get(date);
+      if (!record) continue;
+      for (const [parameterId, nameJa, semanticRole, valueFor] of activityMetrics) {
+        if (!definitions.has(parameterId)) definitions.set(parameterId, { id: parameterId, fieldKey: parameterId, semanticRole, sensitivity: "normal", semanticMergeAllowed: false, scaleFingerprint: "activitywatch-v1:number:seconds", nameJa, valueType: "number", minimumValue: 0, usableAsCondition: true, usableAsOutcome: true });
+        const value = valueFor(summary);
+        record.conditionValues[parameterId] = value;
+        record.outcomeValues[parameterId] = value;
+        observations.push({ episodeId: record.id, parameterId, value, isMissing: false, observedAt: record.recordedAt });
+      }
+    }
     const hypotheses = generateSelfUnderstanding({
       parameters: [...definitions.values()],
       observations,
@@ -466,7 +526,12 @@ export class SqliteSelfUnderstandingRepository {
       entryCount,
       minimumEntryCount,
       hypotheses,
-      dataQuality: { entryCount, confirmedValueCount: rows.length, excludedFieldCount: excludedFields.length, minimumEntryCount },
+      dataQuality: { entryCount, externalObservationCount, baselineResponseCount, confirmedValueCount: rows.length, excludedFieldCount: excludedFields.length, minimumEntryCount },
+      sourceSummary: [
+        { source: "user_entry", count: entryCount, enabled: true },
+        { source: "activitywatch", count: externalObservationCount, enabled: externalObservationCount > 0 },
+        { source: "baseline_self_perception", count: baselineResponseCount, enabled: baselineResponseCount > 0 }
+      ],
       excludedFields,
       explanationMode: "deterministic_fallback"
     };
