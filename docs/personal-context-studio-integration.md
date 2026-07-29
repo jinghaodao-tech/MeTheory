@@ -8,9 +8,9 @@ Markdown bodies for self-understanding analysis.
 
 ## Data flow
 
-1. A VS Code, Obsidian, or other local connector writes a document to Personal
-   Context Studio.
-2. Personal Context Studio stores the local document, searches it locally, and
+1. Any editor writes a Markdown file inside the configured Personal Context
+   Studio notes folder.
+2. Personal Context Studio watches the folder, indexes the stable file locally, and
    may create unconfirmed structured candidates from a local AI result.
 3. The user confirms or edits individual values.
 4. MeTheory requests `GET /v1/metheory/analysis-snapshot` from the local PCS
@@ -36,8 +36,15 @@ and `highly_sensitive` fields from the analysis snapshot. It does not expose
 search results or document bodies to an AI unless a caller requests a bounded
 local search result under the user's configured policy.
 
-## Legacy direct integrations
+## Editor and AI-tool integration
 
-The former MeTheory VS Code, Obsidian, template, extraction, and Entry APIs
-are development-era implementations. They are not the product integration
-surface. New connector and local-AI work belongs in Personal Context Studio.
+There is no bidirectional note synchronization and no required editor plugin.
+VS Code, Cursor, Obsidian, and other editors operate directly on the same
+Markdown source folder. PCS keeps only document metadata and a regenerable
+local search index; it does not maintain another authoritative body copy.
+
+PCS provides a read-only MCP server for bounded document search, excerpts,
+confirmed context, and pending Review status. Codex and Claude Code cannot
+alter Markdown or approve extracted values through that MCP surface. New
+authoring, watcher, search, template, extraction, and Review work belongs in
+Personal Context Studio.

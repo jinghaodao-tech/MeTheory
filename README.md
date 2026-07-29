@@ -7,10 +7,12 @@ deterministic hypothesis system when a user wants to test a self-belief.
 The current product specification is [`docs/current-product-spec.md`](docs/current-product-spec.md).
 For the practical self-understanding flow and its non-clinical analysis boundary,
 see [`docs/self-understanding-practical-v1.md`](docs/self-understanding-practical-v1.md).
-It is the source of truth for the Node.js, SQLite, VS Code/Cursor, CLI, and
-VS Code/Cursor is the primary writing environment; Obsidian remains a compatible
-Entry source. Older documents are retained as historical
-domain references or future architecture research and do not override it.
+It is the source of truth for the Node.js, SQLite, mobile experiment client,
+and Personal Context Studio integration. Markdown authoring is editor-agnostic:
+VS Code, Cursor, Obsidian, or another editor may open the same PCS notes folder.
+MeTheory does not maintain an editor plugin or a second synchronized note copy.
+Older documents are retained as historical domain references or future
+architecture research and do not override the current specification.
 
 The product boundary is explicit: the user chooses the scope of collection,
 the system chooses when and what to collect, and AI may only propose bounded
@@ -24,7 +26,7 @@ notification timing, hypothesis status, or Self Model updates.
 - `docs/hypothesis-evaluation.md`: versioned comparison evaluation and audit model.
 - `docs/collection-responsibility.md`: collection ownership and three-layer presentation model.
 - `docs/architecture-research.md`: target architecture and migration plan.
-- `docs/integration-architecture.md`: Entry, Obsidian, experiments, and future search boundaries.
+- `docs/integration-architecture.md`: Personal Context Studio, experiments, and analysis boundaries.
 - `docs/technical-architecture.md`: module boundaries and runtime flow.
 - `docs/privacy-retention.md`: retention, consent, erasure, and AI safety baseline.
 - `docs/local-ai-phase3.md`: local AI providers, draft approval, extraction, and review boundaries.
@@ -48,7 +50,6 @@ notification timing, hypothesis status, or Self Model updates.
  - `docs/openapi-ai.yaml`: read-only AI HTTP contract.
  - `docs/mcp-tools.md`: read-only MCP tool boundary.
 - `apps/api/src/server.ts`: TypeScript Node MVP API.
-- `apps/obsidian-plugin/`: minimal local Obsidian Entry registration plugin.
 - `packages/records/src/`: platform-neutral Entry types and validation.
 - `backend/core.py`: Python reference implementation kept during migration.
 
@@ -87,30 +88,19 @@ npm.cmd run dev:api
 
 The API listens on `http://127.0.0.1:8100`.
 
-## Free records and Obsidian
+## Free records
 
-Phase 1 adds `entries` as the structured reference to free-form records.
-Entries are deliberately separate from `observation_episodes` and
-`parameter_values`: an Entry is a human-readable record, while an Observation
-is a typed value used by an experiment. The mobile SQLite migration is
-idempotent and adds the Entry table without removing existing data. Mobile JSON
-exports include Entries.
+Free-form Markdown records belong to
+[Personal Context Studio](https://github.com/jinghaodao-tech/Personal-Context-Studio).
+The Markdown folder is the human-readable source of truth. PCS watches it,
+maintains a local search index, and exposes reviewed structured values to
+MeTheory through a versioned localhost snapshot. Opening that folder in
+Obsidian is optional and requires no MeTheory-specific plugin.
 
-For Obsidian, install `apps/obsidian-plugin` as a local plugin, configure the
-local API URL, then run `Register current note as MeTheory Entry`. On first
-use the plugin creates or reuses a local user and stores its ID in plugin
-settings. The plugin stores only `metheory_entry_id` when it creates an Entry.
-Re-registering the same note preserves the existing Entry's `recordedAt` and
-updates `sourceUpdatedAt` from the Obsidian file modification time.
-
-For a new note, `recordedAt` is selected in this order: an explicit
-`recorded_at` frontmatter value, a `date` frontmatter value, a daily filename
-in `YYYY-MM-DD` or `YYYY-MM-DD.md` form, then the file creation timestamp.
-Existing Entries keep their stored `recordedAt`. Invalid explicit or
-daily-file dates stop registration instead of silently becoming the current
-time. The plugin source of truth is
-`apps/obsidian-plugin/src/main.ts`; `main.js` is the generated, tracked
-Obsidian artifact. Build it with `npm run build:obsidian`.
+MeTheory's existing `entries` remain an internal analysis/reference model and
+are deliberately separate from `observation_episodes` and `parameter_values`.
+New free-record authoring, indexing, template, extraction, and Review work
+belongs in PCS.
 
 See `docs/integration-architecture.md` for the current architecture, API
 surface, timestamp semantics, and the planned search boundary.
@@ -155,9 +145,7 @@ npm install
 npm run dev:mobile
 npm run typecheck:root
 npm run typecheck:mobile
-npm run typecheck:obsidian
 npm run typecheck
-npm run build:obsidian
 npm run test:mobile
 npm run verify
 npm --workspace apps/mobile run build:preview
@@ -278,34 +266,12 @@ Entry Templates provide reusable, user-approved structures for free records. AI 
 
 ## Local AI and Review
 
-Phase 3 adds local-only AI provider selection for Ollama, OpenAI-compatible
-local endpoints, Mock, Manual external AI, and Disabled mode. The default is
-Disabled. Local workspace configuration is stored in `.metheory/workspace.json`;
-API keys are read only from the process environment and are not written to
-notes, SQLite exports, or logs. Manual mode only copies a schema prompt and
-accepts pasted JSON after the same domain validation used by generated output.
-
-Template generation writes an unapproved draft to `templates/drafts`. It is
-never saved as a reusable SQLite template until the user runs the approval
-command. Entry structuring also writes a reviewable extraction record with a
-source content hash and source update time. A changed note makes that result
-stale, so it cannot be applied silently. Structured Entry values remain free
-record metadata and are not implicitly converted into observations.
-New notes created from the VS Code Start view are provisional: they are written
-to `notes/inbox`, opened immediately, and marked `tracked: true` and
-`auto_structure: true`. Template search and attachment continue in the
-background. Once a template is attached, the watcher waits three seconds
-after a save before structuring the tracked note. It retries once, records a
-content hash, and rejects stale results. Ordinary notes without `tracked:
-true` never call AI automatically. Manual CLI and VS Code structure commands
-remain available.
-
-Useful commands are `ai detect`, `ai status`, `ai start`, `ai stop`, `ai test`,
-`template generate`, `template draft list`, `template draft show <id>`,
-`template draft set-result <id> <json-file>`, `template draft approve <id>`, `entry structure <note.md>`, and
-`entry extraction-list`. VS Code exposes the corresponding AI detection,
-template, structure, and review commands. Automatic cloud calls are not part
-of this phase; external AI prompts are copied for explicit user interaction.
+Local-AI template generation, Markdown extraction, stale-result checks, and
+per-value Review belong to Personal Context Studio. MeTheory consumes only
+confirmed, shareable values from PCS and never converts a free record into an
+experiment observation implicitly. MeTheory's AI boundary remains available
+for bounded explanation of already computed hypotheses; it does not own the
+authoring workflow or alter Markdown.
 
 ## Privacy and Safe Delete
 
@@ -334,8 +300,8 @@ a concrete shortage instead of a hypothesis. Each result includes a status,
 period, supporting and contradicting Entry IDs, missing-data flags, a Japanese
 fallback explanation, a small next action, and a proposed Self Model statement.
 
-In VS Code, open **Self Understanding**, select the period, template, and
-fields, then analyze confirmed values. Rate a result as `fits`,
+Request a PCS analysis snapshot for the selected period and analyze its
+confirmed fields in MeTheory. Rate a result as `fits`,
 `does_not_fit`, or `on_hold`; a `fits` review creates an editable proposal.
 Only a separate explicit acceptance adds it to Self Model. See
 [`docs/self-understanding-practical-v1.md`](docs/self-understanding-practical-v1.md)

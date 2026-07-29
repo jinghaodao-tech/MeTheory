@@ -40,22 +40,17 @@
     "test:mobile": "npm --workspace apps/mobile run test",
     "typecheck:root": "tsc --project tsconfig.json",
     "typecheck:mobile": "npm --workspace apps/mobile run typecheck",
-    "typecheck:obsidian": "tsc --project apps/obsidian-plugin/tsconfig.json",
-    "typecheck": "npm run typecheck:root && npm run typecheck:mobile && npm run typecheck:obsidian",
-    "build:obsidian": "node apps/obsidian-plugin/esbuild.mjs",
+    "typecheck": "npm run typecheck:root && npm run typecheck:mobile",
     "build:cli": "tsc --project apps/cli/tsconfig.json",
-    "build:vscode": "npm --prefix apps/vscode-extension run build",
-    "typecheck:vscode": "npm --prefix apps/vscode-extension run typecheck",
-    "check": "node --check apps/api/src/server.ts && node --check packages/domain/src/index.ts && node --check apps/obsidian-plugin/main.js && npm run check:openapi && npm run check:encoding",
+    "check": "node --check apps/api/src/server.ts && node --check packages/domain/src/index.ts && npm run check:openapi && npm run check:encoding",
     "typecheck:cli": "tsc --project apps/cli/tsconfig.json",
-    "verify": "npm run typecheck && npm run typecheck:cli && npm run typecheck:vscode && npm run build:obsidian && npm run build:cli && npm run build:vscode && npm run test && npm run test:mobile && npm run test:synthetic && npm run check"
+    "verify": "npm run typecheck && npm run typecheck:cli && npm run build:cli && npm run test && npm run test:mobile && npm run test:synthetic && npm run check"
   },
   "engines": {
     "node": ">=24.0.0"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
-    "esbuild": "^0.28.1",
     "typescript": "^7.0.2"
   }
 }
