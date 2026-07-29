@@ -14,12 +14,17 @@ function Ensure-ReviewLoopStateDirectory {
 function Protect-ReviewLoopMessage {
     param([AllowEmptyString()][string]$Message)
     $safe = $Message
+    # Native PowerShell progress records are serialized as CLIXML when stderr is
+    # redirected. They are not actionable diagnostics and can garble status JSON.
+    $safe = [regex]::Replace($safe, "(?s)\r?\n?#< CLIXML.*$", "")
+    $safe = [regex]::Replace($safe, "(?s)\r?\n?<Objs\b.*$", "")
+    $safe = [regex]::Replace($safe, "[\x00-\x08\x0B\x0C\x0E-\x1F]", "")
     foreach ($name in @("REVIEW_BRIDGE_TOKEN", "GITHUB_TOKEN")) {
         $secret = [Environment]::GetEnvironmentVariable($name)
         if (-not [string]::IsNullOrEmpty($secret)) { $safe = $safe.Replace($secret, "[REDACTED]") }
     }
     $safe = [regex]::Replace($safe, "(?i)authorization\s*:\s*bearer\s+[^\s]+", "Authorization: Bearer [REDACTED]")
-    return $safe.Substring(0, [Math]::Min($safe.Length, 1000))
+    return $safe.Trim().Substring(0, [Math]::Min($safe.Trim().Length, 1000))
 }
 
 function Write-ReviewLoopLog {

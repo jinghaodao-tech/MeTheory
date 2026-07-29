@@ -58,7 +58,8 @@ function Invoke-ChildScript {
         $text = [string]$argument
         if ($text -match '^-[A-Za-z]') { $text } else { ConvertTo-PowerShellLiteral $text }
     }
-    $invocation = "& $(ConvertTo-PowerShellLiteral $ScriptPath) $($encodedArguments -join ' ')"
+    $childPreamble = '$ProgressPreference=''SilentlyContinue''; $InformationPreference=''SilentlyContinue''; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding; '
+    $invocation = "$childPreamble& $(ConvertTo-PowerShellLiteral $ScriptPath) $($encodedArguments -join ' ')"
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($invocation))
     $captureError = $Command -eq "ChatGPT review trigger"
     $processInfo = New-Object System.Diagnostics.ProcessStartInfo
