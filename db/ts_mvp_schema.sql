@@ -291,7 +291,9 @@ CREATE TABLE IF NOT EXISTS external_observations (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   source TEXT NOT NULL CHECK(source IN('activitywatch','manual_import','experiment')),
+  source_bucket_id TEXT,
   source_event_id TEXT,
+  source_identity TEXT,
   observed_at TEXT NOT NULL,
   local_date TEXT,
   duration_seconds REAL,
@@ -307,6 +309,7 @@ CREATE TABLE IF NOT EXISTS external_observations (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS external_observations_user_time_idx ON external_observations(user_id, observed_at);
 CREATE UNIQUE INDEX IF NOT EXISTS external_observations_fingerprint_idx ON external_observations(user_id, source, id);
+CREATE UNIQUE INDEX IF NOT EXISTS external_observations_source_identity_idx ON external_observations(user_id, source, source_identity) WHERE source_identity IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS baseline_self_perceptions (
   id TEXT PRIMARY KEY,

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { ActivityWatchAdapter, normalizeActivityWatchEvent, summarizeActivityWatchDaily } from "../packages/domain/src/activitywatch.ts";
+import { ActivityWatchAdapter, activityWatchObservationIdentity, localDateInTimeZone, normalizeActivityWatchEvent, summarizeActivityWatchDaily } from "../packages/domain/src/activitywatch.ts";
+import { isAllowedCandidatePair } from "../packages/domain/src/hypothesis/candidates.ts";
 import { createBaselineResponse, baselineItems } from "../packages/self-understanding/src/baseline.ts";
 import { validateQuestionQuality } from "../packages/self-understanding/src/questionQuality.ts";
 import { buildFixedChartModel } from "../packages/self-understanding/src/visualization.ts";
@@ -42,15 +43,29 @@ test("ActivityWatch adapter is localhost-only and discards AFK and raw private f
   const heartbeat = normalizeActivityWatchEvent("aw-watcher-window", { id: 1, timestamp: "2026-07-28T10:00:00.000Z", duration: 10, data: { app: "Code.exe" } });
   const updatedHeartbeat = normalizeActivityWatchEvent("aw-watcher-window", { id: 1, timestamp: "2026-07-28T10:00:00.000Z", duration: 20, data: { app: "Code.exe" } });
   assert.equal(heartbeat?.sourceEventId, "1");
-  assert.notEqual(heartbeat?.id, updatedHeartbeat?.id);
+  assert.equal(heartbeat?.id, updatedHeartbeat?.id);
+  assert.equal(heartbeat?.sourceIdentity, updatedHeartbeat?.sourceIdentity);
+  assert.equal(activityWatchObservationIdentity("bucket", "event-1"), activityWatchObservationIdentity("bucket", "event-1"));
   assert.equal(normalizeActivityWatchEvent("aw-watcher-afk", { timestamp: "2026-07-28T10:00:00.000Z", duration: 30, data: { status: "afk" } }), null);
   const summary = summarizeActivityWatchDaily([observation!]);
   assert.deepEqual(summary[0] && { date: summary[0].localDate, coding: summary[0].codingDurationSeconds, sessions: summary[0].sessionCount }, { date: "2026-07-28", coding: 120, sessions: 1 });
+  assert.equal(localDateInTimeZone("2026-07-27T15:30:00.000Z", "Asia/Tokyo"), "2026-07-28");
+  assert.equal(localDateInTimeZone("2026-07-27T15:30:00.000Z", "UTC"), "2026-07-27");
+  assert.throws(() => localDateInTimeZone("2026-07-27T15:30:00.000Z", "Not/AZone"), /timezone_invalid/);
   const adapter = new ActivityWatchAdapter({ fetchImpl: async (url) => new Response(url.endsWith("/api/0/buckets") ? JSON.stringify({ "aw-watcher-window": { type: "window" } }) : JSON.stringify({ hostname: "local" }), { status: 200, headers: { "content-type": "application/json" } }) });
   assert.equal((await adapter.status()).running, true);
   assert.equal((await adapter.buckets())[0].id, "aw-watcher-window");
   const uiResponseAdapter = new ActivityWatchAdapter({ fetchImpl: async () => new Response("<html></html>", { status: 200, headers: { "content-type": "text/html" } }) });
   assert.equal((await uiResponseAdapter.status()).running, false);
+});
+
+test("ActivityWatch values can only form allowlisted candidate pairs", () => {
+  const activity = { id: "activity", sourceKind: "activitywatch" as const, semanticRole: "observed_behavior", nameJa: "activity", valueType: "number", usableAsCondition: false, usableAsOutcome: true };
+  const selfRating = { id: "rating", sourceKind: "entry" as const, semanticRole: "self_rating", nameJa: "rating", valueType: "number", usableAsCondition: true, usableAsOutcome: true };
+  const activityCondition = { ...activity, id: "activity-time", semanticRole: "time_of_day", usableAsCondition: true, usableAsOutcome: false };
+  assert.equal(isAllowedCandidatePair(selfRating, activity), true);
+  assert.equal(isAllowedCandidatePair(activity, { ...activity, id: "activity-2" }), false);
+  assert.equal(isAllowedCandidatePair(activityCondition, selfRating), true);
 });
 
 test("baseline self-perception uses an independent version and explicit validation", () => {

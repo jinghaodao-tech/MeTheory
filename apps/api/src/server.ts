@@ -23,7 +23,8 @@ import {
   validateSelfModelStatement,
   type UnderstandingRecord,
   baselineItems,
-  createBaselineResponse
+  createBaselineResponse,
+  IPIP_BASELINE_ITEM_SET_VERSION
 } from "../../../packages/self-understanding/src/index.ts";
 import { ActivityWatchAdapter, summarizeActivityWatchDaily } from "../../../packages/domain/src/activitywatch.ts";
 
@@ -114,6 +115,10 @@ ensureColumn("self_understanding_analysis_history", "source_entry_ids_json", "TE
 ensureColumn("self_understanding_analysis_history", "source_entry_fingerprint", "TEXT NOT NULL DEFAULT ''");
 ensureColumn("external_observations", "review_state", "TEXT NOT NULL DEFAULT 'imported'");
 ensureColumn("external_observations", "local_date", "TEXT");
+ensureColumn("external_observations", "source_bucket_id", "TEXT");
+ensureColumn("external_observations", "source_identity", "TEXT");
+db.exec("UPDATE external_observations SET source_identity=id WHERE source_identity IS NULL OR source_identity='' ");
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS external_observations_source_identity_idx ON external_observations(user_id, source, source_identity) WHERE source_identity IS NOT NULL");
 
 function migrateBaselineSelfPerceptionSource(): void {
   const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='baseline_self_perceptions'").get() as { sql?: string } | undefined;
@@ -159,6 +164,21 @@ function migrateBaselineSelfPerceptionSource(): void {
 }
 
 migrateBaselineSelfPerceptionSource();
+function normalizeBaselineProvenance(): void {
+  const rows = db.prepare("SELECT id,provenance_json FROM baseline_self_perceptions WHERE provenance_json LIKE '%ipip%'").all() as Array<{ id: string; provenance_json: string }>;
+  const update = db.prepare("UPDATE baseline_self_perceptions SET provenance_json=? WHERE id=?");
+  for (const row of rows) {
+    try {
+      const provenance = JSON.parse(row.provenance_json) as Record<string, unknown>;
+      if (provenance.source !== "ipip") continue;
+      provenance.source = "baseline_self_perception";
+      update.run(JSON.stringify(provenance), row.id);
+    } catch {
+      // Keep malformed historical provenance intact instead of guessing its shape.
+    }
+  }
+}
+normalizeBaselineProvenance();
 db.exec("CREATE TABLE IF NOT EXISTS ai_http_access_audit_logs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, client_id TEXT NOT NULL, client_type TEXT NOT NULL, purpose TEXT NOT NULL, requested_parameter_ids_json TEXT NOT NULL, allowed_parameter_ids_json TEXT NOT NULL, denied_parameter_ids_json TEXT NOT NULL, requested_start_at TEXT, requested_end_at TEXT, returned_record_count INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, created_at TEXT NOT NULL)");
 
 const now = () => new Date().toISOString();
@@ -527,14 +547,21 @@ const server = createServer(async (request, response) => {
         const startAt = optionalString(input.startAt) ?? "";
         const endAt = optionalString(input.endAt) ?? "";
         if (!bucketIds.length || !startAt || !endAt || Date.parse(startAt) >= Date.parse(endAt)) return json(response, 400, { error: "activitywatch_period_invalid" });
-        const observations = await adapter.preview(bucketIds, startAt, endAt);
+        const userId = optionalString(input.userId) ?? "";
+        const timezoneRow = userId ? db.prepare("SELECT timezone FROM users WHERE id=?").get(userId) as { timezone?: string } | undefined : undefined;
+        const timezone = timezoneRow?.timezone || "UTC";
+        let observations;
+        try {
+          observations = await adapter.preview(bucketIds, startAt, endAt, timezone);
+        } catch (error) {
+          return json(response, 400, { error: error instanceof Error ? error.message : "activitywatch_preview_invalid" });
+        }
         if (parts[2] === "preview") return json(response, 200, { source: "activitywatch", startAt, endAt, count: observations.length, items: observations, dailySummaries: summarizeActivityWatchDaily(observations) });
         if (input.confirm !== true) return json(response, 400, { error: "activitywatch_import_confirmation_required" });
-        const userId = optionalString(input.userId) ?? "";
         if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
         let imported = 0;
         for (const observation of observations) {
-          const result = db.prepare("INSERT OR IGNORE INTO external_observations(id,user_id,source,source_event_id,observed_at,local_date,duration_seconds,semantic_role,category,project_label,privacy_level,imported_at,user_confirmed,review_state,original_reference,transform_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(observation.id, userId, observation.source, observation.sourceEventId ?? null, observation.observedAt, observation.localDate, observation.durationSeconds ?? null, observation.semanticRole, observation.category, observation.projectLabel ?? null, observation.privacyLevel, observation.importedAt, 0, "imported", observation.sourceEventId ?? null, "activitywatch-v1");
+          const result = db.prepare("INSERT INTO external_observations(id,user_id,source,source_bucket_id,source_event_id,source_identity,observed_at,local_date,duration_seconds,semantic_role,category,project_label,privacy_level,imported_at,user_confirmed,review_state,original_reference,transform_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,source,source_identity) WHERE source_identity IS NOT NULL DO UPDATE SET observed_at=excluded.observed_at,local_date=excluded.local_date,duration_seconds=excluded.duration_seconds,semantic_role=excluded.semantic_role,category=excluded.category,project_label=excluded.project_label,privacy_level=excluded.privacy_level,imported_at=excluded.imported_at,original_reference=excluded.original_reference,transform_version=excluded.transform_version").run(observation.id, userId, observation.source, observation.sourceBucketId, observation.sourceEventId ?? null, observation.sourceIdentity, observation.observedAt, observation.localDate, observation.durationSeconds ?? null, observation.semanticRole, observation.category, observation.projectLabel ?? null, observation.privacyLevel, observation.importedAt, 0, "imported", observation.sourceEventId ?? null, "activitywatch-v2");
           imported += Number(result.changes ?? 0);
         }
         return json(response, 201, { source: "activitywatch", count: observations.length, imported, skipped: observations.length - imported, reviewState: "imported" });
@@ -553,7 +580,7 @@ const server = createServer(async (request, response) => {
       }
     }
     if (parts[0] === "v1" && parts[1] === "self-understanding" && parts[2] === "baseline") {
-      if (request.method === "GET" && parts.length === 3) return json(response, 200, { itemSetVersion: "ipip-paraphrase-ja-v1", items: baselineItems() });
+      if (request.method === "GET" && parts.length === 3) return json(response, 200, { itemSetVersion: IPIP_BASELINE_ITEM_SET_VERSION, items: baselineItems() });
       const input = request.method === "POST" ? await body(request) : {};
       const userId = request.method === "GET" ? requestUrl.searchParams.get("userId") ?? "" : optionalString(input.userId) ?? "";
       const resolvedUserId = request.method === "DELETE" ? requestUrl.searchParams.get("userId") ?? "" : userId;
