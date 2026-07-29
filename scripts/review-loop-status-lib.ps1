@@ -53,7 +53,20 @@ function Write-ReviewLoopLog {
 function Get-ReviewLoopStatus {
     for ($attempt = 0; $attempt -lt 3; $attempt++) {
         if (Test-Path -LiteralPath $script:ReviewLoopStatusPath) {
-            try { return Get-Content -LiteralPath $script:ReviewLoopStatusPath -Raw | ConvertFrom-Json } catch { }
+            try {
+                $status = Get-Content -LiteralPath $script:ReviewLoopStatusPath -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop
+                if ($status.lastError) { $status.lastError = Protect-ReviewLoopMessage ([string]$status.lastError) }
+                if ($status.nextAction) { $status.nextAction = Protect-ReviewLoopMessage ([string]$status.nextAction) }
+                return $status
+            } catch {
+                return [pscustomobject]@{
+                    schemaVersion = 1; running = $false; controllerPid = $null; repository = $null; prNumber = $null
+                    bridgeUrl = $null; branch = $null; headSha = $null; reviewScope = $null; reviewCycle = $null
+                    stage = "failed"; stageStartedAt = $null; lastHeartbeatAt = $null; childPid = $null; childCommand = $null
+                    automaticPushEnabled = $false; nextAction = "Remove the invalid status file and restart the watcher."
+                    lastError = "Review loop status could not be read as UTF-8 JSON."
+                }
+            }
         }
         Start-Sleep -Milliseconds 50
     }
@@ -103,7 +116,7 @@ function New-ReviewLoopLock {
     Ensure-ReviewLoopStateDirectory
     if (Test-Path -LiteralPath $script:ReviewLoopLockPath) {
         try {
-            $existing = Get-Content -LiteralPath $script:ReviewLoopLockPath -Raw | ConvertFrom-Json
+            $existing = Get-Content -LiteralPath $script:ReviewLoopLockPath -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop
             $alive = $false
             if ($existing.pid) { $alive = $null -ne (Get-Process -Id ([int]$existing.pid) -ErrorAction SilentlyContinue) }
             if ($alive) { throw "Review loop is already running with PID $($existing.pid)." }

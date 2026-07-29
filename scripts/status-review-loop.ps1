@@ -50,7 +50,10 @@ if ($status.childPid) {
 Write-Host "Next action: $($status.nextAction)"
 Write-Host "Automatic push: $(if ($status.automaticPushEnabled) { 'enabled' } else { 'disabled' })"
 Write-Host "Review Bridge: $bridgeState"
-if ($status.lastError) { Write-Host "Last error: $($status.lastError)" }
+if ($status.lastError) {
+    $lastError = (Protect-ReviewLoopMessage ([string]$status.lastError)) -replace "\r?\n", " "
+    Write-Host "Last error: $lastError"
+}
 
 if ($stale) {
     Write-Host "Reason: status is running but the controller process or heartbeat is stale."
