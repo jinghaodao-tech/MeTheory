@@ -4,21 +4,21 @@ This document is the current product specification for the local-first MeTheory 
 
 ## Purpose
 
-MeTheory turns natural-language Markdown records into user-reviewed structured values, evidence-backed self-understanding hypotheses, and an editable personal operating manual. It is a private local information foundation, not a diagnostic system.
+MeTheory analyzes user-confirmed structured records from Personal Context Studio, produces evidence-backed self-understanding hypotheses, and maintains an editable personal operating manual. It is a private local analysis foundation, not a diagnostic system.
 
 ## Initial practical version
 
-The first practical version is complete when a user can create a note from a theme without waiting for AI, attach or create a template, structure only that tracked note after saving, review uncertain field values, analyze one to four weeks of structured records, inspect supporting and contradicting records, rate a hypothesis as fits/does not fit/on hold, and review a proposed Self Model change before accepting it. The flow must remain usable with no cloud AI and must preserve Markdown when local AI is unavailable.
+The first practical version is complete when a user can record and review context in Personal Context Studio, analyze one to four weeks of confirmed records in MeTheory, inspect supporting and contradicting records, rate a hypothesis as fits/does not fit/on hold, and review a proposed Self Model change before accepting it. The flow must remain usable with no cloud AI and must preserve Markdown when local AI is unavailable.
 
 ## Local-first policy
 
-Markdown is the human-readable source for free records. SQLite is the local operational store for Entries, templates, structured field values, experiment observations, hypotheses, evidence, consent, and derived search indexes. No cloud sync is required. External AI is optional and must be approved per template field, provider, and destination host. Secrets are rejected rather than stored.
+Personal Context Studio owns Markdown and its local SQLite store for documents, templates, structured field values, review state, and search. MeTheory owns its separate local SQLite store for experiment observations, hypotheses, evidence, consent, and Self Model changes. The two services exchange versioned localhost JSON only; no cloud sync is required.
 
 ## Responsibility boundaries
 
-- **Markdown / VS Code / Cursor / Obsidian:** writing, editing, and the human-readable record.
-- **Entry:** a reference to a free record, with recorded time kept separate from source update time.
-- **SQLite:** templates, extracted values, review state, experiments, hypotheses, evidence, privacy decisions, and rebuildable indexes.
+- **Personal Context Studio / Markdown / VS Code / Cursor / Obsidian:** writing, editing, local search, templates, local-AI candidates, and the human-readable record.
+- **PCS analysis snapshot:** reviewed, shareable structured values and source references, without Markdown bodies.
+- **MeTheory SQLite:** experiments, hypotheses, evidence, privacy decisions, and Self Model changes.
 - **Experiment data:** explicit observations and parameter values used for evaluation. An Entry is never implicitly converted into an experiment observation.
 - **CLI:** scriptable local operations, with human-readable output by default and stable JSON only with `--json`.
 
@@ -28,7 +28,7 @@ AI may suggest templates, titles, structured values, wording for questions, and 
 
 ## Supported clients
 
-VS Code and Cursor are the primary desktop workflow. The CLI provides workspace, sync, template, extraction, privacy, backup, and local AI operations. Obsidian is supported as a Markdown Entry source. The mobile app remains a compatible local experiment client; it is not the primary free-record authoring workflow.
+Personal Context Studio provides the VS Code, Cursor, Obsidian, local search, template, and local-AI workflow. MeTheory provides the experiment and analysis workflow. The mobile app remains a compatible local experiment client; it is not the primary free-record authoring workflow.
 
 ## Implemented now
 

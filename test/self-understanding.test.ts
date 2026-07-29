@@ -17,6 +17,7 @@ import {
   validateInterpretation,
   type SelfUnderstandingInterpretationInput
 } from "../packages/self-understanding/src/index.ts";
+import { analyzePersonalContextSnapshot } from "../packages/self-understanding/src/personalContext.ts";
 
 const parameters = [
   {
@@ -325,6 +326,27 @@ test("review history infers a unique template version from its period and field 
     database.close();
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("Personal Context Studio snapshots are analyzed without copying records into MeTheory", () => {
+  const records = Array.from({ length: 8 }, (_, index) => {
+    const clear = index % 2 === 0;
+    return {
+      id: `pcs_entry_${index}`,
+      recordedAt: `2026-07-${String(index + 1).padStart(2, "0")}T12:00:00.000Z`,
+      title: "Daily note",
+      sourceDocumentId: `doc_${index}`,
+      values: [
+        { fieldKey: "task_clarity", label: "Task clarity", valueType: "single_choice", value: clear ? "clear" : "unclear", templateId: "pcs_daily", sourceDocumentId: `doc_${index}`, allowedValues: [{ key: "clear", label: "Clear" }, { key: "unclear", label: "Unclear" }] },
+        { fieldKey: "start_delay", label: "Start delay", valueType: "number", value: clear ? 10 : 60, templateId: "pcs_daily", sourceDocumentId: `doc_${index}` }
+      ]
+    };
+  });
+  const result = analyzePersonalContextSnapshot({ schemaVersion: "pcs-analysis-snapshot-v1", generatedAt: "2026-07-10T00:00:00.000Z", records, excluded: { unconfirmed: 2, nonShareable: 1, invalid: 0 } }, { startAt: "2026-07-01T00:00:00.000Z", endAt: "2026-07-10T00:00:00.000Z" });
+  assert.equal(result.source, "personal_context_studio");
+  assert.equal(result.entryCount, 8);
+  assert.ok(result.hypotheses.length >= 1);
+  assert.equal(result.hypotheses[0].supportingEntryIds.every((id) => id.startsWith("pcs_entry_")), true);
 });
 
 test("semantic role pairs map only through deterministic non-clinical construct rules", () => {
