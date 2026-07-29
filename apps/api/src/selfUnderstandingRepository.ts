@@ -281,7 +281,7 @@ export class SqliteSelfUnderstandingRepository {
       return {
         status: "insufficient",
         statusLabelJa: "データ不足",
-        period: { startAt, endAt },
+        period: { startAt, endAt, timezone },
         filters,
         entryCount,
         minimumEntryCount,
@@ -402,11 +402,20 @@ export class SqliteSelfUnderstandingRepository {
         id: String(row.id),
         recordedAt: String(row.recorded_at),
         title: String(row.title),
+        kind: "entry" as const,
+        localDate: localDateInTimeZone(String(row.recorded_at), timezone),
+        sourceEntryIds: [String(row.id)],
+        sourceObservationIds: [],
+        provenanceByParameterId: {},
         conditionValues: {},
         outcomeValues: {}
       };
       record.conditionValues[parameterId] = value;
       record.outcomeValues[parameterId] = value;
+      record.provenanceByParameterId![parameterId] = {
+        source: "user_entry",
+        labelJa: "記録"
+      };
       records.set(String(row.id), record);
     }
 
@@ -415,7 +424,7 @@ export class SqliteSelfUnderstandingRepository {
       const reviewedActivityRows = this.db.prepare("SELECT id,observed_at,local_date,duration_seconds,category,semantic_role FROM external_observations WHERE user_id=? AND source='activitywatch' AND user_confirmed=1 AND review_state='reviewed' AND observed_at>=? AND observed_at<=? ORDER BY observed_at,id").all(userId, startAt, endAt) as ReviewedActivityWatchRow[];
       const activityByDate = new Map<string, ActivitySummary>();
       for (const row of reviewedActivityRows) {
-        const date = row.local_date ?? localDateInTimeZone(row.observed_at, timezone);
+        const date = localDateInTimeZone(row.observed_at, timezone);
         const localTime = new Intl.DateTimeFormat("en-US", { timeZone: timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(row.observed_at));
         const firstMinute = Number(localTime.find((part) => part.type === "hour")?.value ?? 0) * 60 + Number(localTime.find((part) => part.type === "minute")?.value ?? 0);
         const summary = activityByDate.get(date) ?? { active: 0, coding: 0, writing: 0, browser: 0, communication: 0, sessions: 0, longest: 0, firstMinute, firstObservedAt: row.observed_at, sourceIds: [] };
@@ -439,28 +448,30 @@ export class SqliteSelfUnderstandingRepository {
         ["activitywatch_first_activity_minute", "ActivityWatch first activity time", "time_of_day", "minute_of_day", "activitywatch-v2:first_activity_minute", true, (summary) => summary.firstMinute]
       ];
       const dailyRoles = new Set(["mood", "energy", "fatigue", "self_rating", "task_clarity", "satisfaction", "completion", "start_delay"]);
-      const subjectiveByDate = new Map<string, Map<string, { value: unknown; observedAt: string } | null>>();
+      const subjectiveByDate = new Map<string, Map<string, { value: unknown; observedAt: string; entryIds: string[] } | null>>();
       for (const record of records.values()) {
         const date = localDateInTimeZone(record.recordedAt, timezone);
         const values = subjectiveByDate.get(date) ?? new Map();
         for (const [parameterId, value] of Object.entries(record.conditionValues)) {
           const definition = definitions.get(parameterId);
           if (!definition?.semanticRole || !dailyRoles.has(definition.semanticRole)) continue;
-          values.set(parameterId, values.has(parameterId) ? null : { value, observedAt: record.recordedAt });
+          values.set(parameterId, values.has(parameterId) ? null : { value, observedAt: record.recordedAt, entryIds: record.sourceEntryIds ?? [] });
         }
         subjectiveByDate.set(date, values);
       }
       for (const [date, summary] of activityByDate) {
         const activityId = `activity_day:${userId}:${date}`;
-        const activityRecord: UnderstandingRecord = { id: activityId, recordedAt: summary.firstObservedAt, title: `ActivityWatch ${date}`, conditionValues: {}, outcomeValues: {} };
+        const activityRecord: UnderstandingRecord = { id: activityId, recordedAt: summary.firstObservedAt, title: `ActivityWatch ${date}`, kind: "activity_day", localDate: date, sourceEntryIds: [], sourceObservationIds: summary.sourceIds, provenanceByParameterId: {}, conditionValues: {}, outcomeValues: {} };
         const joinId = `daily_join:${userId}:${date}`;
-        const joinRecord: UnderstandingRecord = { id: joinId, recordedAt: summary.firstObservedAt, title: `Daily comparison ${date}`, conditionValues: {}, outcomeValues: {} };
+        const joinRecord: UnderstandingRecord = { id: joinId, recordedAt: summary.firstObservedAt, title: `Daily comparison ${date}`, kind: "daily_join", localDate: date, sourceEntryIds: [], sourceObservationIds: summary.sourceIds, provenanceByParameterId: {}, conditionValues: {}, outcomeValues: {} };
         for (const [parameterId, nameJa, semanticRole, unit, fingerprint, usableAsCondition, valueFor] of activityMetrics) {
           if (!definitions.has(parameterId)) definitions.set(parameterId, { id: parameterId, fieldKey: parameterId, semanticRole, sensitivity: "normal", semanticMergeAllowed: false, sourceKind: "activitywatch", unit, scaleFingerprint: fingerprint, nameJa, valueType: "number", minimumValue: 0, usableAsCondition, usableAsOutcome: !usableAsCondition, allowedConditionRoles: ["self_rating", "mood", "energy", "fatigue", "task_clarity", "time_of_day", "day_type"] });
           const value = valueFor(summary);
           activityRecord.conditionValues[parameterId] = value; activityRecord.outcomeValues[parameterId] = value;
+          activityRecord.provenanceByParameterId![parameterId] = { source: "activitywatch", labelJa: "ActivityWatch", observationIds: summary.sourceIds };
           observations.push({ episodeId: activityId, episodeKind: "activity_day", parameterId, value, isMissing: false, observedAt: summary.firstObservedAt });
           joinRecord.conditionValues[parameterId] = value; joinRecord.outcomeValues[parameterId] = value;
+          joinRecord.provenanceByParameterId![parameterId] = { source: "activitywatch", labelJa: "ActivityWatch", observationIds: summary.sourceIds };
           observations.push({ episodeId: joinId, episodeKind: "daily_join", parameterId, value, isMissing: false, observedAt: summary.firstObservedAt });
         }
         records.set(activityId, activityRecord);
@@ -470,6 +481,8 @@ export class SqliteSelfUnderstandingRepository {
         for (const [parameterId, item] of subjectives) {
           if (!item) continue;
           joinRecord.conditionValues[parameterId] = item.value; joinRecord.outcomeValues[parameterId] = item.value;
+          joinRecord.sourceEntryIds = [...new Set([...(joinRecord.sourceEntryIds ?? []), ...item.entryIds])];
+          joinRecord.provenanceByParameterId![parameterId] = { source: "user_entry", labelJa: "記録" };
           observations.push({ episodeId: joinId, episodeKind: "daily_join", parameterId, value: item.value, isMissing: item.value === null, observedAt: item.observedAt });
           joined = true;
         }
@@ -489,8 +502,14 @@ export class SqliteSelfUnderstandingRepository {
       ? this.db.prepare("SELECT item_key,response,recorded_at FROM baseline_self_perceptions WHERE user_id=? AND deleted_at IS NULL AND user_confirmed=1 AND use_for_self_understanding=1").all(userId) as Array<{ item_key: string; response: number; recorded_at: string }>
       : [];
     const hypothesesWithBaseline = hypotheses.map((hypothesis) => {
-      const mapping = BASELINE_ITEM_MAPPINGS.find((item) => item.construct === hypothesis.construct && item.comparisonRoles.includes(hypothesis.interpretationInput.outcome.semanticRole));
-      const response = mapping ? baselineRows.find((row) => row.item_key === mapping.itemKey) : undefined;
+      const baselineComparisons = BASELINE_ITEM_MAPPINGS
+        .filter((item) => item.construct === hypothesis.construct && item.comparisonRoles.includes(hypothesis.interpretationInput.outcome.semanticRole))
+        .sort((left, right) => left.priority - right.priority)
+        .flatMap((mapping) => {
+          const response = baselineRows.find((row) => row.item_key === mapping.itemKey);
+          return response ? [{ source: "baseline_self_perception" as const, itemKey: mapping.itemKey, response: response.response, recordedAt: response.recorded_at, direction: mapping.direction, message: `${mapping.comparisonMeaningJa}。日々の観測値とは平均せず、並べて表示します。` }] : [];
+        })
+        .slice(0, 2);
       const groupA = hypothesis.candidate.cohortA.metricValue;
       const groupB = hypothesis.candidate.cohortB.metricValue;
       const maximum = Math.max(groupA, groupB, 1);
@@ -502,8 +521,8 @@ export class SqliteSelfUnderstandingRepository {
         series: [{ key: "cohorts", label: hypothesis.interpretationInput.outcome.label, points: [{ recordedAt: hypothesis.interpretationInput.condition.groupA, value: groupA }, { recordedAt: hypothesis.interpretationInput.condition.groupB, value: groupB }] }],
         notes: ["This chart is descriptive and does not show causation."]
       });
-      if (!mapping || !response) return { ...hypothesis, charts: [chart] };
-      return { ...hypothesis, charts: [chart], baselineComparison: { source: "baseline_self_perception", itemKey: mapping.itemKey, response: response.response, recordedAt: response.recorded_at, direction: mapping.direction, message: "This is a general self-perception and is shown alongside, not averaged with, daily observations." } };
+      if (!baselineComparisons.length) return { ...hypothesis, charts: [chart] };
+      return { ...hypothesis, charts: [chart], baselineComparison: baselineComparisons[0], baselineComparisons };
     });
     const createdAt = new Date().toISOString();
     const save = this.db.prepare(
@@ -512,8 +531,8 @@ export class SqliteSelfUnderstandingRepository {
         relation,period_start_at,period_end_at,complete_pair_count,
         condition_template_id,condition_template_version_id,condition_field_key,condition_scale_fingerprint,
         outcome_template_id,outcome_template_version_id,outcome_field_key,outcome_scale_fingerprint,
-        source_entry_ids_json,source_entry_fingerprint,candidate_snapshot_json,created_at
-      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        source_entry_ids_json,source_entry_fingerprint,evidence_provenance_json,candidate_snapshot_json,created_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(user_id,candidate_id,period_start_at,period_end_at)
       DO UPDATE SET
         construct_key=excluded.construct_key,
@@ -531,6 +550,7 @@ export class SqliteSelfUnderstandingRepository {
         outcome_scale_fingerprint=excluded.outcome_scale_fingerprint,
         source_entry_ids_json=excluded.source_entry_ids_json,
         source_entry_fingerprint=excluded.source_entry_fingerprint,
+        evidence_provenance_json=excluded.evidence_provenance_json,
         candidate_snapshot_json=excluded.candidate_snapshot_json`
     );
     this.db.exec("BEGIN IMMEDIATE");
@@ -560,6 +580,7 @@ export class SqliteSelfUnderstandingRepository {
           outcomeParameter?.scaleFingerprint ?? null,
           JSON.stringify(sourceEntryIds),
           entryFingerprint(sourceEntryIds),
+          JSON.stringify({ supporting: hypothesis.supportingEvidence, contradicting: hypothesis.contradictingEvidence }),
           JSON.stringify(hypothesis),
           createdAt
         );
@@ -575,7 +596,7 @@ export class SqliteSelfUnderstandingRepository {
       statusLabelJa: hypothesesWithBaseline.length
         ? "分析候補あり"
         : "比較可能な差が不足",
-      period: { startAt, endAt },
+      period: { startAt, endAt, timezone },
       filters,
       entryCount,
       minimumEntryCount,

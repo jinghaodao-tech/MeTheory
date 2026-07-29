@@ -30,6 +30,7 @@
     "test:review-trigger": "npm --prefix review-trigger test",
     "test:ai-service": "node --experimental-strip-types --test test/ai-query-service.test.ts",
     "check:openapi": "node --experimental-strip-types tools/validate-openapi.ts",
+    "check:encoding": "node scripts/check-encoding.mjs",
     "benchmark:small": "node --experimental-strip-types tools/benchmark-sqlite.ts small",
     "benchmark:medium": "node --experimental-strip-types tools/benchmark-sqlite.ts medium",
     "benchmark:large": "node --experimental-strip-types tools/benchmark-sqlite.ts large",
@@ -47,7 +48,7 @@
     "build:cli": "tsc --project apps/cli/tsconfig.json",
     "build:vscode": "npm --prefix apps/vscode-extension run build",
     "typecheck:vscode": "npm --prefix apps/vscode-extension run typecheck",
-    "check": "node --check apps/api/src/server.ts && node --check packages/domain/src/index.ts && node --check apps/obsidian-plugin/main.js && npm run check:openapi",
+    "check": "node --check apps/api/src/server.ts && node --check packages/domain/src/index.ts && node --check apps/obsidian-plugin/main.js && npm run check:openapi && npm run check:encoding",
     "typecheck:cli": "tsc --project apps/cli/tsconfig.json",
     "verify": "npm run typecheck && npm run typecheck:cli && npm run typecheck:vscode && npm run build:obsidian && npm run build:cli && npm run build:vscode && npm run test && npm run test:mobile && npm run test:synthetic && npm run check"
   },

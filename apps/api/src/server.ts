@@ -26,7 +26,7 @@ import {
   createBaselineResponse,
   IPIP_BASELINE_ITEM_SET_VERSION
 } from "../../../packages/self-understanding/src/index.ts";
-import { ActivityWatchAdapter, summarizeActivityWatchDaily } from "../../../packages/domain/src/activitywatch.ts";
+import { ActivityWatchAdapter, activityWatchObservationIdentity, summarizeActivityWatchDaily } from "../../../packages/domain/src/activitywatch.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.METHEORY_DB ?? resolve(root, "data", "metheory.sqlite3");
@@ -113,11 +113,112 @@ ensureColumn("self_understanding_analysis_history", "outcome_field_key", "TEXT")
 ensureColumn("self_understanding_analysis_history", "outcome_scale_fingerprint", "TEXT");
 ensureColumn("self_understanding_analysis_history", "source_entry_ids_json", "TEXT NOT NULL DEFAULT '[]'");
 ensureColumn("self_understanding_analysis_history", "source_entry_fingerprint", "TEXT NOT NULL DEFAULT ''");
+ensureColumn("self_understanding_analysis_history", "evidence_provenance_json", "TEXT NOT NULL DEFAULT '[]'");
 ensureColumn("external_observations", "review_state", "TEXT NOT NULL DEFAULT 'imported'");
 ensureColumn("external_observations", "local_date", "TEXT");
 ensureColumn("external_observations", "source_bucket_id", "TEXT");
 ensureColumn("external_observations", "source_identity", "TEXT");
-db.exec("UPDATE external_observations SET source_identity=id WHERE source_identity IS NULL OR source_identity='' ");
+
+type LegacyActivityWatchObservation = {
+  id: string;
+  user_id: string;
+  source_bucket_id: string | null;
+  source_event_id: string | null;
+  source_identity: string | null;
+  observed_at: string;
+  local_date: string | null;
+  duration_seconds: number | null;
+  semantic_role: string;
+  category: string;
+  project_label: string | null;
+  privacy_level: string;
+  imported_at: string;
+  user_confirmed: number;
+  review_state: string;
+  original_reference: string | null;
+  transform_version: string | null;
+};
+
+function activityWatchReviewRank(reviewState: string): number {
+  if (reviewState === "reviewed") return 2;
+  if (reviewState === "excluded") return 1;
+  return 0;
+}
+
+function migrateActivityWatchSourceIdentities(): void {
+  const rows = db
+    .prepare(
+      `SELECT id,user_id,source_bucket_id,source_event_id,source_identity,
+        observed_at,local_date,duration_seconds,semantic_role,category,project_label,
+        privacy_level,imported_at,user_confirmed,review_state,original_reference,transform_version
+       FROM external_observations WHERE source='activitywatch'`
+    )
+    .all() as LegacyActivityWatchObservation[];
+  if (!rows.length) return;
+
+  const groups = new Map<string, LegacyActivityWatchObservation[]>();
+  const legacyRows: LegacyActivityWatchObservation[] = [];
+  for (const row of rows) {
+    if (!row.source_bucket_id || !row.source_event_id) {
+      legacyRows.push(row);
+      continue;
+    }
+    const identity = activityWatchObservationIdentity(row.source_bucket_id, row.source_event_id);
+    const key = `${row.user_id}:${identity}`;
+    groups.set(key, [...(groups.get(key) ?? []), row]);
+  }
+
+  const updateIdentity = db.prepare("UPDATE external_observations SET source_identity=? WHERE id=?");
+  const deleteObservation = db.prepare("DELETE FROM external_observations WHERE id=?");
+  const updateWinner = db.prepare(
+    `UPDATE external_observations SET
+      source_identity=?, observed_at=?, local_date=?, duration_seconds=?, semantic_role=?,
+      category=?, project_label=?, privacy_level=?, imported_at=?, original_reference=?,
+      transform_version=?
+     WHERE id=?`
+  );
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    // Missing bucket/event ids cannot be reconstructed safely. Keep such records distinct.
+    for (const row of legacyRows) updateIdentity.run(`legacy:${row.id}`, row.id);
+    for (const [key, group] of groups) {
+      const [, identity] = key.split(":", 2);
+      const ranked = [...group].sort((left, right) => {
+        const rankDifference = activityWatchReviewRank(right.review_state) - activityWatchReviewRank(left.review_state);
+        if (rankDifference) return rankDifference;
+        const importedDifference = String(right.imported_at).localeCompare(String(left.imported_at));
+        return importedDifference || left.id.localeCompare(right.id);
+      });
+      const winner = ranked[0];
+      const freshest = [...group].sort((left, right) => {
+        const importedDifference = String(right.imported_at).localeCompare(String(left.imported_at));
+        return importedDifference || left.id.localeCompare(right.id);
+      })[0];
+      for (const duplicate of ranked.slice(1)) deleteObservation.run(duplicate.id);
+      updateWinner.run(
+        identity,
+        freshest.observed_at,
+        freshest.local_date,
+        freshest.duration_seconds,
+        freshest.semantic_role,
+        freshest.category,
+        freshest.project_label,
+        freshest.privacy_level,
+        freshest.imported_at,
+        freshest.original_reference,
+        freshest.transform_version,
+        winner.id
+      );
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+migrateActivityWatchSourceIdentities();
 db.exec("CREATE UNIQUE INDEX IF NOT EXISTS external_observations_source_identity_idx ON external_observations(user_id, source, source_identity) WHERE source_identity IS NOT NULL");
 
 function migrateBaselineSelfPerceptionSource(): void {
@@ -206,7 +307,12 @@ async function analyzeSelfUnderstandingWithInterpretation(
               (providerName === "ollama"
                 ? "http://127.0.0.1:11434/v1"
                 : "http://127.0.0.1:1234/v1"),
-            model: process.env.SELF_UNDERSTANDING_AI_MODEL ?? "llama3.2"
+            model: process.env.SELF_UNDERSTANDING_AI_MODEL ?? "llama3.2",
+            structuredOutputCapability:
+              process.env.SELF_UNDERSTANDING_AI_STRUCTURED_OUTPUT === "json_object" ||
+              process.env.SELF_UNDERSTANDING_AI_STRUCTURED_OUTPUT === "prompt_only"
+                ? process.env.SELF_UNDERSTANDING_AI_STRUCTURED_OUTPUT
+                : "json_schema"
           })
         : undefined;
   } catch {

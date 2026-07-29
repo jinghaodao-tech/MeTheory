@@ -44,8 +44,33 @@ export type UnderstandingRecord = {
   id: string;
   recordedAt: string;
   title: string;
+  kind?: "entry" | "activity_day" | "daily_join" | "linked_period";
+  localDate?: string;
+  sourceEntryIds?: string[];
+  sourceObservationIds?: string[];
+  provenanceByParameterId?: Record<
+    string,
+    {
+      source: "user_entry" | "activitywatch" | "baseline_self_perception";
+      labelJa: string;
+      observationIds?: string[];
+    }
+  >;
   conditionValues: Record<string, unknown>;
   outcomeValues: Record<string, unknown>;
+};
+export type EvidenceView = {
+  episodeId: string;
+  kind: NonNullable<UnderstandingRecord["kind"]>;
+  localDate: string;
+  direction: "supports" | "contradicts";
+  entryIds: string[];
+  activityWatchObservationIds: string[];
+  sources: Array<{
+    source: "user_entry" | "activitywatch" | "baseline_self_perception";
+    labelJa: string;
+    count: number;
+  }>;
 };
 export type SelfUnderstandingStatus =
   | "insufficient"
@@ -188,6 +213,8 @@ export type SelfUnderstandingHypothesis = {
   templateIds: string[];
   supportingEntryIds: string[];
   contradictingEntryIds: string[];
+  supportingEvidence: EvidenceView[];
+  contradictingEvidence: EvidenceView[];
   dataShortage: string[];
   alternativeExplanations: string[];
   mergedCandidateIds: string[];
@@ -221,6 +248,8 @@ export type SelfUnderstandingHypothesisView = {
   statistics: SelfUnderstandingInterpretationInputV2["statistics"];
   supportingEntries: EntryReference[];
   contradictingEntries: EntryReference[];
+  supportingEvidence: EvidenceView[];
+  contradictingEvidence: EvidenceView[];
   explanations: { plain: string; supporting: string; contradicting: string; alternative: string; uncertainty: string; tendencyScope: string };
   nextExperiment: SelfUnderstandingInterpretation["nextExperiment"];
   selfModelCandidate: string;
@@ -254,6 +283,8 @@ export function toSelfUnderstandingHypothesisView(
     statistics: input.statistics,
     supportingEntries,
     contradictingEntries,
+    supportingEvidence: hypothesis.supportingEvidence,
+    contradictingEvidence: hypothesis.contradictingEvidence,
     explanations: { plain: hypothesis.interpretation.plainExplanationJa, supporting: hypothesis.interpretation.supportingExplanationJa, contradicting: hypothesis.interpretation.contradictingExplanationJa, alternative: hypothesis.interpretation.alternativeExplanationJa, uncertainty: hypothesis.interpretation.uncertaintyJa, tendencyScope: hypothesis.interpretation.tendencyScopeExplanationJa },
     nextExperiment: hypothesis.interpretation.nextExperiment,
     selfModelCandidate: hypothesis.interpretation.selfModelCandidateJa,
@@ -289,6 +320,8 @@ const forbiddenAbsolute =
 const forbiddenBlame =
   /(怠け|甘え|意志が弱|努力不足|あなたのせい|自己責任|だめな人)/i;
 
+export type StructuredOutputCapability = "json_schema" | "json_object" | "prompt_only";
+
 export class OpenAICompatibleLocalInterpretationProvider
   implements SelfUnderstandingInterpretationProvider
 {
@@ -296,8 +329,9 @@ export class OpenAICompatibleLocalInterpretationProvider
   readonly id: string;
   private readonly baseUrl: string;
   private readonly model: string;
+  private readonly structuredOutputCapability: StructuredOutputCapability;
 
-  constructor(config: { id?: string; baseUrl: string; model: string }) {
+  constructor(config: { id?: string; baseUrl: string; model: string; structuredOutputCapability?: StructuredOutputCapability }) {
     const url = new URL(config.baseUrl);
     if (!["127.0.0.1", "localhost", "::1"].includes(url.hostname)) {
       throw new Error("self_understanding_remote_endpoint_prohibited");
@@ -305,9 +339,26 @@ export class OpenAICompatibleLocalInterpretationProvider
     this.id = config.id ?? "openai-compatible-local";
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
     this.model = config.model;
+    this.structuredOutputCapability = config.structuredOutputCapability ?? "json_schema";
   }
 
-  async generate(input: SelfUnderstandingInterpretationInputV2): Promise<unknown> {
+  private async request(
+    input: SelfUnderstandingInterpretationInputV2,
+    capability: StructuredOutputCapability
+  ): Promise<unknown> {
+    const responseFormat =
+      capability === "json_schema"
+        ? {
+            type: "json_schema",
+            json_schema: {
+              name: "self_understanding_interpretation_v3",
+              strict: true,
+              schema: selfUnderstandingInterpretationV3Schema
+            }
+          }
+        : capability === "json_object"
+          ? { type: "json_object" }
+          : undefined;
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -347,14 +398,7 @@ export class OpenAICompatibleLocalInterpretationProvider
             })
           }
         ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "self_understanding_interpretation_v3",
-            strict: true,
-            schema: selfUnderstandingInterpretationV3Schema
-          }
-        }
+        ...(responseFormat ? { response_format: responseFormat } : {})
       })
     });
     if (!response.ok) throw new Error("self_understanding_provider_failed");
@@ -364,6 +408,17 @@ export class OpenAICompatibleLocalInterpretationProvider
     const content = payload.choices?.[0]?.message?.content;
     if (typeof content !== "string") throw new Error("self_understanding_invalid_response");
     return content;
+  }
+
+  async generate(input: SelfUnderstandingInterpretationInputV2): Promise<unknown> {
+    try {
+      return await this.request(input, this.structuredOutputCapability);
+    } catch (error) {
+      if (this.structuredOutputCapability !== "json_schema") throw error;
+      // Some local OpenAI-compatible servers reject json_schema. The shared
+      // validator still governs this retry, so unstructured output is never trusted.
+      return this.request(input, "json_object");
+    }
   }
 }
 
@@ -577,6 +632,50 @@ export function recordEvidence(
         ? outcome < midpoint
         : outcome > midpoint;
   return aligns ? "supports" : "contradicts";
+}
+
+function evidenceView(
+  record: UnderstandingRecord,
+  direction: "supports" | "contradicts"
+): EvidenceView {
+  const provenance = Object.values(record.provenanceByParameterId ?? {});
+  const sourceCounts = new Map<
+    EvidenceView["sources"][number]["source"],
+    { labelJa: string; count: number }
+  >();
+  for (const item of provenance) {
+    const current = sourceCounts.get(item.source) ?? { labelJa: item.labelJa, count: 0 };
+    current.count += 1;
+    sourceCounts.set(item.source, current);
+  }
+  if (!sourceCounts.size && record.kind === "entry") {
+    sourceCounts.set("user_entry", { labelJa: "記録", count: 1 });
+  }
+  return {
+    episodeId: record.id,
+    kind: record.kind ?? "entry",
+    localDate: record.localDate ?? record.recordedAt.slice(0, 10),
+    direction,
+    entryIds: [...new Set(record.sourceEntryIds ?? ((record.kind ?? "entry") === "entry" ? [record.id] : []))],
+    activityWatchObservationIds: [...new Set(record.sourceObservationIds ?? [])],
+    sources: [...sourceCounts.entries()].map(([source, item]) => ({ source, ...item }))
+  };
+}
+
+function entryReferences(records: UnderstandingRecord[]): EntryReference[] {
+  const references = new Map<string, EntryReference>();
+  for (const record of records) {
+    for (const entryId of record.sourceEntryIds ?? ((record.kind ?? "entry") === "entry" ? [record.id] : [])) {
+      if (!references.has(entryId)) {
+        references.set(entryId, {
+          entryId,
+          recordedAt: record.recordedAt,
+          title: record.kind === "entry" ? record.title : "関連する記録"
+        });
+      }
+    }
+  }
+  return [...references.values()];
 }
 
 function outputText(output: SelfUnderstandingInterpretation) {
@@ -874,6 +973,20 @@ export function deduplicateSelfUnderstandingHypotheses(
           ...duplicates.flatMap((item) => item.contradictingEntryIds)
         ])
       ];
+      representative.supportingEvidence = [
+        ...new Map(
+          [...representative.supportingEvidence, ...duplicates.flatMap((item) => item.supportingEvidence)].map(
+            (item) => [item.episodeId, item]
+          )
+        ).values()
+      ];
+      representative.contradictingEvidence = [
+        ...new Map(
+          [...representative.contradictingEvidence, ...duplicates.flatMap((item) => item.contradictingEvidence)].map(
+            (item) => [item.episodeId, item]
+          )
+        ).values()
+      ];
       representative.interpretationInput.mergedCandidateIds =
         representative.mergedCandidateIds;
       representative.interpretation = deterministicInterpretation(
@@ -921,8 +1034,8 @@ export function generateSelfUnderstanding(input: {
     const conditionRole = parameterRole(conditionParameter);
     const outcomeRole = parameterRole(outcomeParameter);
     const constructDefinition = mapConstruct(conditionRole, outcomeRole);
-    const supporting: string[] = [];
-    const contradicting: string[] = [];
+    const supportingRecords: UnderstandingRecord[] = [];
+    const contradictingRecords: UnderstandingRecord[] = [];
     for (const record of input.records) {
       const evidence = recordEvidence(
         record,
@@ -930,9 +1043,13 @@ export function generateSelfUnderstanding(input: {
         conditionParameter,
         outcomeParameter
       );
-      if (evidence === "supports") supporting.push(record.id);
-      if (evidence === "contradicts") contradicting.push(record.id);
+      if (evidence === "supports") supportingRecords.push(record);
+      if (evidence === "contradicts") contradictingRecords.push(record);
     }
+    const supportingEvidence = supportingRecords.map((record) => evidenceView(record, "supports"));
+    const contradictingEvidence = contradictingRecords.map((record) => evidenceView(record, "contradicts"));
+    const supporting = [...new Set(supportingEvidence.flatMap((evidence) => evidence.entryIds))];
+    const contradicting = [...new Set(contradictingEvidence.flatMap((evidence) => evidence.entryIds))];
     const status = statusFor(
       candidate,
       config,
@@ -999,20 +1116,8 @@ export function generateSelfUnderstanding(input: {
         repeatedPeriodCount: tendency.repeatedPeriodCount
       },
       status,
-      supportingEntries: input.records
-        .filter((record) => supporting.includes(record.id))
-        .map((record) => ({
-          entryId: record.id,
-          recordedAt: record.recordedAt,
-          title: record.title
-        })),
-      contradictingEntries: input.records
-        .filter((record) => contradicting.includes(record.id))
-        .map((record) => ({
-          entryId: record.id,
-          recordedAt: record.recordedAt,
-          title: record.title
-        })),
+      supportingEntries: entryReferences(supportingRecords),
+      contradictingEntries: entryReferences(contradictingRecords),
       alternativeExplanations,
       mergedCandidateIds: []
     };
@@ -1043,6 +1148,8 @@ export function generateSelfUnderstanding(input: {
       ],
       supportingEntryIds: supporting,
       contradictingEntryIds: contradicting,
+      supportingEvidence,
+      contradictingEvidence,
       dataShortage,
       alternativeExplanations,
       mergedCandidateIds: [],

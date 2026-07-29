@@ -48,6 +48,19 @@ class NonClinicalSelfUnderstandingViewProvider {
         )
         .join(" ") || "なし";
 
+    const evidenceSummary = (evidence: any[], fallbackEntryIds: string[]) => {
+      if (!Array.isArray(evidence) || !evidence.length) return entryLinks(fallbackEntryIds);
+      return evidence
+        .map((item) => {
+          const source = (item.sources ?? [])
+            .map((value: any) => `${value.labelJa} ${value.count}`)
+            .join("、");
+          const linkedEntries = entryLinks(Array.isArray(item.entryIds) ? item.entryIds : []);
+          return `<div><small>${escapeHtml(String(item.localDate ?? ""))} · ${escapeHtml(String(item.kind ?? "entry"))} · ${escapeHtml(source || "記録")}</small><br/>${linkedEntries}</div>`;
+        })
+        .join("");
+    };
+
     const candidateCard = (item: any) => {
       const dto = item.interpretationInput;
       const statistics = dto.statistics;
@@ -55,8 +68,8 @@ class NonClinicalSelfUnderstandingViewProvider {
         <h4>${escapeHtml(item.statement)}</h4>
         <p><b>${escapeHtml(item.statusLabelJa)}</b> · ${escapeHtml(item.tendencyScopeLabelJa)}</p>
         <p>${escapeHtml(item.interpretation.plainExplanationJa)}</p>
-        <p><b>根拠:</b> ${entryLinks(item.supportingEntryIds ?? [])}</p>
-        <p><b>反証:</b> ${entryLinks(item.contradictingEntryIds ?? [])}</p>
+        <p><b>根拠:</b> ${evidenceSummary(item.supportingEvidence, item.supportingEntryIds ?? [])}</p>
+        <p><b>反証:</b> ${evidenceSummary(item.contradictingEvidence, item.contradictingEntryIds ?? [])}</p>
         <p><b>まだ不明:</b> ${escapeHtml(item.interpretation.uncertaintyJa)}</p>
         <p><b>別の説明:</b> ${escapeHtml(item.interpretation.alternativeExplanationJa)}</p>
         <p><b>次の確認:</b> ${escapeHtml(item.interpretation.nextExperiment.action)}</p>
@@ -107,7 +120,7 @@ class NonClinicalSelfUnderstandingViewProvider {
           </section>`
         : "";
       const excluded = (activeResult?.excludedFields ?? []).length
-        ? `<section><h3>蛻・梵縺九ｉ髫区ｼ・譁ｹ陦ｨ</h3><p>${escapeHtml(String(activeResult.dataQuality?.excludedFieldCount ?? activeResult.excludedFields.length))} fields need confirmation or a supported type.</p><ul>${activeResult.excludedFields.map((field: any) => `<li>${escapeHtml(field.label)} (${escapeHtml(field.fieldKey)}) - ${escapeHtml(field.reason)}${field.suggestedRole ? ` / ${escapeHtml(field.suggestedRole)}` : ""}</li>`).join("")}</ul></section>`
+        ? `<section><h3>分析から除外した項目</h3><p>${escapeHtml(String(activeResult.dataQuality?.excludedFieldCount ?? activeResult.excludedFields.length))}件は確認または対応する値型が必要です。</p><ul>${activeResult.excludedFields.map((field: any) => `<li>${escapeHtml(field.label)} (${escapeHtml(field.fieldKey)}) - ${escapeHtml(field.reason)}${field.suggestedRole ? ` / ${escapeHtml(field.suggestedRole)}` : ""}</li>`).join("")}</ul></section>`
         : "";
       const groups = new Map<string, any[]>();
       for (const item of activeResult?.legacyHypotheses ?? activeResult?.hypotheses ?? []) {

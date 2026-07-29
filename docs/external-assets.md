@@ -10,9 +10,13 @@ Self-understanding explanations use the versioned
 strict fields, types, length, experiment duration, allowed field keys, Entry
 references, non-clinical wording, construct, semantic role, and tendency scope.
 The existing semantic validator runs after the schema check. Invalid output is
-discarded and deterministic Japanese wording is used instead. Local providers
-receive aggregate values and allowlisted Entry references, never Markdown
-bodies. The endpoint must be loopback (`localhost`, `127.0.0.1`, or `::1`).
+discarded and deterministic Japanese wording is used instead. The local
+provider first requests JSON Schema output; an OpenAI-compatible server that
+does not support it may use JSON-object output once, but the same strict local
+validator still decides whether the result is accepted. Local providers receive
+aggregate values and allowlisted evidence identifiers, never Markdown bodies or
+raw ActivityWatch events. The endpoint must be loopback (`localhost`,
+`127.0.0.1`, or `::1`).
 
 ## ActivityWatch
 
@@ -44,13 +48,20 @@ metheory activitywatch review <observation-id> --state=reviewed
 metheory activitywatch review <observation-id> --state=excluded
 ```
 
-Only `reviewed` observations are grouped by local date. The analyzer joins a
+Only `reviewed` observations are grouped by the current user timezone. The analyzer joins a
 daily summary to at most one Entry on that date, so a single day of activity
 cannot be counted repeatedly when several notes were written. The summary
 contains active, coding, writing, browser, and communication duration, session
 count, longest session, first/last activity time, and source observation IDs.
 It remains a record of observed activity, not evidence of focus or output
 quality.
+
+Legacy imports are migrated idempotently to an identity based on the
+ActivityWatch bucket and event ID. If older imports collide, user-reviewed
+records take precedence over excluded records and unreviewed records, while
+the latest imported normalized values are retained. Records without both
+source identifiers remain distinct legacy observations rather than being
+guessed into a merge.
 
 ## Baseline self-perception
 
@@ -62,7 +73,9 @@ stored separately from observed behavior with `itemSetVersion`, source,
 response scale, provenance, confirmation, and a user-controlled
 `useForSelfUnderstanding` flag. Users may answer later, edit progress, disable
 use, or delete all responses. A baseline is a self-perception reference and
-must not be presented as a fixed personality label or diagnosis.
+must not be presented as a fixed personality label or diagnosis. At most two
+role-matched baseline items are shown beside a daily hypothesis; they are never
+averaged into the observed values.
 
 ## Questions and charts
 
@@ -80,7 +93,14 @@ missing. AI cannot supply arbitrary chart specifications.
 Structured values and imported observations retain a source, recorded/imported
 time, confirmation state, original reference, transformation version, and
 privacy level. Subjective baseline data and observed ActivityWatch data remain
-separate during analysis.
+separate during analysis. Evidence records also retain the analysis episode
+kind (`entry`, `activity_day`, or `daily_join`), local date, linked Entry IDs,
+and ActivityWatch observation IDs. The UI only opens explicit Entry IDs, so a
+derived daily episode is never treated as a note path.
+
+`npm run check:encoding` strictly decodes project text files as UTF-8 and
+rejects replacement characters and known mojibake fragments. It runs from
+`npm run check` and therefore from `npm run verify`.
 
 The shared source allowlist is `user_entry`, `ai_extraction`, `activitywatch`,
 `baseline_self_perception`, `manual_import`, and `experiment`. A `prohibited` value is

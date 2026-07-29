@@ -249,6 +249,7 @@ CREATE TABLE IF NOT EXISTS self_understanding_analysis_history (
   outcome_scale_fingerprint TEXT,
   source_entry_ids_json TEXT NOT NULL DEFAULT '[]',
   source_entry_fingerprint TEXT NOT NULL DEFAULT '',
+  evidence_provenance_json TEXT NOT NULL DEFAULT '[]',
   candidate_snapshot_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
   UNIQUE(user_id,candidate_id,period_start_at,period_end_at)

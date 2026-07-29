@@ -5,6 +5,7 @@ import {
   type SelfUnderstandingSemanticRole,
   type SemanticRoleSource
 } from "./semanticRoles.ts";
+import { validateQuestionQuality } from "../../self-understanding/src/questionQuality.ts";
 export * from "./semanticRoles.ts";
 
 export type TemplateInputType = "text" | "number" | "boolean" | "choice" | "multi_choice" | "date" | "datetime" | "duration" | "scale";
@@ -21,6 +22,18 @@ export function parseTemplateDraftJson(text: string): TemplateDraft { const stri
 
 const keys = /^[a-z][a-z0-9_]{0,63}$/;
 const compatible: Record<TemplateInputType, TemplateValueType[]> = { text: ["text"], number: ["integer", "number"], boolean: ["boolean"], choice: ["choice"], multi_choice: ["multi_choice"], date: ["date"], datetime: ["datetime"], duration: ["duration_seconds"], scale: ["scale", "integer", "number"] };
+
+// Generated templates store semantic field metadata, not a fixed question bank.
+// This deterministic form is used whenever a UI needs a neutral fallback question.
+export function deterministicQuestionForTemplateField(field: Pick<TemplateField, "label" | "inputType" | "minimum" | "maximum">): string {
+  if (field.inputType === "scale" && field.minimum !== undefined && field.maximum !== undefined) {
+    return `現在の「${field.label}」を${field.minimum}〜${field.maximum}で選んでください。`;
+  }
+  if (field.inputType === "boolean") return `現在、「${field.label}」に当てはまりますか。`;
+  if (field.inputType === "choice" || field.inputType === "multi_choice") return `現在の「${field.label}」を選んでください。`;
+  return `現在の「${field.label}」を記録してください。`;
+}
+
 export function validateTemplateDraft(input: unknown): TemplateDraft {
   if (!input || typeof input !== "object") throw new Error("template_generation_invalid_schema");
   const draft = input as Partial<TemplateDraft>;
@@ -37,6 +50,13 @@ export function validateTemplateDraft(input: unknown): TemplateDraft {
     if (field.semanticRole !== undefined && !isSelfUnderstandingSemanticRole(field.semanticRole)) throw new Error("template_semantic_role_invalid");
     if (field.semanticRoleSource !== undefined && !["user", "template_rule", "ai_suggestion", "legacy_inference"].includes(field.semanticRoleSource)) throw new Error("template_semantic_role_invalid");
     if (field.semanticRoleConfidence !== undefined && (typeof field.semanticRoleConfidence !== "number" || !Number.isFinite(field.semanticRoleConfidence) || field.semanticRoleConfidence < 0 || field.semanticRoleConfidence > 1)) throw new Error("template_semantic_role_invalid");
+    const questionQuality = validateQuestionQuality({
+      text: deterministicQuestionForTemplateField(field),
+      timeReference: "現在",
+      subject: "あなた",
+      ...(field.inputType === "scale" ? { scaleMinimum: field.minimum, scaleMaximum: field.maximum } : {})
+    });
+    if (!questionQuality.valid) throw new Error("template_question_quality_invalid");
     return { ...field, description: field.description ?? "", required: Boolean(field.required), sensitivity: field.sensitivity === "sensitive" ? "sensitive" : "normal", sensitivityLevel: field.sensitivityLevel, classificationSource: field.classificationSource, prohibitedSecretRisk: field.prohibitedSecretRisk ?? false, semanticRoleConfirmed: field.semanticRoleConfirmed ?? field.semanticRoleSource === "user", semanticMergeAllowed: field.semanticMergeAllowed ?? false, reason: field.reason?.trim() || "テーマに沿った記録" };
   });
   return { theme: draft.theme.trim(), name: draft.name.trim(), description: typeof draft.description === "string" ? draft.description : "", fields: fields as TemplateField[] };
