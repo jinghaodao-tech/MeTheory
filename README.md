@@ -39,7 +39,7 @@ notification timing, hypothesis status, or Self Model updates.
 - `prompts/ai-templates.json`: versioned AI templates.
 - `schemas/domain-schema.json`: domain data contract.
 - `schemas/personal-context-candidate-v1.schema.json`: versioned, read-only export contract for the separate Personal Context Studio.
-- `extracted/personal-context-studio/`: standalone local-first AI context application. It has its own SQLite schema, API, CLI, tests, and no runtime dependency on MeTheory.
+- [Personal Context Studio](https://github.com/jinghaodao-tech/Personal-Context-Studio): standalone local-first AI context application with its own SQLite schema, API, CLI, tests, and no runtime dependency on MeTheory.
 - `db/mvp_schema.sql`: Python reference SQLite schema.
 - `db/ts_mvp_schema.sql`: TypeScript runtime SQLite schema with Observation and Evidence.
 - `packages/domain/src/index.ts`: TypeScript pure rules for evidence, transitions, notification policy, and AI candidate validation.
