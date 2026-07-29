@@ -2,22 +2,22 @@
 
 ## Purpose
 
-Self Understanding turns confirmed, structured Entry values into small,
+Self Understanding turns confirmed, shareable Personal Context Studio values into small,
 testable, non-clinical observations. It is not a medical, psychological, or
 personality diagnosis feature.
 
 ## Analysis boundary
 
-- Only `entry_field_values` with `reviewed_at` are analysed.
+- Only reviewed, shareable values in a `pcs-analysis-snapshot-v1` are analysed.
 - The deterministic evaluator decides cohorts, counts, missingness, effect,
   stability, supporting Entries, contradicting Entries, and candidate status.
-- The default gate requires eight Entries and three valid values in each group.
+- The default gate requires eight PCS records and three valid values in each group.
 - A candidate can be an emerging tendency, a relatively stable candidate, or
   unstable. Insufficient data produces a shortage explanation instead of a
   hypothesis.
 - No disease, disorder, diagnosis, probability, treatment, medication, or
   care recommendation is represented or stored.
-- Template fields have an allowlisted `semanticRole`. Roles map to the
+- PCS template fields may have an allowlisted `semanticRole`. Roles map to the
   non-clinical construct catalog, and ambiguous or sensitive suggestions need
   confirmation. See [the catalog](self-understanding-construct-catalog.md).
 - A stored role is analysis-ready only after confirmation. Legacy inference may
@@ -48,9 +48,9 @@ explanations, the next experiment, and technical provenance. A legacy-shaped
 
 1. Open **Self Understanding** in the VS Code MeTheory view.
 2. Choose one, two, or four weeks; optionally select a template and fields.
-3. Analyse confirmed values.
+3. Request and analyse the selected period's confirmed PCS values.
 4. Inspect the deterministic explanation and open supporting or contradicting
-   Entries from the candidate card.
+   PCS record references from the candidate card.
 5. Rate the candidate as fits, does not fit, or on hold.
 6. For a fitting candidate, edit the proposed Self Model sentence if needed.
 7. Explicitly accept it to add an active Self Model belief. Rejection never
@@ -60,9 +60,9 @@ explanations, the next experiment, and technical provenance. A legacy-shaped
 
 `self_understanding_analysis_history` retains canonical candidate snapshots for
 deduplication and scope, including template/version/field identities, scale
-fingerprints, and a sorted Entry-set fingerprint. Stable scope requires three
-independent periods, at least 24 unique paired records, and at most 35% Entry
-overlap; legacy history without Entry identities cannot satisfy that gate.
+fingerprints, and a sorted PCS-record-set fingerprint. Stable scope requires three
+independent periods, at least 24 unique paired records, and at most 35% record
+overlap; history without record identities cannot satisfy that gate.
 `hypothesis_reviews` records the rating and source period. `self_model_candidates`
 and `self_beliefs` retain construct, scope, periods, and field pairs. The user
 chooses create-new, propose-update, or keep-separate; no Self Model is replaced
