@@ -18,6 +18,13 @@ test('read-only AI HTTP API enforces the client allowlist', async () => {
     const missingAuth = await fetch(`http://127.0.0.1:${port}/v1/ai/parameters?userId=${user.id}&clientId=test-client&clientType=mcp`); assert.equal(missingAuth.status, 401);
     const denied = await fetch(`http://127.0.0.1:${port}/v1/ai/parameters?userId=${user.id}&clientId=unknown&clientType=mcp`, { headers: { 'x-metheory-authenticated-user-id': user.id } }); assert.equal(denied.status, 403);
     const allowed = await fetch(`http://127.0.0.1:${port}/v1/ai/parameters?userId=${user.id}&clientId=test-client&clientType=mcp`, { headers: { 'x-metheory-authenticated-user-id': user.id } }); assert.equal(allowed.status, 200); assert.deepEqual((await allowed.json()).items, []);
+    const contextExport = await fetch(`http://127.0.0.1:${port}/v1/self-understanding/context-export?userId=${user.id}`);
+    assert.equal(contextExport.status, 200);
+    const exported = await contextExport.json() as { schemaVersion: string; exportedAt: string; acceptedItems: unknown[]; proposedItems: unknown[] };
+    assert.equal(exported.schemaVersion, 'personal-context-migration-v1');
+    assert.ok(Number.isFinite(Date.parse(exported.exportedAt)));
+    assert.deepEqual(exported.acceptedItems, []);
+    assert.deepEqual(exported.proposedItems, []);
   } finally { child.kill(); await new Promise((resolve) => setTimeout(resolve, 150)); try { rmSync(directory, { recursive: true, force: true }); } catch { /* Windows may release the SQLite handle after the test process exits. */ } }
 });
 

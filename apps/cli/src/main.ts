@@ -137,6 +137,8 @@ async function selfUnderstandingAnalyze(args: string[]) { const startAt = args.f
 async function selfUnderstandingReview(args: string[]) { const candidateId = args[0]; const rating = args[1]; if (!candidateId || !["fits", "does_not_fit", "on_hold"].includes(rating ?? "")) throw new Error("hypothesis_review_invalid"); console.log(JSON.stringify(await request("/v1/self-understanding/reviews", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, candidateId, rating, statement: args.slice(2).join(" ") }) }), null, 2)); }
 async function selfModelCandidates() { console.log(JSON.stringify(await request(`/v1/self-understanding/self-model-candidates?userId=${encodeURIComponent(userId)}`), null, 2)); }
 async function selfModelReview(args: string[]) { if (!args[0] || !["accepted", "rejected"].includes(args[1] ?? "")) throw new Error("self_model_review_invalid"); console.log(JSON.stringify(await request("/v1/self-understanding/self-model-candidates/review", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, candidateId: args[0], status: args[1] }) }), null, 2)); }
+async function personalContextMigrationExport() { printResult(await request(`/v1/self-understanding/context-export?userId=${encodeURIComponent(userId)}`)); }
+async function personalContextCandidateExport(args: string[]) { if (!args[0]) throw new Error("context_candidate_id_required"); printResult(await request("/v1/self-understanding/context-candidates", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, candidateId: args[0], rating: args[1] ?? "fits" }) })); }
 async function activityWatchCommand(subcommand: string, args: string[]) {
   if (subcommand === "status" || subcommand === "buckets") return console.log(JSON.stringify(await request(`/v1/activitywatch/${subcommand}`), null, 2));
   if (subcommand === "list") return console.log(JSON.stringify(await request(`/v1/activitywatch/observations?userId=${encodeURIComponent(userId)}`), null, 2));
@@ -186,6 +188,8 @@ async function main() { const [, , command, sub, ...args] = process.argv;
   if (command === "self-understanding" && sub === "review" && args[0] && args[1]) return selfUnderstandingReview(args);
   if (command === "self-understanding" && sub === "self-model") return selfModelCandidates();
   if (command === "self-understanding" && sub === "self-model-review") return selfModelReview(args);
+  if (command === "self-understanding" && sub === "context-candidate" && args[0] === "export") return personalContextCandidateExport(args.slice(1));
+  if (command === "personal-context" && sub === "export-migration") return personalContextMigrationExport();
   if (command === "activitywatch") return activityWatchCommand(sub ?? "", args);
   if (command === "self-understanding" && sub === "baseline") return baselineCommand(args[0] ?? "", args.slice(1));
   if (command === "privacy" && sub === "status") return privacyStatus();

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://metheory.local/schemas/personal-context-candidate-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "sourceSystem", "sourceHypothesisId", "statement", "construct", "tendencyScope", "reviewStatus", "evidenceSummary", "caution", "createdAt"],
+  "properties": {
+    "schemaVersion": { "const": "personal-context-candidate-v1" },
+    "id": { "type": "string", "minLength": 1 },
+    "sourceSystem": { "const": "metheory" },
+    "sourceHypothesisId": { "type": "string", "minLength": 1 },
+    "statement": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "construct": { "type": "string", "minLength": 1 },
+    "tendencyScope": { "enum": ["single_period_state", "state_dependent", "relatively_stable"] },
+    "reviewStatus": { "enum": ["fits", "does_not_fit", "on_hold"] },
+    "evidenceSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["supportingCount", "contradictingCount", "periodStartAt", "periodEndAt"],
+      "properties": {
+        "supportingCount": { "type": "integer", "minimum": 0 },
+        "contradictingCount": { "type": "integer", "minimum": 0 },
+        "periodStartAt": { "type": "string" },
+        "periodEndAt": { "type": "string" }
+      }
+    },
+    "caution": { "type": "array", "items": { "type": "string" }, "maxItems": 8 },
+    "createdAt": { "type": "string" }
+  }
+}
