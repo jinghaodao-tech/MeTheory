@@ -1,0 +1,169 @@
+openapi: 3.1.0
+info:
+  title: MeTheory Review Bridge
+  version: 1.0.0
+servers:
+  - url: https://metheory-review-bridge.jinghaodao-tech.workers.dev
+security:
+  - bearerAuth: []
+paths:
+  /api/pr/{owner}/{repo}/{prNumber}:
+    get:
+      operationId: getPullRequestForReview
+      summary: Get an allowlisted pull request and its diff
+      parameters:
+        - in: path
+          name: owner
+          required: true
+          schema: { type: string }
+        - in: path
+          name: repo
+          required: true
+          schema: { type: string }
+        - in: path
+          name: prNumber
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Pull request metadata and diff
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [repository, prNumber, headSha, diff]
+                properties:
+                  repository: { type: string }
+                  prNumber: { type: integer }
+                  title: { type: string }
+                  body: { type: string }
+                  bodyTruncated: { type: boolean }
+                  bodyCharCount: { type: integer }
+                  headSha: { type: string }
+                  headRef: { type: string }
+                  baseRef: { type: string }
+                  changedFiles: { type: integer }
+                  additions: { type: integer }
+                  deletions: { type: integer }
+                  diff: { type: string }
+                  diffTruncated: { type: boolean }
+                  diffCharCount: { type: integer }
+  /api/repository/{owner}/{repo}/review-context:
+    get:
+      operationId: getRepositoryReviewContext
+      summary: Get a bounded review context for the current repository ref
+      parameters:
+        - in: path
+          name: owner
+          required: true
+          schema: { type: string }
+        - in: path
+          name: repo
+          required: true
+          schema: { type: string }
+        - in: query
+          name: ref
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200":
+          description: Allowlisted repository files at the resolved commit
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [repository, ref, headSha, files, excludedFiles, truncated, totalFiles, includedFiles, totalCharacters]
+                properties:
+                  repository: { type: string }
+                  ref: { type: string }
+                  headSha: { type: string }
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      required: [path, content, truncated]
+                      properties:
+                        path: { type: string }
+                        content: { type: string }
+                        truncated: { type: boolean }
+                  excludedFiles:
+                    type: array
+                    items:
+                      type: object
+                      required: [path, reason]
+                      properties:
+                        path: { type: string }
+                        reason: { type: string }
+                  truncated: { type: boolean }
+                  totalFiles: { type: integer }
+                  includedFiles: { type: integer }
+                  totalCharacters: { type: integer }
+                  excludedFilesTruncated: { type: boolean }
+        "400": { description: Invalid repository or ref }
+        "403": { description: Repository is not allowlisted }
+  /api/review-instructions:
+    post:
+      operationId: saveCodexReviewInstruction
+      summary: Save the structured result of a PR review
+      x-openai-isConsequential: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - repository
+                - prNumber
+                - headSha
+                - result
+                - objective
+                - blockingIssues
+                - suggestions
+                - acceptanceCriteria
+                - constraints
+                - reviewCycle
+              properties:
+                repository: { type: string, example: jinghaodao-tech/MeTheory }
+                prNumber: { type: integer, minimum: 1 }
+                headSha: { type: string }
+                result: { type: string, enum: [pass, fail] }
+                objective: { type: string }
+                blockingIssues:
+                  type: array
+                  items:
+                    type: object
+                    required: [file, problem, requiredOutcome]
+                    properties:
+                      file: { type: string }
+                      problem: { type: string }
+                      requiredOutcome: { type: string }
+                suggestions:
+                  type: array
+                  items: { type: object, additionalProperties: true }
+                acceptanceCriteria:
+                  type: array
+                  items: { type: string }
+                constraints:
+                  type: array
+                  items: { type: string }
+                reviewCycle: { type: integer, minimum: 1, maximum: 10 }
+                reviewScope: { type: string, enum: [pr, repository], default: pr }
+      responses:
+        "201":
+          description: Saved instruction
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, status, fingerprint]
+                properties:
+                  id: { type: string }
+                  status: { type: string }
+                  fingerprint: { type: string }
+components:
+  schemas: {}
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer

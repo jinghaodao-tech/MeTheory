@@ -38,6 +38,7 @@ VS Code and Cursor are the primary desktop workflow. The CLI provides workspace,
 - Workspace initialization, status, backup/restore checks, CLI extraction review, and VS Code Start, Status, Privacy, Templates, Review, Self Understanding, and Entries views.
 - Provisional inbox-note creation, non-blocking template suggestions, tracked-note save debounce, a single extraction retry, and explicit extraction approval before SQLite updates.
 - Self-understanding: confirmed-value-only analysis, eight-record quality gate, semantic-role-to-construct mapping, candidate history and deduplication, emerging/state-dependent/relatively-stable scopes, deterministic Japanese explanations, optional validated localhost-AI wording, evidence links, ratings, and editable user-confirmed Self Model additions.
+- External-asset safety: versioned `SelfUnderstandingInterpretationV3` validation with deterministic fallback, localhost-only ActivityWatch preview/import with normalized provenance, separate original IPIP-inspired self-perception responses, deterministic question-quality checks, and fixed non-AI chart data models.
 - Analysis responses include data quality and excluded fields. Unconfirmed roles, unsupported field types, and unknown semantic roles are visible to the user and do not become hypotheses.
 - Deterministic hypothesis evaluation, candidate generation primitives, evidence inspection, dynamic question support in the mobile experiment client, and `npm run verify`.
 
@@ -46,6 +47,7 @@ VS Code and Cursor are the primary desktop workflow. The CLI provides workspace,
 1. Add richer Review context for field labels, source spans, existing-value diffs, and field sensitivity in the desktop UI.
 2. Complete readiness polling for each supported local runtime; process ownership, one retry, and idle-operation protection already exist.
 3. Improve ordinary backup/delete UX while keeping advanced export history and encryption out of the initial version.
+4. Add richer VS Code rendering for fixed chart models and a guided baseline questionnaire; the local API and storage contracts are already present.
 
 Self-understanding explanation uses deterministic wording by default. Optional
 local wording is enabled with `SELF_UNDERSTANDING_AI_PROVIDER=ollama` or

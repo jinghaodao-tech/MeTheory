@@ -48,6 +48,19 @@ class NonClinicalSelfUnderstandingViewProvider {
         )
         .join(" ") || "なし";
 
+    const evidenceSummary = (evidence: any[], fallbackEntryIds: string[]) => {
+      if (!Array.isArray(evidence) || !evidence.length) return entryLinks(fallbackEntryIds);
+      return evidence
+        .map((item) => {
+          const source = (item.sources ?? [])
+            .map((value: any) => `${value.labelJa} ${value.count}`)
+            .join("、");
+          const linkedEntries = entryLinks(Array.isArray(item.entryIds) ? item.entryIds : []);
+          return `<div><small>${escapeHtml(String(item.localDate ?? ""))} · ${escapeHtml(String(item.kind ?? "entry"))} · ${escapeHtml(source || "記録")}</small><br/>${linkedEntries}</div>`;
+        })
+        .join("");
+    };
+
     const candidateCard = (item: any) => {
       const dto = item.interpretationInput;
       const statistics = dto.statistics;
@@ -55,8 +68,8 @@ class NonClinicalSelfUnderstandingViewProvider {
         <h4>${escapeHtml(item.statement)}</h4>
         <p><b>${escapeHtml(item.statusLabelJa)}</b> · ${escapeHtml(item.tendencyScopeLabelJa)}</p>
         <p>${escapeHtml(item.interpretation.plainExplanationJa)}</p>
-        <p><b>根拠:</b> ${entryLinks(item.supportingEntryIds ?? [])}</p>
-        <p><b>反証:</b> ${entryLinks(item.contradictingEntryIds ?? [])}</p>
+        <p><b>根拠:</b> ${evidenceSummary(item.supportingEvidence, item.supportingEntryIds ?? [])}</p>
+        <p><b>反証:</b> ${evidenceSummary(item.contradictingEvidence, item.contradictingEntryIds ?? [])}</p>
         <p><b>まだ不明:</b> ${escapeHtml(item.interpretation.uncertaintyJa)}</p>
         <p><b>別の説明:</b> ${escapeHtml(item.interpretation.alternativeExplanationJa)}</p>
         <p><b>次の確認:</b> ${escapeHtml(item.interpretation.nextExperiment.action)}</p>
@@ -75,6 +88,7 @@ class NonClinicalSelfUnderstandingViewProvider {
             <dt>統合候補</dt><dd>${escapeHtml((item.mergedCandidateIds ?? []).join(", ") || "なし")}</dd>
           </dl>
         </details>
+        ${(item.charts ?? []).map((chart: any) => { const points = (chart.series?.[0]?.points ?? []).filter((point: any) => Number.isFinite(point.value)); const maximum = Math.max(1, ...points.map((point: any) => Number(point.value))); return `<details><summary>Show chart</summary><p>${escapeHtml(String(chart.title))}</p><svg viewBox="0 0 320 120" role="img" aria-label="${escapeHtml(String(chart.title))}">${points.map((point: any, index: number) => { const height = Math.max(0, Math.min(90, Number(point.value) / maximum * 90)); return `<rect x="${20 + index * 130}" y="${100 - height}" width="72" height="${height}" fill="#2f6feb"></rect><text x="${20 + index * 130}" y="115" font-size="10">${escapeHtml(String(point.recordedAt))}</text>`; }).join("")}</svg><p>${escapeHtml(String((chart.notes ?? []).join(" ")))}</p></details>`; }).join("")}
         <div class="actions">
           <button data-a="rate" data-rating="fits" data-id="${escapeHtml(item.id)}">合っている</button>
           <button data-a="rate" data-rating="does_not_fit" data-id="${escapeHtml(item.id)}">合っていない</button>
@@ -106,7 +120,7 @@ class NonClinicalSelfUnderstandingViewProvider {
           </section>`
         : "";
       const excluded = (activeResult?.excludedFields ?? []).length
-        ? `<section><h3>蛻・梵縺九ｉ髫区ｼ・譁ｹ陦ｨ</h3><p>${escapeHtml(String(activeResult.dataQuality?.excludedFieldCount ?? activeResult.excludedFields.length))} fields need confirmation or a supported type.</p><ul>${activeResult.excludedFields.map((field: any) => `<li>${escapeHtml(field.label)} (${escapeHtml(field.fieldKey)}) - ${escapeHtml(field.reason)}${field.suggestedRole ? ` / ${escapeHtml(field.suggestedRole)}` : ""}</li>`).join("")}</ul></section>`
+        ? `<section><h3>分析から除外した項目</h3><p>${escapeHtml(String(activeResult.dataQuality?.excludedFieldCount ?? activeResult.excludedFields.length))}件は確認または対応する値型が必要です。</p><ul>${activeResult.excludedFields.map((field: any) => `<li>${escapeHtml(field.label)} (${escapeHtml(field.fieldKey)}) - ${escapeHtml(field.reason)}${field.suggestedRole ? ` / ${escapeHtml(field.suggestedRole)}` : ""}</li>`).join("")}</ul></section>`
         : "";
       const groups = new Map<string, any[]>();
       for (const item of activeResult?.legacyHypotheses ?? activeResult?.hypotheses ?? []) {
@@ -161,6 +175,8 @@ class NonClinicalSelfUnderstandingViewProvider {
         ${excluded}
         ${hypotheses || "<p>期間と対象を選んで分析してください。</p>"}
         <section><h3>Self Model候補</h3><ul>${selfModel || "<li>候補はありません。</li>"}</ul></section>
+        <label><input id="include-activitywatch" type="checkbox" /> Include reviewed ActivityWatch data</label>
+        <label><input id="include-baseline" type="checkbox" /> Include baseline self-perception</label>
         <script>
           const vscode=acquireVsCodeApi();
           document.getElementById('template').onchange=()=>{
@@ -171,7 +187,9 @@ class NonClinicalSelfUnderstandingViewProvider {
             type:'analyze',
             days:document.getElementById('days').value,
             templateId:document.getElementById('template').value,
-            fieldKeys:Array.from(document.getElementById('fields').selectedOptions).map(o=>o.value)
+            fieldKeys:Array.from(document.getElementById('fields').selectedOptions).map(o=>o.value),
+            includeActivityWatch:document.getElementById('include-activitywatch').checked,
+            includeBaselineSelfPerception:document.getElementById('include-baseline').checked
           });
           document.body.onclick=(event)=>{
             const el=event.target;
@@ -201,6 +219,8 @@ class NonClinicalSelfUnderstandingViewProvider {
                 endAt: endAt.toISOString(),
                 templateId: message.templateId || undefined,
                 fieldKeys: message.fieldKeys,
+                includeActivityWatch: message.includeActivityWatch === true,
+                includeBaselineSelfPerception: message.includeBaselineSelfPerception === true,
                 minimumEntryCount: 8
               })
             })

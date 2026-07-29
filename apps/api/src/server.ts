@@ -21,8 +21,12 @@ import {
   OpenAICompatibleLocalInterpretationProvider,
   toSelfUnderstandingHypothesisView,
   validateSelfModelStatement,
-  type UnderstandingRecord
+  type UnderstandingRecord,
+  baselineItems,
+  createBaselineResponse,
+  IPIP_BASELINE_ITEM_SET_VERSION
 } from "../../../packages/self-understanding/src/index.ts";
+import { ActivityWatchAdapter, activityWatchObservationIdentity, summarizeActivityWatchDaily } from "../../../packages/domain/src/activitywatch.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.METHEORY_DB ?? resolve(root, "data", "metheory.sqlite3");
@@ -109,12 +113,200 @@ ensureColumn("self_understanding_analysis_history", "outcome_field_key", "TEXT")
 ensureColumn("self_understanding_analysis_history", "outcome_scale_fingerprint", "TEXT");
 ensureColumn("self_understanding_analysis_history", "source_entry_ids_json", "TEXT NOT NULL DEFAULT '[]'");
 ensureColumn("self_understanding_analysis_history", "source_entry_fingerprint", "TEXT NOT NULL DEFAULT ''");
+ensureColumn("self_understanding_analysis_history", "evidence_provenance_json", "TEXT NOT NULL DEFAULT '[]'");
+ensureColumn("external_observations", "review_state", "TEXT NOT NULL DEFAULT 'imported'");
+ensureColumn("external_observations", "local_date", "TEXT");
+ensureColumn("external_observations", "source_bucket_id", "TEXT");
+ensureColumn("external_observations", "source_identity", "TEXT");
+
+type LegacyActivityWatchObservation = {
+  id: string;
+  user_id: string;
+  source_bucket_id: string | null;
+  source_event_id: string | null;
+  source_identity: string | null;
+  observed_at: string;
+  local_date: string | null;
+  duration_seconds: number | null;
+  semantic_role: string;
+  category: string;
+  project_label: string | null;
+  privacy_level: string;
+  imported_at: string;
+  user_confirmed: number;
+  review_state: string;
+  original_reference: string | null;
+  transform_version: string | null;
+};
+
+function activityWatchReviewRank(reviewState: string): number {
+  if (reviewState === "reviewed") return 2;
+  if (reviewState === "excluded") return 1;
+  return 0;
+}
+
+function migrateActivityWatchSourceIdentities(): void {
+  const rows = db
+    .prepare(
+      `SELECT id,user_id,source_bucket_id,source_event_id,source_identity,
+        observed_at,local_date,duration_seconds,semantic_role,category,project_label,
+        privacy_level,imported_at,user_confirmed,review_state,original_reference,transform_version
+       FROM external_observations WHERE source='activitywatch'`
+    )
+    .all() as LegacyActivityWatchObservation[];
+  if (!rows.length) return;
+
+  const groups = new Map<string, LegacyActivityWatchObservation[]>();
+  const legacyRows: LegacyActivityWatchObservation[] = [];
+  for (const row of rows) {
+    if (!row.source_bucket_id || !row.source_event_id) {
+      legacyRows.push(row);
+      continue;
+    }
+    const identity = activityWatchObservationIdentity(row.source_bucket_id, row.source_event_id);
+    const key = `${row.user_id}:${identity}`;
+    groups.set(key, [...(groups.get(key) ?? []), row]);
+  }
+
+  const updateIdentity = db.prepare("UPDATE external_observations SET source_identity=? WHERE id=?");
+  const deleteObservation = db.prepare("DELETE FROM external_observations WHERE id=?");
+  const updateWinner = db.prepare(
+    `UPDATE external_observations SET
+      source_identity=?, observed_at=?, local_date=?, duration_seconds=?, semantic_role=?,
+      category=?, project_label=?, privacy_level=?, imported_at=?, original_reference=?,
+      transform_version=?
+     WHERE id=?`
+  );
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    // Missing bucket/event ids cannot be reconstructed safely. Keep such records distinct.
+    for (const row of legacyRows) updateIdentity.run(`legacy:${row.id}`, row.id);
+    for (const [key, group] of groups) {
+      const [, identity] = key.split(":", 2);
+      const ranked = [...group].sort((left, right) => {
+        const rankDifference = activityWatchReviewRank(right.review_state) - activityWatchReviewRank(left.review_state);
+        if (rankDifference) return rankDifference;
+        const importedDifference = String(right.imported_at).localeCompare(String(left.imported_at));
+        return importedDifference || left.id.localeCompare(right.id);
+      });
+      const winner = ranked[0];
+      const freshest = [...group].sort((left, right) => {
+        const importedDifference = String(right.imported_at).localeCompare(String(left.imported_at));
+        return importedDifference || left.id.localeCompare(right.id);
+      })[0];
+      for (const duplicate of ranked.slice(1)) deleteObservation.run(duplicate.id);
+      updateWinner.run(
+        identity,
+        freshest.observed_at,
+        freshest.local_date,
+        freshest.duration_seconds,
+        freshest.semantic_role,
+        freshest.category,
+        freshest.project_label,
+        freshest.privacy_level,
+        freshest.imported_at,
+        freshest.original_reference,
+        freshest.transform_version,
+        winner.id
+      );
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+migrateActivityWatchSourceIdentities();
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS external_observations_source_identity_idx ON external_observations(user_id, source, source_identity) WHERE source_identity IS NOT NULL");
+
+function migrateBaselineSelfPerceptionSource(): void {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='baseline_self_perceptions'").get() as { sql?: string } | undefined;
+  if (!row?.sql?.includes("source = 'ipip'")) return;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`CREATE TABLE baseline_self_perceptions_next (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      source TEXT NOT NULL CHECK(source = 'baseline_self_perception'),
+      item_set_version TEXT NOT NULL,
+      item_key TEXT NOT NULL,
+      original_item_reference TEXT,
+      statement_ja TEXT NOT NULL,
+      response INTEGER NOT NULL CHECK(response >= 1 AND response <= 5),
+      response_minimum INTEGER NOT NULL DEFAULT 1,
+      response_maximum INTEGER NOT NULL DEFAULT 5,
+      recorded_at TEXT NOT NULL,
+      user_confirmed INTEGER NOT NULL DEFAULT 1 CHECK(user_confirmed IN(0,1)),
+      use_for_self_understanding INTEGER NOT NULL DEFAULT 1 CHECK(use_for_self_understanding IN(0,1)),
+      privacy_level TEXT NOT NULL DEFAULT 'normal' CHECK(privacy_level = 'normal'),
+      provenance_json TEXT NOT NULL DEFAULT '{}',
+      deleted_at TEXT,
+      UNIQUE(user_id, item_set_version, item_key)
+    ) STRICT`);
+    db.exec(`INSERT INTO baseline_self_perceptions_next(
+      id,user_id,source,item_set_version,item_key,original_item_reference,statement_ja,response,
+      response_minimum,response_maximum,recorded_at,user_confirmed,use_for_self_understanding,
+      privacy_level,provenance_json,deleted_at
+    ) SELECT id,user_id,'baseline_self_perception',
+      CASE WHEN item_set_version='ipip-paraphrase-ja-v1' THEN 'ipip-inspired-baseline-ja-v1' ELSE item_set_version END,
+      item_key,original_item_reference,statement_ja,response,response_minimum,response_maximum,
+      recorded_at,user_confirmed,use_for_self_understanding,privacy_level,provenance_json,deleted_at
+      FROM baseline_self_perceptions`);
+    db.exec("DROP TABLE baseline_self_perceptions");
+    db.exec("ALTER TABLE baseline_self_perceptions_next RENAME TO baseline_self_perceptions");
+    db.exec("CREATE INDEX IF NOT EXISTS baseline_self_perceptions_user_idx ON baseline_self_perceptions(user_id, deleted_at, recorded_at)");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+migrateBaselineSelfPerceptionSource();
+function normalizeBaselineProvenance(): void {
+  const rows = db.prepare("SELECT id,provenance_json FROM baseline_self_perceptions WHERE provenance_json LIKE '%ipip%'").all() as Array<{ id: string; provenance_json: string }>;
+  const update = db.prepare("UPDATE baseline_self_perceptions SET provenance_json=? WHERE id=?");
+  for (const row of rows) {
+    try {
+      const provenance = JSON.parse(row.provenance_json) as Record<string, unknown>;
+      if (provenance.source !== "ipip") continue;
+      provenance.source = "baseline_self_perception";
+      update.run(JSON.stringify(provenance), row.id);
+    } catch {
+      // Keep malformed historical provenance intact instead of guessing its shape.
+    }
+  }
+}
+normalizeBaselineProvenance();
 db.exec("CREATE TABLE IF NOT EXISTS ai_http_access_audit_logs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, client_id TEXT NOT NULL, client_type TEXT NOT NULL, purpose TEXT NOT NULL, requested_parameter_ids_json TEXT NOT NULL, allowed_parameter_ids_json TEXT NOT NULL, denied_parameter_ids_json TEXT NOT NULL, requested_start_at TEXT, requested_end_at TEXT, returned_record_count INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, created_at TEXT NOT NULL)");
 
 const now = () => new Date().toISOString();
 const id = (prefix: string) => `${prefix}_${randomUUID().replaceAll("-", "")}`;
 
 function fieldValue(row: Record<string, unknown>): unknown { if (Number(row.is_missing ?? 0) === 1) return null; if (row.boolean_value !== null && row.boolean_value !== undefined) return Number(row.boolean_value) === 1; if (row.integer_value !== null && row.integer_value !== undefined) return Number(row.integer_value); if (row.number_value !== null && row.number_value !== undefined) return Number(row.number_value); if (row.json_value !== null && row.json_value !== undefined) { try { return JSON.parse(String(row.json_value)); } catch { return null; } } return row.text_value ?? row.date_value ?? row.datetime_value ?? row.duration_seconds ?? null; }
+function personalContextCandidate(snapshot: any, reviewStatus: "fits" | "does_not_fit" | "on_hold", createdAt: string) {
+  const period = snapshot.period ?? {};
+  return {
+    schemaVersion: "personal-context-candidate-v1" as const,
+    id: `context_${String(snapshot.id ?? snapshot.candidate?.id ?? "candidate")}`,
+    sourceSystem: "metheory" as const,
+    sourceHypothesisId: String(snapshot.id ?? snapshot.candidate?.id ?? ""),
+    statement: String(snapshot.selfModelCandidate ?? snapshot.statement ?? ""),
+    construct: String(snapshot.construct ?? "uncategorized"),
+    tendencyScope: ["single_period_state", "state_dependent", "relatively_stable"].includes(String(snapshot.tendencyScope)) ? snapshot.tendencyScope : "single_period_state",
+    reviewStatus,
+    evidenceSummary: {
+      supportingCount: Array.isArray(snapshot.supportingEvidence) ? snapshot.supportingEvidence.length : Array.isArray(snapshot.supportingEntryIds) ? snapshot.supportingEntryIds.length : 0,
+      contradictingCount: Array.isArray(snapshot.contradictingEvidence) ? snapshot.contradictingEvidence.length : Array.isArray(snapshot.contradictingEntryIds) ? snapshot.contradictingEntryIds.length : 0,
+      periodStartAt: String(period.startAt ?? ""),
+      periodEndAt: String(period.endAt ?? "")
+    },
+    caution: ["これは診断や固定的な人格評価ではありません。", "記録数や未記録の条件により変わる可能性があります。"],
+    createdAt
+  };
+}
 function analyzeSelfUnderstanding(userId: string, input: Record<string, unknown>) { const endAt = typeof input.endAt === "string" ? input.endAt : now(); const startAt = typeof input.startAt === "string" ? input.startAt : new Date(Date.parse(endAt) - 28 * 86400000).toISOString(); const minimumEntryCount = Math.max(2, Math.min(100, Number(input.minimumEntryCount ?? 4))); const rows = db.prepare("SELECT e.id,e.recorded_at,e.title,f.field_key,f.label,f.value_type,f.options_json,ev.is_missing,ev.boolean_value,ev.integer_value,ev.number_value,ev.text_value,ev.json_value,ev.date_value,ev.datetime_value,ev.duration_seconds FROM entries e JOIN entry_field_values ev ON ev.entry_id=e.id JOIN entry_template_fields f ON f.id=ev.template_field_id WHERE e.user_id=? AND e.archived_at IS NULL AND ev.reviewed_at IS NOT NULL AND e.recorded_at>=? AND e.recorded_at<=? ORDER BY e.recorded_at").all(userId, startAt, endAt) as Array<Record<string, unknown>>; const entryCount = new Set(rows.map(row => String(row.id))).size; if (entryCount < minimumEntryCount) return { period: { startAt, endAt }, entryCount, minimumEntryCount, dataShortage: { needed: minimumEntryCount - entryCount, message: "Confirmed structured values are insufficient for a reliable hypothesis." }, hypotheses: [] }; const definitions = new Map<string, { id: string; nameJa: string; valueType: string; minimumValue?: number; maximumValue?: number; usableAsCondition: boolean; usableAsOutcome: boolean }>(); const allowedValues: Record<string, Array<{ valueKey: string; labelJa: string }>> = {}; const records = new Map<string, UnderstandingRecord>(); const observations: Array<{ episodeId: string; parameterId: string; value: unknown; isMissing: boolean; observedAt: string }> = []; for (const row of rows) { const parameterId = String(row.field_key); const valueType = row.value_type === "choice" ? "single_choice" : ["integer", "number", "scale", "duration_seconds"].includes(String(row.value_type)) ? "number" : String(row.value_type); if (!["boolean", "single_choice", "integer", "number"].includes(valueType)) continue; if (!definitions.has(parameterId)) { definitions.set(parameterId, { id: parameterId, nameJa: String(row.label ?? parameterId), valueType, minimumValue: 0, maximumValue: valueType === "boolean" || valueType === "single_choice" ? undefined : 100, usableAsCondition: true, usableAsOutcome: true }); try { const options = JSON.parse(String(row.options_json ?? "[]")) as Array<{ key?: string; label?: string }>; allowedValues[parameterId] = options.map(option => ({ valueKey: String(option.key ?? ""), labelJa: String(option.label ?? option.key ?? "") })).filter(option => option.valueKey); } catch { allowedValues[parameterId] = []; } } const value = fieldValue(row); observations.push({ episodeId: String(row.id), parameterId, value, isMissing: value === null, observedAt: String(row.recorded_at) }); const record = records.get(String(row.id)) ?? { id: String(row.id), recordedAt: String(row.recorded_at), title: String(row.title), conditionValues: {}, outcomeValues: {} }; record.conditionValues[parameterId] = value; record.outcomeValues[parameterId] = value; records.set(String(row.id), record); } const hypotheses = generateSelfUnderstanding({ parameters: [...definitions.values()], observations, records: [...records.values()], allowedValues, startAt, now: endAt, maximumCandidates: 5 } as any); return { period: { startAt, endAt }, entryCount, minimumEntryCount, hypotheses }; }
 function analyzeSelfUnderstandingPractical(userId: string, input: Record<string, unknown>) { const endAt = typeof input.endAt === "string" ? input.endAt : now(); const startAt = typeof input.startAt === "string" ? input.startAt : new Date(Date.parse(endAt) - 28 * 86400000).toISOString(); const minimumEntryCount = Math.max(8, Math.min(100, Number(input.minimumEntryCount ?? 8))); const templateId = typeof input.templateId === "string" && input.templateId ? input.templateId : undefined; const fieldKeys = Array.isArray(input.fieldKeys) ? input.fieldKeys.filter((item): item is string => typeof item === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(item)).slice(0, 30) : []; const clauses = ["e.user_id=?", "e.archived_at IS NULL", "ev.reviewed_at IS NOT NULL", "e.recorded_at>=?", "e.recorded_at<=?"]; const params: string[] = [userId, startAt, endAt]; if (templateId) { clauses.push("e.template_id=?"); params.push(templateId); } if (fieldKeys.length) { clauses.push(`f.field_key IN (${fieldKeys.map(() => "?").join(",")})`); params.push(...fieldKeys); } const rows = db.prepare(`SELECT e.id,e.recorded_at,e.title,e.template_id,ev.template_version_id,f.field_key,f.label,f.value_type,f.options_json,f.minimum,f.maximum,ev.is_missing,ev.boolean_value,ev.integer_value,ev.number_value,ev.text_value,ev.json_value,ev.date_value,ev.datetime_value,ev.duration_seconds FROM entries e JOIN entry_field_values ev ON ev.entry_id=e.id JOIN entry_template_fields f ON f.id=ev.template_field_id WHERE ${clauses.join(" AND ")} ORDER BY e.recorded_at`).all(...params) as Array<Record<string, unknown>>; const entryCount = new Set(rows.map(row => String(row.id))).size; const templateVersionIds = [...new Set(rows.map(row => typeof row.template_version_id === "string" ? row.template_version_id : "").filter(Boolean))]; const options = { templateId: templateId ?? null, templateVersionId: templateVersionIds.length === 1 ? templateVersionIds[0] : null, templateVersionIds, fieldKeys }; if (entryCount < minimumEntryCount) return { status: "insufficient", statusLabelJa: "データ不足", period: { startAt, endAt }, filters: options, entryCount, minimumEntryCount, dataShortage: { needed: minimumEntryCount - entryCount, message: "確認済みの構造化記録が不足しています。条件と結果を同じEntryで記録してください。", recommendedFields: fieldKeys }, hypotheses: [] }; const definitions = new Map<string, { id: string; nameJa: string; valueType: string; minimumValue?: number; maximumValue?: number; usableAsCondition: boolean; usableAsOutcome: boolean }>(); const allowedValues: Record<string, Array<{ valueKey: string; labelJa: string }>> = {}; const records = new Map<string, UnderstandingRecord>(); const observations: Array<{ episodeId: string; parameterId: string; value: unknown; isMissing: boolean; observedAt: string }> = []; for (const row of rows) { const parameterId = String(row.field_key); const valueType = row.value_type === "choice" ? "single_choice" : ["integer", "number", "scale", "duration_seconds"].includes(String(row.value_type)) ? "number" : String(row.value_type); if (!["boolean", "single_choice", "integer", "number"].includes(valueType)) continue; if (!definitions.has(parameterId)) { definitions.set(parameterId, { id: parameterId, nameJa: String(row.label ?? parameterId), valueType, minimumValue: typeof row.minimum === "number" ? row.minimum : 0, maximumValue: typeof row.maximum === "number" ? row.maximum : valueType === "boolean" || valueType === "single_choice" ? undefined : 100, usableAsCondition: true, usableAsOutcome: true }); try { const choices = JSON.parse(String(row.options_json ?? "[]")) as Array<{ key?: string; label?: string }>; allowedValues[parameterId] = choices.map(choice => ({ valueKey: String(choice.key ?? ""), labelJa: String(choice.label ?? choice.key ?? "") })).filter(choice => choice.valueKey); } catch { allowedValues[parameterId] = []; } } const value = fieldValue(row); observations.push({ episodeId: String(row.id), parameterId, value, isMissing: value === null, observedAt: String(row.recorded_at) }); const record = records.get(String(row.id)) ?? { id: String(row.id), recordedAt: String(row.recorded_at), title: String(row.title), conditionValues: {}, outcomeValues: {} }; record.conditionValues[parameterId] = value; record.outcomeValues[parameterId] = value; records.set(String(row.id), record); } const hypotheses = generateSelfUnderstanding({ parameters: [...definitions.values()], observations, records: [...records.values()], allowedValues, now: endAt, config: { minimumTotalSamples: minimumEntryCount, maximumCandidates: 5 } }); return { status: hypotheses.length ? "ready" : "insufficient", statusLabelJa: hypotheses.length ? "分析候補あり" : "比較可能な差が不足", period: { startAt, endAt }, filters: options, entryCount, minimumEntryCount, hypotheses, explanationMode: "deterministic_fallback" }; }
 
@@ -136,7 +328,12 @@ async function analyzeSelfUnderstandingWithInterpretation(
               (providerName === "ollama"
                 ? "http://127.0.0.1:11434/v1"
                 : "http://127.0.0.1:1234/v1"),
-            model: process.env.SELF_UNDERSTANDING_AI_MODEL ?? "llama3.2"
+            model: process.env.SELF_UNDERSTANDING_AI_MODEL ?? "llama3.2",
+            structuredOutputCapability:
+              process.env.SELF_UNDERSTANDING_AI_STRUCTURED_OUTPUT === "json_object" ||
+              process.env.SELF_UNDERSTANDING_AI_STRUCTURED_OUTPUT === "prompt_only"
+                ? process.env.SELF_UNDERSTANDING_AI_STRUCTURED_OUTPUT
+                : "json_schema"
           })
         : undefined;
   } catch {
@@ -465,6 +662,65 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && parts.join("/") === "v1/self-understanding/analyze") {
       const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, await analyzeSelfUnderstandingWithInterpretation(userId, input));
     }
+    if (parts[0] === "v1" && parts[1] === "activitywatch") {
+      const activityWatchEnabled = process.env.ACTIVITYWATCH_ENABLED === "true";
+      const adapter = new ActivityWatchAdapter({ baseUrl: process.env.ACTIVITYWATCH_URL ?? "http://127.0.0.1:5600" });
+      if (request.method === "GET" && parts[2] === "status") return json(response, 200, { enabled: activityWatchEnabled, ...(activityWatchEnabled ? await adapter.status() : { running: false, baseUrl: adapter.baseUrl }) });
+      if (!activityWatchEnabled) return json(response, 409, { error: "activitywatch_disabled" });
+      if (request.method === "GET" && parts[2] === "buckets") return json(response, 200, { items: await adapter.buckets() });
+      if (request.method === "POST" && (parts[2] === "preview" || parts[2] === "import")) {
+        const input = await body(request);
+        const bucketIds = Array.isArray(input.bucketIds) ? input.bucketIds.filter((value): value is string => typeof value === "string").slice(0, 10) : [];
+        const startAt = optionalString(input.startAt) ?? "";
+        const endAt = optionalString(input.endAt) ?? "";
+        if (!bucketIds.length || !startAt || !endAt || Date.parse(startAt) >= Date.parse(endAt)) return json(response, 400, { error: "activitywatch_period_invalid" });
+        const userId = optionalString(input.userId) ?? "";
+        const timezoneRow = userId ? db.prepare("SELECT timezone FROM users WHERE id=?").get(userId) as { timezone?: string } | undefined : undefined;
+        const timezone = timezoneRow?.timezone || "UTC";
+        let observations;
+        try {
+          observations = await adapter.preview(bucketIds, startAt, endAt, timezone);
+        } catch (error) {
+          return json(response, 400, { error: error instanceof Error ? error.message : "activitywatch_preview_invalid" });
+        }
+        if (parts[2] === "preview") return json(response, 200, { source: "activitywatch", startAt, endAt, count: observations.length, items: observations, dailySummaries: summarizeActivityWatchDaily(observations) });
+        if (input.confirm !== true) return json(response, 400, { error: "activitywatch_import_confirmation_required" });
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        let imported = 0;
+        for (const observation of observations) {
+          const result = db.prepare("INSERT INTO external_observations(id,user_id,source,source_bucket_id,source_event_id,source_identity,observed_at,local_date,duration_seconds,semantic_role,category,project_label,privacy_level,imported_at,user_confirmed,review_state,original_reference,transform_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,source,source_identity) WHERE source_identity IS NOT NULL DO UPDATE SET observed_at=excluded.observed_at,local_date=excluded.local_date,duration_seconds=excluded.duration_seconds,semantic_role=excluded.semantic_role,category=excluded.category,project_label=excluded.project_label,privacy_level=excluded.privacy_level,imported_at=excluded.imported_at,original_reference=excluded.original_reference,transform_version=excluded.transform_version").run(observation.id, userId, observation.source, observation.sourceBucketId, observation.sourceEventId ?? null, observation.sourceIdentity, observation.observedAt, observation.localDate, observation.durationSeconds ?? null, observation.semanticRole, observation.category, observation.projectLabel ?? null, observation.privacyLevel, observation.importedAt, 0, "imported", observation.sourceEventId ?? null, "activitywatch-v2");
+          imported += Number(result.changes ?? 0);
+        }
+        return json(response, 201, { source: "activitywatch", count: observations.length, imported, skipped: observations.length - imported, reviewState: "imported" });
+      }
+      if (request.method === "GET" && parts[2] === "observations") {
+        const userId = requestUrl.searchParams.get("userId") ?? "";
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        return json(response, 200, { items: db.prepare("SELECT * FROM external_observations WHERE user_id=? AND source='activitywatch' ORDER BY observed_at DESC").all(userId) });
+      }
+      if (request.method === "POST" && parts.length === 5 && parts[2] === "observations" && parts[4] === "review") {
+        const input = await body(request); const userId = optionalString(input.userId) ?? ""; const reviewState = optionalString(input.reviewState) ?? "";
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        if (!['reviewed', 'excluded'].includes(reviewState)) return json(response, 400, { error: "activitywatch_review_state_invalid" });
+        const result = db.prepare("UPDATE external_observations SET review_state=?,user_confirmed=? WHERE id=? AND user_id=? AND source='activitywatch'").run(reviewState, reviewState === "reviewed" ? 1 : 0, parts[3], userId);
+        return Number(result.changes ?? 0) ? json(response, 200, { id: parts[3], reviewState }) : json(response, 404, { error: "activitywatch_observation_not_found" });
+      }
+    }
+    if (parts[0] === "v1" && parts[1] === "self-understanding" && parts[2] === "baseline") {
+      if (request.method === "GET" && parts.length === 3) return json(response, 200, { itemSetVersion: IPIP_BASELINE_ITEM_SET_VERSION, items: baselineItems() });
+      const input = request.method === "POST" ? await body(request) : {};
+      const userId = request.method === "GET" ? requestUrl.searchParams.get("userId") ?? "" : optionalString(input.userId) ?? "";
+      const resolvedUserId = request.method === "DELETE" ? requestUrl.searchParams.get("userId") ?? "" : userId;
+      if (!userExists(resolvedUserId)) return json(response, 404, { error: "user_not_found" });
+      if (request.method === "GET" && parts.length === 4 && parts[3] === "responses") return json(response, 200, { items: db.prepare("SELECT * FROM baseline_self_perceptions WHERE user_id=? AND deleted_at IS NULL ORDER BY recorded_at").all(resolvedUserId) });
+      if (request.method === "POST" && parts.length === 4 && parts[3] === "responses") {
+        const item = createBaselineResponse({ id: id("baseline"), itemKey: String(input.itemKey ?? ""), response: Number(input.response), recordedAt: optionalString(input.recordedAt), useForSelfUnderstanding: input.useForSelfUnderstanding !== false });
+        db.prepare("INSERT INTO baseline_self_perceptions(id,user_id,source,item_set_version,item_key,original_item_reference,statement_ja,response,response_minimum,response_maximum,recorded_at,user_confirmed,use_for_self_understanding,privacy_level,provenance_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,item_set_version,item_key) DO UPDATE SET response=excluded.response,recorded_at=excluded.recorded_at,user_confirmed=excluded.user_confirmed,use_for_self_understanding=excluded.use_for_self_understanding,deleted_at=NULL").run(item.id, resolvedUserId, item.source, item.itemSetVersion, item.itemKey, item.originalItemReference ?? null, item.statementJa, item.response, item.responseScale.minimum, item.responseScale.maximum, item.recordedAt, 1, item.useForSelfUnderstanding ? 1 : 0, item.privacyLevel, JSON.stringify({ source: item.source, importedAt: item.recordedAt, recordedAt: item.recordedAt, userConfirmed: true, transformVersion: item.itemSetVersion, privacyLevel: item.privacyLevel }));
+        return json(response, 201, item);
+      }
+      if (request.method === "POST" && parts.length === 4 && parts[3] === "disable") { db.prepare("UPDATE baseline_self_perceptions SET use_for_self_understanding=0 WHERE user_id=? AND deleted_at IS NULL").run(resolvedUserId); return json(response, 200, { disabled: true }); }
+      if (request.method === "DELETE" && parts.length === 3) { db.prepare("UPDATE baseline_self_perceptions SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL").run(now(), resolvedUserId); return json(response, 200, { deleted: true }); }
+    }
     if (request.method === "GET" && parts.join("/") === "v1/self-understanding/options") {
       const userId = requestUrl.searchParams.get("userId") ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); const templates = db.prepare("SELECT DISTINCT t.id,t.name FROM entry_templates t JOIN entries e ON e.template_id=t.id WHERE t.user_id=? AND e.archived_at IS NULL ORDER BY t.updated_at DESC").all(userId); const fields = db.prepare("SELECT DISTINCT e.template_id,f.field_key,f.label,f.value_type FROM entries e JOIN entry_field_values ev ON ev.entry_id=e.id JOIN entry_template_fields f ON f.id=ev.template_field_id WHERE e.user_id=? AND e.archived_at IS NULL AND ev.reviewed_at IS NOT NULL ORDER BY e.template_id,f.label").all(userId); return json(response, 200, { templates, fields });
     }
@@ -520,6 +776,29 @@ const server = createServer(async (request, response) => {
       }
       const relatedItems = selfUnderstandingRepository.relatedSelfModelItems(userId, String(snapshot.construct));
       return json(response, 201, { id: reviewId, candidateId, rating, selfModelUpdate: selfModelCandidateId ? "proposed" : "none", selfModelCandidateId, relatedItems, availableResolutionActions: ["create_new", "propose_update", "keep_separate"], resolutionActionAliases: ["new", "update_existing", "separate"] });
+    }
+    if (request.method === "POST" && parts.join("/") === "v1/self-understanding/context-candidates") {
+      const input = await body(request);
+      const userId = optionalString(input.userId) ?? "";
+      const candidateId = optionalString(input.candidateId) ?? "";
+      const rating = optionalString(input.rating) ?? "fits";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (!candidateId || !["fits", "does_not_fit", "on_hold"].includes(rating)) return json(response, 400, { error: "context_candidate_invalid" });
+      const snapshot = selfUnderstandingRepository.latestSnapshot(userId, candidateId) as any;
+      if (!snapshot) return json(response, 404, { error: "self_understanding_candidate_not_found" });
+      return json(response, 201, { item: personalContextCandidate(snapshot, rating as "fits" | "does_not_fit" | "on_hold", now()) });
+    }
+    if (request.method === "GET" && parts.join("/") === "v1/self-understanding/context-export") {
+      const userId = requestUrl.searchParams.get("userId") ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      const accepted = db.prepare("SELECT id,statement,construct_key,tendency_scope,created_at,last_reviewed_at FROM self_beliefs WHERE user_id=? AND status='active' ORDER BY created_at").all(userId) as any[];
+      const proposed = db.prepare("SELECT id,statement,source_hypothesis_id,status,created_at FROM self_model_candidates WHERE user_id=? AND status='proposed' ORDER BY created_at").all(userId) as any[];
+      return json(response, 200, {
+        schemaVersion: "personal-context-migration-v1",
+        exportedAt: now(),
+        acceptedItems: accepted.map((item) => ({ legacyId: item.id, statement: item.statement, construct: item.construct_key ?? undefined, tendencyScope: item.tendency_scope ?? undefined, createdAt: item.created_at, lastReviewedAt: item.last_reviewed_at ?? undefined })),
+        proposedItems: proposed.map((item) => ({ legacyId: item.id, statement: item.statement, sourceHypothesisId: item.source_hypothesis_id ?? undefined, status: item.status, createdAt: item.created_at }))
+      });
     }
     if (request.method === "GET" && parts.join("/") === "v1/self-understanding/self-model-candidates") {
       const userId = requestUrl.searchParams.get("userId") ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, { items: db.prepare("SELECT * FROM self_model_candidates WHERE user_id=? ORDER BY created_at DESC").all(userId) });

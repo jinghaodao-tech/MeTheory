@@ -137,6 +137,31 @@ async function selfUnderstandingAnalyze(args: string[]) { const startAt = args.f
 async function selfUnderstandingReview(args: string[]) { const candidateId = args[0]; const rating = args[1]; if (!candidateId || !["fits", "does_not_fit", "on_hold"].includes(rating ?? "")) throw new Error("hypothesis_review_invalid"); console.log(JSON.stringify(await request("/v1/self-understanding/reviews", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, candidateId, rating, statement: args.slice(2).join(" ") }) }), null, 2)); }
 async function selfModelCandidates() { console.log(JSON.stringify(await request(`/v1/self-understanding/self-model-candidates?userId=${encodeURIComponent(userId)}`), null, 2)); }
 async function selfModelReview(args: string[]) { if (!args[0] || !["accepted", "rejected"].includes(args[1] ?? "")) throw new Error("self_model_review_invalid"); console.log(JSON.stringify(await request("/v1/self-understanding/self-model-candidates/review", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, candidateId: args[0], status: args[1] }) }), null, 2)); }
+async function personalContextMigrationExport() { printResult(await request(`/v1/self-understanding/context-export?userId=${encodeURIComponent(userId)}`)); }
+async function personalContextCandidateExport(args: string[]) { if (!args[0]) throw new Error("context_candidate_id_required"); printResult(await request("/v1/self-understanding/context-candidates", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, candidateId: args[0], rating: args[1] ?? "fits" }) })); }
+async function activityWatchCommand(subcommand: string, args: string[]) {
+  if (subcommand === "status" || subcommand === "buckets") return console.log(JSON.stringify(await request(`/v1/activitywatch/${subcommand}`), null, 2));
+  if (subcommand === "list") return console.log(JSON.stringify(await request(`/v1/activitywatch/observations?userId=${encodeURIComponent(userId)}`), null, 2));
+  if (subcommand === "review") {
+    const observationId = args[0] ?? "";
+    const reviewState = args.find((item) => item.startsWith("--state="))?.slice(8) ?? "";
+    if (!observationId || !["reviewed", "excluded"].includes(reviewState)) throw new Error("activitywatch_review_state_required");
+    return console.log(JSON.stringify(await request(`/v1/activitywatch/observations/${encodeURIComponent(observationId)}/review`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, reviewState }) }), null, 2));
+  }
+  const startAt = args.find(item => item.startsWith("--from="))?.slice(7) ?? "";
+  const endAt = args.find(item => item.startsWith("--to="))?.slice(5) ?? "";
+  const bucketIds = args.filter(item => item.startsWith("--bucket=")).map(item => item.slice(9)).filter(Boolean);
+  if (!startAt || !endAt || !bucketIds.length) throw new Error("activitywatch_period_and_bucket_required");
+  const path = subcommand === "preview" ? "preview" : "import";
+  return console.log(JSON.stringify(await request(`/v1/activitywatch/${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, startAt, endAt, bucketIds, confirm: args.includes("--confirm") }) }), null, 2));
+}
+async function baselineCommand(subcommand: string, args: string[]) {
+  if (subcommand === "items") return console.log(JSON.stringify(await request("/v1/self-understanding/baseline"), null, 2));
+  if (subcommand === "list") return console.log(JSON.stringify(await request(`/v1/self-understanding/baseline/responses?userId=${encodeURIComponent(userId)}`), null, 2));
+  if (subcommand === "disable") return console.log(JSON.stringify(await request("/v1/self-understanding/baseline/disable", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId }) }), null, 2));
+  if (subcommand === "answer" && args[0] && args[1]) return console.log(JSON.stringify(await request("/v1/self-understanding/baseline/responses", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, itemKey: args[0], response: Number(args[1]) }) }), null, 2));
+  throw new Error("baseline_command_invalid");
+}
 
 async function syncFile(file: string) { const path = relative(root, resolve(root, file)); const absolute = resolve(root, file); const text = readFileSync(absolute, "utf8"); const entry = readMarkdownEntry(path, text); if (entry.entryId) { const duplicates = markdownFiles(join(root, "notes")).filter((candidate) => candidate !== absolute).filter((candidate) => { try { return readMarkdownEntry(relative(root, candidate), readFileSync(candidate, "utf8")).entryId === entry.entryId; } catch { return false; } }); if (duplicates.length) throw new Error(`sync_conflict_duplicate_entry_id:${entry.entryId}`); } const result = await request("/v1/entries", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: entry.entryId, userId, externalSource: "vscode", externalSourceId: path, title: entry.title, body: entry.body, recordedAt: entry.recordedAt, sourceUpdatedAt: new Date(statSync(absolute).mtimeMs).toISOString(), templateId: entry.templateId }) }); if (!entry.entryId) writeFileSync(absolute, withEntryMetadata(text, { metheory_entry_id: String(result.entry.id) })); if (entry.autoStructure && entry.tracked && entry.templateId && entry.templateVersionId) scheduleAutoStructure(path); console.log(JSON.stringify({ path, status: result.created ? "created" : "updated", created: result.created, id: result.entry.id })); }
 async function attachTemplate(file: string, templateId: string) { const absolute = resolve(root, file); const path = relative(root, absolute); const template = await request(`/v1/templates/${encodeURIComponent(templateId)}?userId=${encodeURIComponent(userId)}`); if (!template.currentVersion?.id) throw new Error("template_version_not_found"); const text = readFileSync(absolute, "utf8"); writeFileSync(absolute, withEntryMetadata(text, { template_id: templateId, template_version_id: String(template.currentVersion.id), template_status: "approved", tracked: true, auto_structure: true })); await syncFile(path); console.log(JSON.stringify({ path, templateId, templateVersionId: template.currentVersion.id, status: "approved" }, null, 2)); }
@@ -163,6 +188,10 @@ async function main() { const [, , command, sub, ...args] = process.argv;
   if (command === "self-understanding" && sub === "review" && args[0] && args[1]) return selfUnderstandingReview(args);
   if (command === "self-understanding" && sub === "self-model") return selfModelCandidates();
   if (command === "self-understanding" && sub === "self-model-review") return selfModelReview(args);
+  if (command === "self-understanding" && sub === "context-candidate" && args[0] === "export") return personalContextCandidateExport(args.slice(1));
+  if (command === "personal-context" && sub === "export-migration") return personalContextMigrationExport();
+  if (command === "activitywatch") return activityWatchCommand(sub ?? "", args);
+  if (command === "self-understanding" && sub === "baseline") return baselineCommand(args[0] ?? "", args.slice(1));
   if (command === "privacy" && sub === "status") return privacyStatus();
   if (command === "privacy" && sub === "consents" && args[0] === "list") return privacyConsentsList();
   if (command === "privacy" && sub === "audit" && args[0] === "list") return privacyAuditList();
@@ -196,7 +225,7 @@ async function main() { const [, , command, sub, ...args] = process.argv;
   if (command === "backup" && sub === "create") return backupCreate(args[0] ?? "manual");
   if (command === "backup" && sub === "list") return backupList();
   if (command === "backup" && sub === "restore" && args[0]) return backupRestore(args[0]);
-  console.error("usage: workspace init|status|sync|watch; ai detect|status|start|stop|models|model <template|extraction> <name>|test; entry structure|extraction-list|extraction-apply <id> <note> [field=consent-id]|extraction-reject <id>|sync|list|search; extraction review <id>; privacy status|consents list|audit list|consent show|consent grant|consent revoke|fields list|fields show|fields downgrade|safe-delete plan|safe-delete status|safe-delete execute; template generate|suggest --theme <text>|draft list|draft show <id>|draft set-result <id> <file>|draft approve <id>|list|record; service start|stop|status; backup create|list|restore"); process.exitCode = 1;
+  console.error("usage: activitywatch status|buckets|preview --bucket=<id> --from=<iso> --to=<iso>|import ... --confirm|list|review <id> --state=reviewed|excluded; self-understanding baseline items|list|answer <itemKey> <1-5>|disable; workspace init|status|sync|watch; ..."); process.exitCode = 1;
 }
 
 main().catch(error => { mkdirSync(join(root, ".metheory", "logs"), { recursive: true }); appendFileSync(join(root, ".metheory", "logs", "cli.log"), `${new Date().toISOString()} ${error instanceof Error ? error.message : "error"}\n`); console.error(error instanceof Error ? error.message : "error"); process.exitCode = 1; });
