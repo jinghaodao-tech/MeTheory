@@ -45,13 +45,6 @@ async function activityWatch(command: string, args: string[]) {
   return print(await request(`/v1/activitywatch/${command === "preview" ? "preview" : "import"}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, startAt, endAt, bucketIds, confirm: args.includes("--confirm") }) }));
 }
 
-async function privacy(command: string) {
-  if (command === "status") return print(await request(`/v1/privacy/status?userId=${encodeURIComponent(userId)}`));
-  if (command === "consents") return print(await request(`/v1/privacy/consents?userId=${encodeURIComponent(userId)}&includeRevoked=true`));
-  if (command === "audit") return print(await request(`/v1/privacy/audit-events?userId=${encodeURIComponent(userId)}`));
-  throw new Error("privacy_command_invalid");
-}
-
 async function main() {
   const [, , command, sub, ...args] = process.argv;
   if (command === "service" && sub === "start") return serviceStart();
@@ -61,8 +54,7 @@ async function main() {
   if (command === "self-understanding" && sub === "context-candidate" && args[0] === "export") return print(await request("/v1/self-understanding/context-candidates", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, candidateId: args[1], rating: args[2] ?? "fits" }) }));
   if (command === "self-understanding") return selfUnderstanding(sub ?? "", args);
   if (command === "activitywatch") return activityWatch(sub ?? "", args);
-  if (command === "privacy") return privacy(sub ?? "");
-  throw new Error("usage: service|self-understanding|personal-context|activitywatch|privacy");
+  throw new Error("usage: service|self-understanding|personal-context|activitywatch");
 }
 
 main().catch((error) => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });

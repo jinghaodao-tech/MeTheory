@@ -1,7 +1,7 @@
 # MeTheory
 
-MeTheory is a local-first personal information foundation. It can keep free
-form records, later structure selected information, and use the existing
+MeTheory is a local-first self-understanding and experiment engine. It receives
+user-confirmed structured context from Personal Context Studio and uses its
 deterministic hypothesis system when a user wants to test a self-belief.
 
 The current product specification is [`docs/current-product-spec.md`](docs/current-product-spec.md).
@@ -50,7 +50,6 @@ notification timing, hypothesis status, or Self Model updates.
  - `docs/openapi-ai.yaml`: read-only AI HTTP contract.
  - `docs/mcp-tools.md`: read-only MCP tool boundary.
 - `apps/api/src/server.ts`: TypeScript Node MVP API.
-- `packages/records/src/`: platform-neutral Entry types and validation.
 - `backend/core.py`: Python reference implementation kept during migration.
 
 ## Commands
@@ -97,27 +96,19 @@ maintains a local search index, and exposes reviewed structured values to
 MeTheory through a versioned localhost snapshot. Opening that folder in
 Obsidian is optional and requires no MeTheory-specific plugin.
 
-MeTheory's existing `entries` remain an internal analysis/reference model and
-are deliberately separate from `observation_episodes` and `parameter_values`.
-New free-record authoring, indexing, template, extraction, and Review work
-belongs in PCS.
+MeTheory does not store or index Markdown Entries. New free-record authoring,
+indexing, template, extraction, Review, and record-level privacy work belongs
+in PCS. MeTheory stores only its own experiments, observations, hypotheses,
+Evidence, and user-approved Self Model updates.
 
 See `docs/integration-architecture.md` for the current architecture, API
 surface, timestamp semantics, and the planned search boundary.
 
 ## Local record search
 
-Entry text is indexed into the derived `search_documents` table when it is
-saved. The local API provides `GET /v1/search?userId=...&q=...` and returns a
-BM25-ranked list with source references, snippets, matched terms, and recorded
-timestamps. Existing Entries can be indexed with
-`POST /v1/search-documents/rebuild`, which transactionally removes all Entry
-documents for that user and rebuilds only current, unarchived Entries. Its
-response includes `{ sourceKind: "entry", deleted, indexed }`; `removed` is
-also returned as a compatibility alias for callers that used the earlier
-rebuild response. Search documents are not authoritative and can be rebuilt
-from Entries; hypothesis, Evidence, and parameter-value search builders remain
-future work.
+Full-text Markdown search is a PCS responsibility. MeTheory never receives
+Markdown bodies through the analysis bridge; it receives only the reviewed,
+shareable values needed for a selected analysis period.
 
 Run the Python compatibility tests:
 

@@ -1,11 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { SqliteTemplateRepository } from "../apps/api/src/templateRepository.ts";
-import { SqliteSelfUnderstandingRepository } from "../apps/api/src/selfUnderstandingRepository.ts";
 import {
   deterministicInterpretation,
   deduplicateSelfUnderstandingHypotheses,
@@ -253,6 +247,7 @@ test("valid local provider output passes the shared validator", async () => {
   assert.deepEqual(result.interpretation, output);
 });
 
+/* Retired entry-template review history belongs to PCS.
 test("review history infers a unique template version from its period and field pair", () => {
   const directory = mkdtempSync(join(tmpdir(), "metheory-self-understanding-"));
   const database = new DatabaseSync(join(directory, "self-understanding.sqlite3"));
@@ -327,6 +322,8 @@ test("review history infers a unique template version from its period and field 
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+*/
 
 test("Personal Context Studio snapshots are analyzed without copying records into MeTheory", () => {
   const records = Array.from({ length: 8 }, (_, index) => {
@@ -422,6 +419,7 @@ test("AI output cannot add constructs, semantic roles, stronger tendency claims,
   assert.equal(validateSelfModelStatement("私は必ずこういう性格です。"), false);
 });
 
+/* Retired template repository integration belongs to PCS.
 test("confirmed template values flow from semantic roles to a task initiation candidate", () => {
   const directory = mkdtempSync(join(tmpdir(), "metheory-self-understanding-flow-"));
   const database = new DatabaseSync(join(directory, "flow.sqlite3"));
@@ -461,3 +459,4 @@ test("confirmed template values flow from semantic roles to a task initiation ca
     rmSync(directory, { recursive: true, force: true });
   }
 });
+*/

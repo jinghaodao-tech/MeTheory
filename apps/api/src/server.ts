@@ -7,27 +7,15 @@ import { evaluateEvidence, directionForObservation, RULE_VERSION, type Observati
 import { buildEpisodes } from "../../../packages/domain/src/hypothesis/episodes.ts";
 import { evaluateHypothesis } from "../../../packages/domain/src/hypothesis/evaluators.ts";
 import { validateHypothesisSpec } from "../../../packages/domain/src/hypothesis/spec.ts";
-import type { EntryWriteInput } from "../../../packages/records/src/index.ts";
 import { createAiQueryService } from "./aiQueryService.ts";
-import { SqliteEntryRepository } from "./entryRepository.ts";
-import { SqliteSearchDocumentRepository } from "./searchDocumentRepository.ts";
-import { SqliteTemplateRepository } from "./templateRepository.ts";
-import { SqlitePrivacyRepository } from "./privacyRepository.ts";
 import { SqliteSelfUnderstandingRepository } from "./selfUnderstandingRepository.ts";
 import { loadPersonalContextSnapshot, requestPersonalContextTemplate } from "./personalContextClient.ts";
-import { MockTemplateGenerationProvider, UnavailableTemplateGenerationProvider, DisabledTemplateGenerationProvider, ManualChatGPTTemplateProvider, OpenAITemplateGenerationProvider, TEMPLATE_PROMPT_VERSION, suggestSemanticRolesForTemplate, validateTemplateDraft } from "../../../packages/templates/src/index.ts";
 import {
-  generateSelfUnderstanding,
-  interpretSelfUnderstanding,
-  OpenAICompatibleLocalInterpretationProvider,
-  toSelfUnderstandingHypothesisView,
   validateSelfModelStatement,
-  type UnderstandingRecord,
   baselineItems,
   createBaselineResponse,
   IPIP_BASELINE_ITEM_SET_VERSION
 } from "../../../packages/self-understanding/src/index.ts";
-import { analyzePersonalContextSnapshot } from "../../../packages/self-understanding/src/personalContext.ts";
 import { ActivityWatchAdapter, activityWatchObservationIdentity, summarizeActivityWatchDaily } from "../../../packages/domain/src/activitywatch.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
@@ -35,10 +23,6 @@ const databasePath = process.env.METHEORY_DB ?? resolve(root, "data", "metheory.
 const db = new DatabaseSync(databasePath);
 db.exec(readFileSync(resolve(root, "db", "ts_mvp_schema.sql"), "utf8"));
 const aiQueryService = createAiQueryService(db);
-const entryRepository = new SqliteEntryRepository(db);
-const searchDocumentRepository = new SqliteSearchDocumentRepository(db);
-const templateRepository = new SqliteTemplateRepository(db);
-const privacyRepository = new SqlitePrivacyRepository(db);
 const selfUnderstandingRepository = new SqliteSelfUnderstandingRepository(db);
 
 function ensureColumn(table: string, column: string, definition: string): void {
@@ -47,9 +31,6 @@ function ensureColumn(table: string, column: string, definition: string): void {
 }
 
 ensureColumn("hypotheses", "state", "TEXT NOT NULL DEFAULT 'tracking'");
-ensureColumn("entries", "source_updated_at", "TEXT");
-ensureColumn("entries", "template_version_id", "TEXT");
-if ((db.prepare("PRAGMA table_info(entries)").all() as Array<{ name: string }>).some((column) => column.name === "source_modified_at")) db.exec("UPDATE entries SET source_updated_at=source_modified_at WHERE source_updated_at IS NULL");
 ensureColumn("hypotheses", "spec_json", "TEXT");
 ensureColumn("hypotheses", "spec_version", "TEXT");
 ensureColumn("responses", "capture_mode", "TEXT NOT NULL DEFAULT 'momentary_observation'");
@@ -63,20 +44,6 @@ ensureColumn("hypothesis_evaluations", "cohort_metrics_json", "TEXT NOT NULL DEF
 ensureColumn("hypothesis_evaluations", "observed_effect", "REAL");
 ensureColumn("hypothesis_evaluations", "required_effect", "REAL NOT NULL DEFAULT 0");
 ensureColumn("hypothesis_evaluations", "data_quality_json", "TEXT NOT NULL DEFAULT '[]'");
-ensureColumn("entry_field_values", "source_content_hash", "TEXT");
-ensureColumn("entry_field_values", "source_updated_at", "TEXT");
-ensureColumn("entry_field_values", "confidence", "REAL");
-ensureColumn("entry_field_values", "source", "TEXT");
-ensureColumn("entry_field_values", "reviewed_at", "TEXT");
-ensureColumn("entry_field_values", "updated_at", "TEXT");
-ensureColumn("entry_template_fields", "sensitivity_level", "TEXT NOT NULL DEFAULT 'normal'");
-ensureColumn("entry_template_fields", "classification_source", "TEXT NOT NULL DEFAULT 'system_rule'");
-ensureColumn("entry_template_fields", "prohibited_secret_risk", "INTEGER NOT NULL DEFAULT 0");
-ensureColumn("entry_template_fields", "semantic_role", "TEXT");
-ensureColumn("entry_template_fields", "semantic_role_source", "TEXT");
-ensureColumn("entry_template_fields", "semantic_role_confidence", "REAL");
-ensureColumn("entry_template_fields", "semantic_role_confirmed", "INTEGER NOT NULL DEFAULT 0");
-ensureColumn("entry_template_fields", "semantic_merge_allowed", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("hypothesis_reviews", "analysis_start_at", "TEXT");
 ensureColumn("hypothesis_reviews", "analysis_end_at", "TEXT");
 ensureColumn("hypothesis_reviews", "template_version_id", "TEXT");
@@ -287,6 +254,8 @@ db.exec("CREATE TABLE IF NOT EXISTS ai_http_access_audit_logs (id TEXT PRIMARY K
 const now = () => new Date().toISOString();
 const id = (prefix: string) => `${prefix}_${randomUUID().replaceAll("-", "")}`;
 
+/* Retired record-owned analysis. PCS is the only source of free-record values. */
+/*
 function fieldValue(row: Record<string, unknown>): unknown { if (Number(row.is_missing ?? 0) === 1) return null; if (row.boolean_value !== null && row.boolean_value !== undefined) return Number(row.boolean_value) === 1; if (row.integer_value !== null && row.integer_value !== undefined) return Number(row.integer_value); if (row.number_value !== null && row.number_value !== undefined) return Number(row.number_value); if (row.json_value !== null && row.json_value !== undefined) { try { return JSON.parse(String(row.json_value)); } catch { return null; } } return row.text_value ?? row.date_value ?? row.datetime_value ?? row.duration_seconds ?? null; }
 function personalContextCandidate(snapshot: any, reviewStatus: "fits" | "does_not_fit" | "on_hold", createdAt: string) {
   const period = snapshot.period ?? {};
@@ -372,6 +341,11 @@ async function analyzeSelfUnderstandingWithInterpretation(
   };
 }
 
+*/
+function personalContextCandidate(snapshot: any, reviewStatus: "fits" | "does_not_fit" | "on_hold", createdAt: string) {
+  const period = snapshot.period ?? {};
+  return { schemaVersion: "personal-context-candidate-v1" as const, id: `context_${String(snapshot.id ?? snapshot.candidate?.id ?? "candidate")}`, sourceSystem: "metheory" as const, sourceHypothesisId: String(snapshot.id ?? snapshot.candidate?.id ?? ""), statement: String(snapshot.selfModelCandidate ?? snapshot.statement ?? ""), construct: String(snapshot.construct ?? "uncategorized"), tendencyScope: ["single_period_state", "state_dependent", "relatively_stable"].includes(String(snapshot.tendencyScope)) ? snapshot.tendencyScope : "single_period_state", reviewStatus, evidenceSummary: { supportingCount: Array.isArray(snapshot.supportingEvidence) ? snapshot.supportingEvidence.length : 0, contradictingCount: Array.isArray(snapshot.contradictingEvidence) ? snapshot.contradictingEvidence.length : 0, periodStartAt: String(period.startAt ?? ""), periodEndAt: String(period.endAt ?? "") }, caution: ["This is a non-diagnostic, user-reviewed observation."], createdAt };
+}
 function json(response: ServerResponse, status: number, payload: unknown): void {
   const body = JSON.stringify(payload);
   response.writeHead(status, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(body) });
@@ -386,25 +360,6 @@ async function body(request: IncomingMessage): Promise<Record<string, unknown>> 
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
-}
-
-function entryWriteInput(input: Record<string, unknown>, entryId?: string): EntryWriteInput {
-  return {
-    id: entryId ?? optionalString(input.id),
-    userId: optionalString(input.userId) ?? "",
-    templateId: optionalString(input.templateId),
-    episodeId: optionalString(input.episodeId),
-    externalSource: optionalString(input.externalSource),
-    externalSourceId: optionalString(input.externalSourceId),
-    title: optionalString(input.title) ?? "",
-    body: optionalString(input.body) ?? "",
-    recordedAt: optionalString(input.recordedAt),
-    sourceUpdatedAt: input.sourceUpdatedAt === null ? null : optionalString(input.sourceUpdatedAt ?? input.sourceModifiedAt),
-  };
-}
-
-function includeArchived(url: URL): boolean {
-  return ["1", "true"].includes(url.searchParams.get("includeArchived") ?? "");
 }
 
 function pathParts(request: IncomingMessage): string[] {
@@ -543,6 +498,8 @@ const server = createServer(async (request, response) => {
   const requestUrl = new URL(request.url ?? "/", "http://localhost");
   try {
     if (request.method === "GET" && parts.join("/") === "healthz") return json(response, 200, { status: "ok", service: "metheory-api" });
+    /* Retired record API. Templates, entries, record privacy, and Markdown search belong to PCS. */
+    /*
     if (parts[0] === "v1" && parts[1] === "templates") {
       if (request.method === "GET" && parts.length === 2) return json(response, 200, { items: templateRepository.list(requestUrl.searchParams.get("userId") ?? "") });
       if (request.method === "GET" && parts.length === 3) return json(response, 200, templateRepository.detail(requestUrl.searchParams.get("userId") ?? "", parts[2]));
@@ -568,6 +525,7 @@ const server = createServer(async (request, response) => {
       if (request.method === "POST" && parts.length === 4 && parts[3] === "entries") { const input = await body(request); return json(response, 201, templateRepository.createEntry(String(input.userId ?? ""), parts[2], input)); }
       if (request.method === "DELETE" && parts.length === 3) { const input = await body(request); templateRepository.archive(String(input.userId ?? requestUrl.searchParams.get("userId") ?? ""), parts[2]); return json(response, 200, { archived: true }); }
     }
+    */
     if (parts[0] === "v1" && parts[1] === "ai" && request.method === "GET") {
       const userId = aiUserId(request, requestUrl); const clientId = requestUrl.searchParams.get("clientId") ?? String(request.headers["x-metheory-client-id"] ?? ""); const clientType = requestUrl.searchParams.get("clientType") ?? String(request.headers["x-metheory-client-type"] ?? "other"); const purpose = requestUrl.searchParams.get("purpose") ?? "read_only_ai";
       if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); if (!aiAuthenticatedUser(request, userId)) return json(response, 401, { error: "authenticated_user_required" }); if (!aiClientAllowed(clientId, clientType)) return json(response, 403, { error: "ai_client_not_allowed" }); if (!aiPurposeAllowed(purpose)) return json(response, 403, { error: "ai_purpose_not_allowed" });
@@ -589,6 +547,8 @@ const server = createServer(async (request, response) => {
       db.prepare("INSERT INTO users(id, auth_subject, locale, timezone, created_at) VALUES (?, ?, ?, ?, ?)").run(userId, authSubject, optionalString(input.locale) ?? "ja-JP", optionalString(input.timezone) ?? "Asia/Tokyo", now());
       return json(response, 201, { id: userId });
     }
+    /* Retired record API. Templates, entries, record privacy, and Markdown search belong to PCS. */
+    /*
     if (parts[0] === "v1" && parts[1] === "privacy") {
       const queryUserId = requestUrl.searchParams.get("userId") ?? "";
       if (request.method === "GET" && parts.length === 3 && parts[2] === "status") { if (!userExists(queryUserId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, privacyRepository.status(queryUserId)); }
@@ -661,15 +621,20 @@ const server = createServer(async (request, response) => {
       if (!query) return json(response, 400, { error: "search_query_required" });
       return json(response, 200, { items: await searchDocumentRepository.search(userId, query, Number.isFinite(limit) ? limit : 20) });
     }
+    */
     if (request.method === "POST" && parts.join("/") === "v1/self-understanding/analyze") {
-      const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, await analyzeSelfUnderstandingWithInterpretation(userId, input));
+      const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      const endAt = optionalString(input.endAt) ?? now(); const startAt = optionalString(input.startAt) ?? new Date(Date.parse(endAt) - 28 * 86400000).toISOString();
+      if (Number.isNaN(Date.parse(startAt)) || Number.isNaN(Date.parse(endAt)) || Date.parse(startAt) >= Date.parse(endAt)) return json(response, 400, { error: "analysis_period_invalid" });
+      const snapshot = await loadPersonalContextSnapshot({ startAt, endAt });
+      return json(response, 200, selfUnderstandingRepository.analyze(userId, snapshot, { startAt, endAt, minimumEntryCount: Number(input.minimumEntryCount ?? 8) }));
     }
     if (request.method === "POST" && parts.join("/") === "v1/self-understanding/analyze-personal-context") {
       const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
       const endAt = optionalString(input.endAt) ?? now(); const startAt = optionalString(input.startAt) ?? new Date(Date.parse(endAt) - 28 * 86400000).toISOString();
       if (Number.isNaN(Date.parse(startAt)) || Number.isNaN(Date.parse(endAt)) || Date.parse(startAt) >= Date.parse(endAt)) return json(response, 400, { error: "analysis_period_invalid" });
       const snapshot = await loadPersonalContextSnapshot({ startAt, endAt });
-      return json(response, 200, analyzePersonalContextSnapshot(snapshot, { startAt, endAt, minimumEntryCount: Number(input.minimumEntryCount ?? 8) }));
+      return json(response, 200, selfUnderstandingRepository.analyze(userId, snapshot, { startAt, endAt, minimumEntryCount: Number(input.minimumEntryCount ?? 8) }));
     }
     if (request.method === "POST" && parts.join("/") === "v1/experiments/personal-context-template-requests") {
       const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
