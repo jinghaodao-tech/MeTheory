@@ -309,6 +309,7 @@ export class SqliteSelfUnderstandingRepository {
     const records = new Map<string, UnderstandingRecord>();
     const observations: Array<{
       episodeId: string;
+      episodeKind?: "entry" | "activity_day" | "daily_join" | "linked_period";
       parameterId: string;
       value: unknown;
       isMissing: boolean;
@@ -358,6 +359,7 @@ export class SqliteSelfUnderstandingRepository {
         definitions.set(parameterId, {
           id: parameterId,
           fieldKey: String(row.field_key),
+          sourceKind: "entry",
           templateId:
             typeof row.template_id === "string" ? row.template_id : undefined,
           templateVersionId: String(row.template_version_id),
@@ -390,6 +392,7 @@ export class SqliteSelfUnderstandingRepository {
       const value = fieldValue(row);
       observations.push({
         episodeId: String(row.id),
+        episodeKind: "entry",
         parameterId,
         value,
         isMissing: value === null,
@@ -456,9 +459,9 @@ export class SqliteSelfUnderstandingRepository {
           if (!definitions.has(parameterId)) definitions.set(parameterId, { id: parameterId, fieldKey: parameterId, semanticRole, sensitivity: "normal", semanticMergeAllowed: false, sourceKind: "activitywatch", unit, scaleFingerprint: fingerprint, nameJa, valueType: "number", minimumValue: 0, usableAsCondition, usableAsOutcome: !usableAsCondition, allowedConditionRoles: ["self_rating", "mood", "energy", "fatigue", "task_clarity", "time_of_day", "day_type"] });
           const value = valueFor(summary);
           activityRecord.conditionValues[parameterId] = value; activityRecord.outcomeValues[parameterId] = value;
-          observations.push({ episodeId: activityId, parameterId, value, isMissing: false, observedAt: summary.firstObservedAt });
+          observations.push({ episodeId: activityId, episodeKind: "activity_day", parameterId, value, isMissing: false, observedAt: summary.firstObservedAt });
           joinRecord.conditionValues[parameterId] = value; joinRecord.outcomeValues[parameterId] = value;
-          observations.push({ episodeId: joinId, parameterId, value, isMissing: false, observedAt: summary.firstObservedAt });
+          observations.push({ episodeId: joinId, episodeKind: "daily_join", parameterId, value, isMissing: false, observedAt: summary.firstObservedAt });
         }
         records.set(activityId, activityRecord);
         const subjectives = subjectiveByDate.get(date);
@@ -467,7 +470,7 @@ export class SqliteSelfUnderstandingRepository {
         for (const [parameterId, item] of subjectives) {
           if (!item) continue;
           joinRecord.conditionValues[parameterId] = item.value; joinRecord.outcomeValues[parameterId] = item.value;
-          observations.push({ episodeId: joinId, parameterId, value: item.value, isMissing: item.value === null, observedAt: item.observedAt });
+          observations.push({ episodeId: joinId, episodeKind: "daily_join", parameterId, value: item.value, isMissing: item.value === null, observedAt: item.observedAt });
           joined = true;
         }
         if (joined) records.set(joinId, joinRecord);

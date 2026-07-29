@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { ActivityWatchAdapter, activityWatchObservationIdentity, localDateInTimeZone, normalizeActivityWatchEvent, summarizeActivityWatchDaily } from "../packages/domain/src/activitywatch.ts";
-import { isAllowedCandidatePair } from "../packages/domain/src/hypothesis/candidates.ts";
+import { episodeIsEligibleForPair, isAllowedCandidatePair } from "../packages/domain/src/hypothesis/candidates.ts";
 import { createBaselineResponse, baselineItems } from "../packages/self-understanding/src/baseline.ts";
 import { validateQuestionQuality } from "../packages/self-understanding/src/questionQuality.ts";
 import { buildFixedChartModel } from "../packages/self-understanding/src/visualization.ts";
@@ -66,6 +66,10 @@ test("ActivityWatch values can only form allowlisted candidate pairs", () => {
   assert.equal(isAllowedCandidatePair(selfRating, activity), true);
   assert.equal(isAllowedCandidatePair(activity, { ...activity, id: "activity-2" }), false);
   assert.equal(isAllowedCandidatePair(activityCondition, selfRating), true);
+  assert.equal(episodeIsEligibleForPair("daily_join", selfRating, activity), true);
+  assert.equal(episodeIsEligibleForPair("entry", selfRating, activity), false);
+  assert.equal(episodeIsEligibleForPair("activity_day", selfRating, activity), false);
+  assert.equal(episodeIsEligibleForPair("entry", selfRating, { ...selfRating, id: "rating-2" }), true);
 });
 
 test("baseline self-perception uses an independent version and explicit validation", () => {
