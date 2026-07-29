@@ -21,6 +21,17 @@ export function selectReviewScope(requestedScope, fullRepositoryReviewCompletedS
   return requestedScope;
 }
 
+export function maxReviewCycleForHead(instructions, headSha, reviewScope = "pr") {
+  validateReviewScope(reviewScope);
+  if (!Array.isArray(instructions)) return 0;
+  return instructions.reduce((maximum, instruction) => {
+    if (instruction?.headSha !== headSha || (instruction.reviewScope ?? "pr") !== reviewScope) return maximum;
+    return Number.isInteger(instruction.reviewCycle)
+      ? Math.max(maximum, instruction.reviewCycle)
+      : maximum;
+  }, 0);
+}
+
 export function validateCustomGptUrl(value) {
   let url;
   try { url = new URL(value); } catch { throw new Error("custom GPT URL is invalid"); }

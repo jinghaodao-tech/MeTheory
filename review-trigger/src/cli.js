@@ -6,6 +6,7 @@ import {
   buildReviewPrompt,
   isTriggerReady,
   loadState,
+  maxReviewCycleForHead,
   markAttemptError,
   markConfirmed,
   markSubmitted,
@@ -203,16 +204,19 @@ async function fetchLatestInstruction(bridgeUrl, token, repository, prNumber, st
 }
 
 async function findReviewState({ bridgeUrl, token, repository, prNumber, headSha, reviewScope }) {
-  let maxReviewCycle = 0;
   let matchingInstruction = null;
+  const instructions = [];
   for (const status of ["pending", "claimed", "completed", "failed", "stale"]) {
     const instruction = await fetchLatestInstruction(bridgeUrl, token, repository, prNumber, status);
-    if (Number.isInteger(instruction?.reviewCycle)) maxReviewCycle = Math.max(maxReviewCycle, instruction.reviewCycle);
+    if (instruction) instructions.push(instruction);
     if (instruction?.headSha === headSha &&
         (instruction.reviewScope ?? "pr") === (reviewScope ?? "pr") &&
         ["pending", "claimed", "completed"].includes(instruction.status)) matchingInstruction = instruction;
   }
-  return { matchingInstruction, maxReviewCycle };
+  return {
+    matchingInstruction,
+    maxReviewCycle: maxReviewCycleForHead(instructions, headSha, reviewScope ?? "pr"),
+  };
 }
 
 async function waitForSavedReview({ bridgeUrl, token, repository, prNumber, headSha, reviewScope, timeoutMs }) {

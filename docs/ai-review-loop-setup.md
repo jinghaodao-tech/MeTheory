@@ -250,7 +250,7 @@ Behavior:
 - the same SHA is not submitted again after a matching Bridge result;
 - failed or interrupted submissions retry after a 30-minute cooldown;
 - the trigger waits up to 10 minutes for the matching saved result;
-- review cycles are derived from Bridge history and limited by the existing loop;
+- review cycles are derived from Bridge history for the current head SHA and scope, with at most two automated cycles per SHA;
 - only `blockingIssues` can reach Codex; suggestions are never auto-implemented;
 - merge remains manual.
 

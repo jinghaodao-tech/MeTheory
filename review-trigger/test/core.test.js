@@ -11,6 +11,7 @@ import {
   markSubmitted,
   observePullRequest,
   loadState,
+  maxReviewCycleForHead,
   saveState,
   selectReviewScope,
   validateCustomGptUrl,
@@ -54,6 +55,17 @@ test("returns to PR scope after a completed full review reaches a new SHA", () =
   assert.equal(selectReviewScope("repository", undefined, "new-sha"), "repository");
   assert.equal(selectReviewScope("repository", "old-sha", "new-sha"), "pr");
   assert.equal(selectReviewScope("repository", "same-sha", "same-sha"), "repository");
+});
+
+test("limits review cycles per head SHA and review scope", () => {
+  const instructions = [
+    { headSha: "old-sha", reviewScope: "pr", reviewCycle: 2 },
+    { headSha: "current-sha", reviewScope: "repository", reviewCycle: 2 },
+    { headSha: "current-sha", reviewScope: "pr", reviewCycle: 1 },
+  ];
+  assert.equal(maxReviewCycleForHead(instructions, "current-sha", "pr"), 1);
+  assert.equal(maxReviewCycleForHead(instructions, "current-sha", "repository"), 2);
+  assert.equal(maxReviewCycleForHead(instructions, "new-sha", "pr"), 0);
 });
 
 test("debounces, confirms, and retries by SHA", () => {
