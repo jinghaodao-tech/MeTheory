@@ -1,5 +1,10 @@
 # Local AI and Review Phase
 
+> Historical implementation note. The record-facing providers, runtime manager,
+> extraction workflow, review flow, and record-content external-AI consent now
+> live in Personal Context Studio. MeTheory retains only its bounded analysis
+> wording provider, which receives no Markdown bodies.
+
 This phase keeps AI execution explicit and local-first.
 
 ## Providers

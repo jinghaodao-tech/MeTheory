@@ -1,5 +1,9 @@
 # Privacy and Safe Delete Phase
 
+> Historical implementation note. Document, template-field, and external-AI
+> transfer consent now belong to Personal Context Studio. This document remains
+> relevant only to MeTheory-owned experiment, evidence, and Self Model privacy.
+
 ## Field policy
 
 Template fields keep the compatible `sensitivity` column and add

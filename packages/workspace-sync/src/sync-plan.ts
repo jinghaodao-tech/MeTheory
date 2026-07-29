@@ -1,3 +1,0 @@
-import type { MarkdownEntry } from "./markdown-entry.ts";
-export type SyncPlan = { action: "create"|"update"|"skip"|"archive_candidate"; reason: string; entry: MarkdownEntry };
-export function planSync(entry: MarkdownEntry, existing?: { id: string; recordedAt: string; sourceUpdatedAt: string|null }): SyncPlan { if(!existing)return { action:"create",reason:"new_file",entry }; if(entry.sourceUpdatedAt && existing.sourceUpdatedAt === entry.sourceUpdatedAt)return { action:"skip",reason:"unchanged_source",entry }; return { action:"update",reason:"file_changed",entry:{...entry,entryId:existing.id,recordedAt:entry.recordedAt ?? existing.recordedAt} }; }

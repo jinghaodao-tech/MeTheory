@@ -36,6 +36,20 @@ and `highly_sensitive` fields from the analysis snapshot. It does not expose
 search results or document bodies to an AI unless a caller requests a bounded
 local search result under the user's configured policy.
 
+## External-AI privacy ownership
+
+PCS is the enforcement point for any record-content transfer outside the local
+machine. Manual external extraction requires active consent for both the source
+document and each requested template field, scoped by provider and destination
+host. Fields marked `never` or `highly_sensitive` are refused even when an
+otherwise matching consent exists. Consent grants, revocations, and audit
+records remain in the PCS SQLite database; MeTheory receives only the reviewed
+analysis snapshot and cannot use PCS consent to retrieve a Markdown body.
+
+MeTheory retains privacy controls only for its own experiments, hypotheses,
+evidence, and Self Model. It must request a PCS analysis snapshot rather than
+calling an external AI with record text or extracted candidate values.
+
 ## Editor and AI-tool integration
 
 There is no bidirectional note synchronization and no required editor plugin.
