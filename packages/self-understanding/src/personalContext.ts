@@ -9,6 +9,12 @@ export type PersonalContextSnapshotValue = {
   templateId: string;
   sourceDocumentId: string | null;
   allowedValues?: Array<{ key: string; label: string }>;
+  analysisRole?: string | null;
+  analysisRoleConfirmed?: boolean;
+  analysisMergeAllowed?: boolean;
+  minimum?: number | null;
+  maximum?: number | null;
+  unit?: string | null;
 };
 
 export type PersonalContextSnapshot = {
@@ -21,7 +27,7 @@ export type PersonalContextSnapshot = {
 function supportedValue(value: PersonalContextSnapshotValue): boolean {
   if (value.valueType === "boolean") return typeof value.value === "boolean";
   if (value.valueType === "single_choice") return typeof value.value === "string";
-  return ["number", "integer"].includes(value.valueType) && typeof value.value === "number" && Number.isFinite(value.value);
+  return ["number", "integer", "scale", "duration_minutes"].includes(value.valueType) && typeof value.value === "number" && Number.isFinite(value.value);
 }
 
 function parameterId(value: PersonalContextSnapshotValue): string {
@@ -62,9 +68,10 @@ export function analyzePersonalContextSnapshot(snapshotInput: unknown, input: { 
       fieldKey: first.fieldKey,
       templateId: first.templateId,
       nameJa: first.label,
-      valueType: first.valueType === "integer" ? "number" : first.valueType,
-      minimumValue: numeric.length ? Math.min(...numeric) : undefined,
-      maximumValue: numeric.length ? Math.max(...numeric) : undefined,
+      valueType: ["integer", "scale", "duration_minutes"].includes(first.valueType) ? "number" : first.valueType,
+      minimumValue: first.minimum ?? (numeric.length ? Math.min(...numeric) : undefined),
+      maximumValue: first.maximum ?? (numeric.length ? Math.max(...numeric) : undefined),
+      semanticRole: first.analysisRoleConfirmed && first.analysisMergeAllowed ? first.analysisRole ?? undefined : undefined,
       usableAsCondition: true,
       usableAsOutcome: true,
       sourceKind: "entry" as const

@@ -124,6 +124,12 @@ export function migrateDatabase(db: DatabaseSync, root: string) {
         db.exec("CREATE INDEX IF NOT EXISTS pcs_analysis_runs_user_time_idx ON pcs_analysis_runs(user_id, created_at DESC)");
         db.exec("CREATE INDEX IF NOT EXISTS pcs_analysis_runs_profile_time_idx ON pcs_analysis_runs(user_id, profile_id, period_start_at, period_end_at)");
       }
+    },
+    {
+      id: "closed-loop-experiments-v1",
+      apply: () => {
+        db.exec(readFileSync(resolve(root, "db", "closed-loop-experiments-migration.sql"), "utf8"));
+      }
     }
   ];
   for (const migration of migrations) {

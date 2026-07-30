@@ -6,48 +6,27 @@ import { evaluateEvidence, directionForObservation, RULE_VERSION, type Observati
 import { buildEpisodes } from "../../../packages/domain/src/hypothesis/episodes.ts";
 import { evaluateHypothesis } from "../../../packages/domain/src/hypothesis/evaluators.ts";
 import { validateHypothesisSpec } from "../../../packages/domain/src/hypothesis/spec.ts";
-import type { EntryWriteInput } from "../../../packages/records/src/index.ts";
 import { createAiQueryService } from "./aiQueryService.ts";
-import { SqliteEntryRepository } from "./entryRepository.ts";
-import { SqliteSearchDocumentRepository } from "./searchDocumentRepository.ts";
-import { SqliteTemplateRepository } from "./templateRepository.ts";
-import { SqlitePrivacyRepository } from "./privacyRepository.ts";
 import { SqliteSelfUnderstandingRepository } from "./selfUnderstandingRepository.ts";
 import { loadPersonalContextSnapshot, requestPersonalContextTemplate } from "./personalContextClient.ts";
-import { MockTemplateGenerationProvider, UnavailableTemplateGenerationProvider, DisabledTemplateGenerationProvider, ManualChatGPTTemplateProvider, OpenAITemplateGenerationProvider, TEMPLATE_PROMPT_VERSION, suggestSemanticRolesForTemplate, validateTemplateDraft } from "../../../packages/templates/src/index.ts";
+import { SqliteExperimentRepository } from "./experimentRepository.ts";
+import { migrateDatabase } from "./db/migrate.ts";
+import { reviewReasonAction, type CandidateForExperiment, type ExperimentDraft, type ExperimentStatus } from "../../../packages/domain/src/experiments.ts";
 import {
-  generateSelfUnderstanding,
-  interpretSelfUnderstanding,
-  OpenAICompatibleLocalInterpretationProvider,
-  toSelfUnderstandingHypothesisView,
   validateSelfModelStatement,
-  type UnderstandingRecord,
   baselineItems,
   createBaselineResponse,
   IPIP_BASELINE_ITEM_SET_VERSION
 } from "../../../packages/self-understanding/src/index.ts";
-import { analyzePersonalContextSnapshot } from "../../../packages/self-understanding/src/personalContext.ts";
 import { ActivityWatchAdapter, activityWatchObservationIdentity, summarizeActivityWatchDaily } from "../../../packages/domain/src/activitywatch.ts";
-import { reviewReasonAction, type CandidateForExperiment, type ExperimentDraft, type ExperimentStatus } from "../../../packages/domain/src/experiments.ts";
-import { SqliteExperimentRepository } from "./experimentRepository.ts";
-import { migrateDatabase } from "./db/migrate.ts";
-import { SqlitePcsAnalysisRepository } from "./pcsAnalysisRepository.ts";
-import { analyzePcsAnalysisSnapshot } from "../../../packages/self-understanding/src/pcsSnapshotAnalysis.ts";
-import { validatePcsAnalysisSnapshotV2 } from "../../../packages/contracts/src/pcsAnalysisSnapshotV2.ts";
-import { analyzeBoundPcsSnapshot, validateBoundPcsSnapshot } from "./services/pcsAnalysisService.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.METHEORY_DB ?? resolve(root, "data", "metheory.sqlite3");
 const db = new DatabaseSync(databasePath);
 migrateDatabase(db, root);
 const aiQueryService = createAiQueryService(db);
-const entryRepository = new SqliteEntryRepository(db);
-const searchDocumentRepository = new SqliteSearchDocumentRepository(db);
-const templateRepository = new SqliteTemplateRepository(db);
-const privacyRepository = new SqlitePrivacyRepository(db);
 const selfUnderstandingRepository = new SqliteSelfUnderstandingRepository(db);
 const experimentRepository = new SqliteExperimentRepository(db);
-const pcsAnalysisRepository = new SqlitePcsAnalysisRepository(db);
 
 type LegacyActivityWatchObservation = {
   id: string;
@@ -215,6 +194,8 @@ db.exec("CREATE TABLE IF NOT EXISTS ai_http_access_audit_logs (id TEXT PRIMARY K
 const now = () => new Date().toISOString();
 const id = (prefix: string) => `${prefix}_${randomUUID().replaceAll("-", "")}`;
 
+/* Retired record-owned analysis. PCS is the only source of free-record values. */
+/*
 function fieldValue(row: Record<string, unknown>): unknown { if (Number(row.is_missing ?? 0) === 1) return null; if (row.boolean_value !== null && row.boolean_value !== undefined) return Number(row.boolean_value) === 1; if (row.integer_value !== null && row.integer_value !== undefined) return Number(row.integer_value); if (row.number_value !== null && row.number_value !== undefined) return Number(row.number_value); if (row.json_value !== null && row.json_value !== undefined) { try { return JSON.parse(String(row.json_value)); } catch { return null; } } return row.text_value ?? row.date_value ?? row.datetime_value ?? row.duration_seconds ?? null; }
 function personalContextCandidate(snapshot: any, reviewStatus: "fits" | "does_not_fit" | "on_hold", createdAt: string) {
   const period = snapshot.period ?? {};
@@ -245,19 +226,15 @@ function experimentCandidateFromSnapshot(snapshot: Record<string, unknown>, cand
   const outcome = interpretation.outcome && typeof interpretation.outcome === "object" ? interpretation.outcome as Record<string, unknown> : {};
   const cohortA = candidate.cohortA && typeof candidate.cohortA === "object" ? candidate.cohortA as Record<string, unknown> : {};
   const cohortB = candidate.cohortB && typeof candidate.cohortB === "object" ? candidate.cohortB as Record<string, unknown> : {};
-  const conditionParameterId = String(candidate.conditionParameterId ?? condition.fieldKey ?? condition.field ?? "");
-  const outcomeParameterId = String(candidate.outcomeParameterId ?? outcome.fieldKey ?? outcome.field ?? "");
-  const cohortAKey = String(candidate.cohortAKey ?? cohortA.key ?? "group_a");
-  const cohortBKey = String(candidate.cohortBKey ?? cohortB.key ?? "group_b");
   const effectValue = Number(candidate.effectValue ?? 0);
   return {
     id: candidateId,
-    conditionParameterId,
-    outcomeParameterId,
-    conditionLabel: String(condition.label ?? conditionParameterId),
-    outcomeLabel: String(outcome.label ?? outcomeParameterId),
-    cohortAKey,
-    cohortBKey,
+    conditionParameterId: String(candidate.conditionParameterId ?? condition.fieldKey ?? condition.field ?? ""),
+    outcomeParameterId: String(candidate.outcomeParameterId ?? outcome.fieldKey ?? outcome.field ?? ""),
+    conditionLabel: String(condition.label ?? candidate.conditionParameterId ?? "condition"),
+    outcomeLabel: String(outcome.label ?? candidate.outcomeParameterId ?? "outcome"),
+    cohortAKey: String(candidate.cohortAKey ?? cohortA.key ?? "group_a"),
+    cohortBKey: String(candidate.cohortBKey ?? cohortB.key ?? "group_b"),
     cohortALabel: typeof cohortA.label === "string" ? cohortA.label : undefined,
     cohortBLabel: typeof cohortB.label === "string" ? cohortB.label : undefined,
     effectValue: Number.isFinite(effectValue) ? effectValue : 0,
@@ -329,6 +306,36 @@ async function analyzeSelfUnderstandingWithInterpretation(
   };
 }
 
+*/
+function personalContextCandidate(snapshot: any, reviewStatus: "fits" | "does_not_fit" | "on_hold", createdAt: string) {
+  const period = snapshot.period ?? {};
+  return { schemaVersion: "personal-context-candidate-v1" as const, id: `context_${String(snapshot.id ?? snapshot.candidate?.id ?? "candidate")}`, sourceSystem: "metheory" as const, sourceHypothesisId: String(snapshot.id ?? snapshot.candidate?.id ?? ""), statement: String(snapshot.selfModelCandidate ?? snapshot.statement ?? ""), construct: String(snapshot.construct ?? "uncategorized"), tendencyScope: ["single_period_state", "state_dependent", "relatively_stable"].includes(String(snapshot.tendencyScope)) ? snapshot.tendencyScope : "single_period_state", reviewStatus, evidenceSummary: { supportingCount: Array.isArray(snapshot.supportingEvidence) ? snapshot.supportingEvidence.length : 0, contradictingCount: Array.isArray(snapshot.contradictingEvidence) ? snapshot.contradictingEvidence.length : 0, periodStartAt: String(period.startAt ?? ""), periodEndAt: String(period.endAt ?? "") }, caution: ["This is a non-diagnostic, user-reviewed observation."], createdAt };
+}
+
+function experimentCandidateFromSnapshot(snapshot: Record<string, unknown>, candidateId: string): CandidateForExperiment {
+  const candidate = snapshot.candidate && typeof snapshot.candidate === "object" ? snapshot.candidate as Record<string, unknown> : snapshot;
+  const interpretation = snapshot.interpretationInput && typeof snapshot.interpretationInput === "object" ? snapshot.interpretationInput as Record<string, unknown> : {};
+  const condition = interpretation.condition && typeof interpretation.condition === "object" ? interpretation.condition as Record<string, unknown> : {};
+  const outcome = interpretation.outcome && typeof interpretation.outcome === "object" ? interpretation.outcome as Record<string, unknown> : {};
+  const cohortA = candidate.cohortA && typeof candidate.cohortA === "object" ? candidate.cohortA as Record<string, unknown> : {};
+  const cohortB = candidate.cohortB && typeof candidate.cohortB === "object" ? candidate.cohortB as Record<string, unknown> : {};
+  const effectValue = Number(candidate.effectValue ?? 0);
+  return {
+    id: candidateId,
+    conditionParameterId: String(candidate.conditionParameterId ?? condition.fieldKey ?? condition.field ?? ""),
+    outcomeParameterId: String(candidate.outcomeParameterId ?? outcome.fieldKey ?? outcome.field ?? ""),
+    conditionLabel: String(condition.label ?? candidate.conditionParameterId ?? "condition"),
+    outcomeLabel: String(outcome.label ?? candidate.outcomeParameterId ?? "outcome"),
+    cohortAKey: String(candidate.cohortAKey ?? cohortA.key ?? "group_a"),
+    cohortBKey: String(candidate.cohortBKey ?? cohortB.key ?? "group_b"),
+    cohortALabel: typeof cohortA.label === "string" ? cohortA.label : undefined,
+    cohortBLabel: typeof cohortB.label === "string" ? cohortB.label : undefined,
+    effectValue: Number.isFinite(effectValue) ? effectValue : 0,
+    sampleCount: Number(candidate.completePairCount ?? candidate.sampleCount ?? 0),
+    minimumPerGroup: Number(candidate.minimumPerGroup ?? 3),
+    statement: typeof snapshot.statement === "string" ? snapshot.statement : undefined
+  };
+}
 function json(response: ServerResponse, status: number, payload: unknown): void {
   const body = JSON.stringify(payload);
   response.writeHead(status, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(body) });
@@ -345,29 +352,8 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function entryWriteInput(input: Record<string, unknown>, entryId?: string): EntryWriteInput {
-  return {
-    id: entryId ?? optionalString(input.id),
-    userId: optionalString(input.userId) ?? "",
-    templateId: optionalString(input.templateId),
-    episodeId: optionalString(input.episodeId),
-    externalSource: optionalString(input.externalSource),
-    externalSourceId: optionalString(input.externalSourceId),
-    title: optionalString(input.title) ?? "",
-    body: optionalString(input.body) ?? "",
-    recordedAt: optionalString(input.recordedAt),
-    sourceUpdatedAt: input.sourceUpdatedAt === null ? null : optionalString(input.sourceUpdatedAt ?? input.sourceModifiedAt),
-  };
-}
-
-function includeArchived(url: URL): boolean {
-  return ["1", "true"].includes(url.searchParams.get("includeArchived") ?? "");
-}
-
 function pathParts(request: IncomingMessage): string[] {
-  return new URL(request.url ?? "/", "http://localhost").pathname.split("/").filter(Boolean).map((part) => {
-    try { return decodeURIComponent(part); } catch { return part; }
-  });
+  return new URL(request.url ?? "/", "http://localhost").pathname.split("/").filter(Boolean);
 }
 
 function userExists(userId: string): boolean {
@@ -500,150 +486,10 @@ function latestInsight(hypothesisId: string): Record<string, unknown> | null {
 const server = createServer(async (request, response) => {
   const parts = pathParts(request);
   const requestUrl = new URL(request.url ?? "/", "http://localhost");
-
-  if (parts[0] === "v1" && parts[1] === "pcs") {
-    if (request.method === "GET" && parts[2] === "profile-binding") {
-      const userId = requestUrl.searchParams.get("userId") ?? "";
-      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      return json(response, 200, { binding: pcsAnalysisRepository.getBinding(userId) ?? null });
-    }
-    if ((request.method === "PUT" || request.method === "POST") && parts[2] === "profile-binding") {
-      const input = await body(request);
-      const userId = optionalString(input.userId) ?? "";
-      const profileId = optionalString(input.pcsProfileId) ?? "";
-      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      if (!profileId) return json(response, 400, { error: "pcs_profile_binding_invalid" });
-      return json(response, 200, { binding: pcsAnalysisRepository.bind(userId, profileId) });
-    }
-    if (request.method === "DELETE" && parts[2] === "profile-binding") {
-      const userId = requestUrl.searchParams.get("userId") ?? "";
-      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      return json(response, 200, { removed: pcsAnalysisRepository.remove(userId) });
-    }
-    if (request.method === "GET" && parts[2] === "analysis-history") {
-      const userId = requestUrl.searchParams.get("userId") ?? "";
-      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      return json(response, 200, { items: pcsAnalysisRepository.listRuns(userId) });
-    }
-    if (request.method === "POST" && parts.length === 7 && parts[2] === "analysis-runs" && parts[4] === "candidates" && parts[6] === "review") {
-      const input = await body(request);
-      const userId = optionalString(input.userId) ?? "";
-      const rating = optionalString(input.rating) ?? "";
-      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      if (!["fits", "does_not_fit", "on_hold"].includes(rating)) return json(response, 400, { error: "hypothesis_review_invalid" });
-      const run = pcsAnalysisRepository.getRun(userId, parts[3]);
-      const candidateId = parts[5];
-      const candidateSummary = run?.resultSummary?.candidates.find((item) => item.id === candidateId);
-      if (!run || !candidateSummary) return json(response, 404, { error: "pcs_analysis_candidate_not_found" });
-      const reviewedAt = now();
-      const reviewId = id("hyp_review");
-      const pair = { condition: candidateSummary.candidate.conditionParameterId, outcome: candidateSummary.candidate.outcomeParameterId };
-      db.prepare("INSERT INTO hypothesis_reviews(id,user_id,candidate_id,rating,note,analysis_start_at,analysis_end_at,template_version_id,field_pair_json,reviewed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(reviewId, userId, candidateId, rating, optionalString(input.note) ?? "", candidateSummary.period.startAt, candidateSummary.period.endAt, null, JSON.stringify(pair), reviewedAt, reviewedAt);
-      let selfModelCandidateId: string | null = null;
-      if (rating === "fits") {
-        const statement = candidateSummary.statement.trim();
-        if (!validateSelfModelStatement(statement)) return json(response, 400, { error: "self_model_statement_invalid" });
-        selfModelCandidateId = id("self_model_candidate");
-        db.prepare(`INSERT INTO self_model_candidates(
-          id,user_id,candidate_id,statement,status,source_hypothesis_id,
-          supporting_period_start,supporting_period_end,construct_key,tendency_scope,
-          source_analysis_periods_json,supporting_field_pairs_json,
-          resolution_action,target_self_belief_id,user_note,created_at,last_reviewed_at
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-          selfModelCandidateId,
-          userId,
-          candidateId,
-          statement,
-          "proposed",
-          candidateId,
-          candidateSummary.period.startAt,
-          candidateSummary.period.endAt,
-          candidateSummary.construct,
-          candidateSummary.tendencyScope,
-          JSON.stringify([candidateSummary.period]),
-          JSON.stringify([pair]),
-          "new",
-          null,
-          optionalString(input.note) ?? "",
-          reviewedAt,
-          reviewedAt
-        );
-      }
-      return json(response, 201, { reviewId, candidateId, rating, selfModelCandidateId });
-    }    if (request.method === "GET" && parts.length === 4 && parts[2] === "analysis-runs") {
-      const userId = requestUrl.searchParams.get("userId") ?? "";
-      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      const run = pcsAnalysisRepository.getRun(userId, parts[3]);
-      return run ? json(response, 200, { run }) : json(response, 404, { error: "pcs_analysis_run_not_found" });
-    }
-    if (request.method === "POST" && parts.length === 5 && parts[2] === "analysis-runs" && parts[4] === "experiment-draft") {
-      const input = await body(request);
-      const userId = optionalString(input.userId) ?? "";
-      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      const run = pcsAnalysisRepository.getRun(userId, parts[3]);
-      const candidateId = optionalString(input.candidateId) ?? "";
-      const candidateSummary = run?.resultSummary?.candidates.find((item) => item.id === candidateId);
-      if (!run || !candidateSummary) return json(response, 404, { error: "pcs_analysis_candidate_not_found" });
-      const candidate = experimentCandidateFromSnapshot({ candidate: candidateSummary.candidate, interpretationInput: candidateSummary.interpretationInput, statement: candidateSummary.statement }, candidateSummary.id);
-      if (!candidate.conditionParameterId || !candidate.outcomeParameterId) return json(response, 400, { error: "experiment_candidate_invalid" });
-      return json(response, 201, { draft: experimentRepository.createDraft(userId, candidate, { durationDays: Number(input.durationDays), minimumObservations: Number(input.minimumObservations), timezone: optionalString(input.timezone) }), sourceAnalysisId: run.id, sourceCandidateId: candidateSummary.id });
-    }
-    if (request.method === "POST" && (parts[2] === "validate" || parts[2] === "analyze")) {
-      const input = await body(request);
-      const userId = optionalString(input.userId) ?? "";
-      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      const bound = validateBoundPcsSnapshot(input.snapshot, pcsAnalysisRepository.getBinding(userId));
-      if (!bound.ok) return json(response, bound.status, { error: bound.error, ...(bound.details ? { details: bound.details } : {}) });
-      if (parts[2] === "validate") return json(response, 200, { valid: true, snapshotId: bound.value.snapshotId, profileId: bound.value.profileId });
-      const analysis = analyzeBoundPcsSnapshot(bound.value, {
-        minimumTotalSamples: Number.isFinite(Number(input.minimumTotalSamples)) ? Number(input.minimumTotalSamples) : undefined,
-        maximumCandidates: Number.isFinite(Number(input.maximumCandidates)) ? Number(input.maximumCandidates) : undefined
-      });
-      const run = pcsAnalysisRepository.saveRun(userId, bound.value, analysis);
-      return json(response, 200, { analysisId: run.id, run, analysis });
-    }
-    if (request.method === "POST" && parts[2] === "live-analyze") {
-      const input = await body(request);
-      const userId = optionalString(input.userId) ?? "";
-      const pcsUrl = optionalString(input.pcsUrl) ?? "";
-      const profileId = optionalString(input.profileId) ?? "";
-      const from = optionalString(input.from) ?? "";
-      const to = optionalString(input.to) ?? "";
-      const timezone = optionalString(input.timezone) ?? "";
-      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      const binding = pcsAnalysisRepository.getBinding(userId);
-      if (!binding) return json(response, 409, { error: "pcs_profile_not_bound" });
-      if (!profileId || binding.pcsProfileId !== profileId) return json(response, 409, { error: "pcs_profile_mismatch" });
-      let url: URL;
-      try {
-        url = new URL(pcsUrl);
-        if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "::1"].includes(url.hostname)) throw new Error("not_local");
-      } catch {
-        return json(response, 400, { error: "pcs_unavailable" });
-      }
-      url.pathname = "/v1/context/analysis-snapshot";
-      url.search = new URLSearchParams({ profileId, from, to, timezone }).toString();
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2000);
-      try {
-        const upstream = await fetch(url, { signal: controller.signal });
-        if (!upstream.ok) return json(response, 503, { error: "pcs_unavailable" });
-        const snapshot = await upstream.json();
-        const bound = validateBoundPcsSnapshot(snapshot, binding);
-        if (!bound.ok) return json(response, bound.status, { error: bound.error, ...(bound.details ? { details: bound.details } : {}) });
-        const analysis = analyzeBoundPcsSnapshot(bound.value);
-        const run = pcsAnalysisRepository.saveRun(userId, bound.value, analysis);
-        return json(response, 200, { analysisId: run.id, run, analysis });
-      } catch (error) {
-        return json(response, error instanceof Error && error.name === "AbortError" ? 504 : 503, { error: error instanceof Error && error.name === "AbortError" ? "pcs_timeout" : "pcs_unavailable" });
-      } finally {
-        clearTimeout(timer);
-      }
-    }
-  }
-
   try {
     if (request.method === "GET" && parts.join("/") === "healthz") return json(response, 200, { status: "ok", service: "metheory-api" });
+    /* Retired record API. Templates, entries, record privacy, and Markdown search belong to PCS. */
+    /*
     if (parts[0] === "v1" && parts[1] === "templates") {
       if (request.method === "GET" && parts.length === 2) return json(response, 200, { items: templateRepository.list(requestUrl.searchParams.get("userId") ?? "") });
       if (request.method === "GET" && parts.length === 3) return json(response, 200, templateRepository.detail(requestUrl.searchParams.get("userId") ?? "", parts[2]));
@@ -669,6 +515,7 @@ const server = createServer(async (request, response) => {
       if (request.method === "POST" && parts.length === 4 && parts[3] === "entries") { const input = await body(request); return json(response, 201, templateRepository.createEntry(String(input.userId ?? ""), parts[2], input)); }
       if (request.method === "DELETE" && parts.length === 3) { const input = await body(request); templateRepository.archive(String(input.userId ?? requestUrl.searchParams.get("userId") ?? ""), parts[2]); return json(response, 200, { archived: true }); }
     }
+    */
     if (parts[0] === "v1" && parts[1] === "ai" && request.method === "GET") {
       const userId = aiUserId(request, requestUrl); const clientId = requestUrl.searchParams.get("clientId") ?? String(request.headers["x-metheory-client-id"] ?? ""); const clientType = requestUrl.searchParams.get("clientType") ?? String(request.headers["x-metheory-client-type"] ?? "other"); const purpose = requestUrl.searchParams.get("purpose") ?? "read_only_ai";
       if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); if (!aiAuthenticatedUser(request, userId)) return json(response, 401, { error: "authenticated_user_required" }); if (!aiClientAllowed(clientId, clientType)) return json(response, 403, { error: "ai_client_not_allowed" }); if (!aiPurposeAllowed(purpose)) return json(response, 403, { error: "ai_purpose_not_allowed" });
@@ -690,6 +537,8 @@ const server = createServer(async (request, response) => {
       db.prepare("INSERT INTO users(id, auth_subject, locale, timezone, created_at) VALUES (?, ?, ?, ?, ?)").run(userId, authSubject, optionalString(input.locale) ?? "ja-JP", optionalString(input.timezone) ?? "Asia/Tokyo", now());
       return json(response, 201, { id: userId });
     }
+    /* Retired record API. Templates, entries, record privacy, and Markdown search belong to PCS. */
+    /*
     if (parts[0] === "v1" && parts[1] === "privacy") {
       const queryUserId = requestUrl.searchParams.get("userId") ?? "";
       if (request.method === "GET" && parts.length === 3 && parts[2] === "status") { if (!userExists(queryUserId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, privacyRepository.status(queryUserId)); }
@@ -762,122 +611,20 @@ const server = createServer(async (request, response) => {
       if (!query) return json(response, 400, { error: "search_query_required" });
       return json(response, 200, { items: await searchDocumentRepository.search(userId, query, Number.isFinite(limit) ? limit : 20) });
     }
+    */
     if (request.method === "POST" && parts.join("/") === "v1/self-understanding/analyze") {
-      const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, await analyzeSelfUnderstandingWithInterpretation(userId, input));
-    }
-
-    if (request.method === "POST" && parts.length === 4 && parts[0] === "v1" && parts[1] === "self-understanding" && parts[3] === "experiment-draft") {
-      const input = await body(request);
-      const userId = optionalString(input.userId) ?? "";
-      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      const snapshot = selfUnderstandingRepository.latestSnapshot(userId, parts[2]);
-      if (!snapshot) return json(response, 404, { error: "self_understanding_candidate_not_found" });
-      const candidate = experimentCandidateFromSnapshot(snapshot, parts[2]);
-      if (!candidate.conditionParameterId || !candidate.outcomeParameterId) return json(response, 400, { error: "experiment_candidate_invalid" });
-      return json(response, 201, { draft: experimentRepository.createDraft(userId, candidate, { durationDays: Number(input.durationDays), minimumObservations: Number(input.minimumObservations), timezone: optionalString(input.timezone) }) });
-    }
-    if (parts[0] === "v1" && parts[1] === "experiment-drafts") {
-      if (request.method === "GET" && parts.length === 2) {
-        const userId = requestUrl.searchParams.get("userId") ?? "";
-        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-        return json(response, 200, { items: experimentRepository.listDrafts(userId, requestUrl.searchParams.get("status") ?? undefined) });
-      }
-      if (parts.length === 3) {
-        const input = request.method === "PATCH" || request.method === "POST" ? await body(request) : {};
-        const userId = request.method === "GET" ? requestUrl.searchParams.get("userId") ?? "" : optionalString(input.userId) ?? "";
-        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-        if (request.method === "GET") { const draft = experimentRepository.getDraft(userId, parts[2]); return draft ? json(response, 200, { draft }) : json(response, 404, { error: "experiment_draft_not_found" }); }
-        if (request.method === "PATCH") {
-          const patch: Partial<Pick<ExperimentDraft, "title" | "statement" | "durationDays" | "minimumObservations" | "minimumPerGroup" | "suggestedSchedule" | "stopConditions">> = {};
-          if (typeof input.title === "string") patch.title = input.title;
-          if (typeof input.statement === "string") patch.statement = input.statement;
-          if (typeof input.durationDays === "number") patch.durationDays = input.durationDays;
-          if (typeof input.minimumObservations === "number") patch.minimumObservations = input.minimumObservations;
-          if (typeof input.minimumPerGroup === "number") patch.minimumPerGroup = input.minimumPerGroup;
-          if (input.suggestedSchedule && typeof input.suggestedSchedule === "object") patch.suggestedSchedule = input.suggestedSchedule as ExperimentDraft["suggestedSchedule"];
-          if (Array.isArray(input.stopConditions)) patch.stopConditions = input.stopConditions as ExperimentDraft["stopConditions"];
-          return json(response, 200, { draft: experimentRepository.updateDraft(userId, parts[2], patch) });
-        }
-        if (parts.length === 3 && input.action === "reject") { experimentRepository.rejectDraft(userId, parts[2]); return json(response, 200, { rejected: true }); }
-      }
-      if (request.method === "POST" && parts.length === 4 && parts[3] === "accept") {
-        const input = await body(request); const userId = optionalString(input.userId) ?? "";
-        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-        return json(response, 201, { experiment: experimentRepository.acceptDraft(userId, parts[2], optionalString(input.hypothesisId)) });
-      }
-      if (request.method === "POST" && parts.length === 4 && parts[3] === "reject") {
-        const input = await body(request); const userId = optionalString(input.userId) ?? "";
-        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-        experimentRepository.rejectDraft(userId, parts[2]); return json(response, 200, { rejected: true });
-      }
-    }
-    if (parts[0] === "v1" && parts[1] === "experiments") {
-      if (request.method === "GET" && parts.length === 2) {
-        const userId = requestUrl.searchParams.get("userId") ?? "";
-        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-        return json(response, 200, { items: experimentRepository.list(userId, requestUrl.searchParams.get("status") ?? undefined) });
-      }
-      if (parts.length >= 3) {
-        const input = request.method === "POST" ? await body(request) : {};
-        const userId = request.method === "GET" ? requestUrl.searchParams.get("userId") ?? "" : optionalString(input.userId) ?? "";
-        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-        if (request.method === "GET" && parts.length === 3) { const experiment = experimentRepository.get(userId, parts[2]); return experiment ? json(response, 200, { experiment, evaluation: experimentRepository.latestEvaluation(userId, parts[2]) ?? null }) : json(response, 404, { error: "experiment_not_found" }); }
-        if (request.method === "GET" && parts.length === 4 && parts[3] === "questions") {
-          const experiment = experimentRepository.get(userId, parts[2]);
-          if (!experiment) return json(response, 404, { error: "experiment_not_found" });
-          const rows = db.prepare("SELECT rp.parameter_id,pd.name_ja,pd.askable,rp.minimum_samples FROM experiment_required_parameters rp JOIN parameter_definitions pd ON pd.id=rp.parameter_id WHERE rp.experiment_id=? ORDER BY rp.priority").all(parts[2]) as Array<Record<string, unknown>>;
-          return json(response, 200, { items: rows.map((row) => ({ parameterId: String(row.parameter_id), text: `現在の「${String(row.name_ja)}」を記録してください。`, askable: Number(row.askable) === 1, minimumSamples: Number(row.minimum_samples), reason: "この実験に必要な観測項目です" })) });
-        }
-        if (request.method === "GET" && parts.length === 4 && parts[3] === "evaluations") return json(response, 200, { evaluation: experimentRepository.latestEvaluation(userId, parts[2]) ?? null });
-        if (request.method === "POST" && parts.length === 4 && parts[3] === "responses") {
-          const observation = { id: optionalString(input.id) ?? id("experiment_observation"), episodeId: optionalString(input.episodeId), observedAt: optionalString(input.observedAt) ?? now(), groupKey: optionalString(input.groupKey) ?? "unknown", outcome: Number(input.outcome), conditionValues: input.conditionValues && typeof input.conditionValues === "object" ? input.conditionValues as Record<string, unknown> : {}, source: (optionalString(input.source) ?? "checkin") as "checkin" | "manual" | "import", eligible: input.eligible !== false, note: optionalString(input.note) };
-          if (!Number.isFinite(observation.outcome) || !["checkin", "manual", "import"].includes(observation.source)) return json(response, 400, { error: "experiment_observation_invalid" });
-          return json(response, 201, { observation: experimentRepository.addObservationForExperiment(userId, parts[2], observation) });
-        }
-        if (request.method === "POST" && parts.length === 4 && parts[3] === "evaluate") return json(response, 200, { evaluation: experimentRepository.evaluate(userId, parts[2], optionalString(input.evaluatedAt)) });
-        const transitionRoutes: Record<string, ExperimentStatus> = { start: "active", pause: "paused", resume: "active", cancel: "cancelled", complete: "completed", archive: "archived" };
-        if (request.method === "POST" && parts.length === 4 && transitionRoutes[parts[3]]) return json(response, 200, { experiment: experimentRepository.transition(userId, parts[2], transitionRoutes[parts[3]]) });
-      }
-    }
-    if (request.method === "POST" && parts.join("/") === "v1/collection-plans") {
-      const input = await body(request); const userId = optionalString(input.userId) ?? "";
-      if (!userExists(userId) || !optionalString(input.sourceAnalysisId) || !optionalString(input.targetConstruct) || !Array.isArray(input.requirements)) return json(response, 400, { error: "collection_plan_invalid" });
-      const requirements = input.requirements.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object").map((item) => ({ parameterId: String(item.parameterId ?? ""), label: String(item.label ?? item.parameterId ?? ""), groupKey: optionalString(item.groupKey), minimumSamples: Math.max(1, Number(item.minimumSamples ?? 1)), askable: item.askable !== false, preferredSource: (optionalString(item.preferredSource) ?? "user") as "user" | "system" | "device" | "external_app" }));
-      return json(response, 201, { plan: experimentRepository.createCollectionPlan(userId, { sourceAnalysisId: String(input.sourceAnalysisId), targetConstruct: String(input.targetConstruct), requirements, counts: input.counts && typeof input.counts === "object" ? input.counts as Record<string, number> : {}, includePcsTemplateRequest: input.includePcsTemplateRequest === true }) });
-    }
-    if (parts[0] === "v1" && parts[1] === "collection-plans" && parts.length >= 3) {
-      const input = request.method === "POST" ? await body(request) : {};
-      const userId = request.method === "GET" ? requestUrl.searchParams.get("userId") ?? "" : optionalString(input.userId) ?? "";
-      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      if (request.method === "GET" && parts.length === 3) { const plan = experimentRepository.getCollectionPlan(userId, parts[2]); return plan ? json(response, 200, { plan }) : json(response, 404, { error: "collection_plan_not_found" }); }
-      if (request.method === "POST" && parts.length === 4 && parts[3] === "accept") return json(response, 200, { plan: experimentRepository.acceptCollectionPlan(userId, parts[2]) });
-      if (request.method === "POST" && parts.length === 4 && parts[3] === "pcs-template-request") {
-        const plan = experimentRepository.getCollectionPlan(userId, parts[2]);
-        if (!plan) return json(response, 404, { error: "collection_plan_not_found" });
-        return json(response, 200, { request: plan.pcsTemplateRequest ?? null, sent: false, note: "PCSの汎用Template Requestへ渡す前に利用者の承認が必要です" });
-      }
-    }
-    if (request.method === "GET" && parts.join("/") === "v1/self-model/review-due") {
-      const userId = requestUrl.searchParams.get("userId") ?? "";
-      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      return json(response, 200, { items: db.prepare("SELECT sf.*,sb.statement FROM self_model_freshness sf JOIN self_beliefs sb ON sb.id=sf.belief_id WHERE sb.user_id=? AND sf.freshness_status IN('review_due','possibly_changed','unsupported_recently') ORDER BY COALESCE(sf.review_due_at,sf.updated_at)").all(userId) });
-    }
-    if (request.method === "POST" && parts.length === 4 && parts[0] === "v1" && parts[1] === "self-model" && parts[3] === "review") {
-      const input = await body(request); const userId = optionalString(input.userId) ?? ""; const action = optionalString(input.action) ?? "";
-      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      if (!["still_applies", "context_dependent", "not_recently", "unknown", "retract", "revise"].includes(action)) return json(response, 400, { error: "self_model_review_invalid" });
-      if (!db.prepare("SELECT 1 FROM self_beliefs WHERE id=? AND user_id=?").get(parts[2], userId)) return json(response, 404, { error: "self_belief_not_found" });
-      db.prepare("INSERT INTO self_model_reviews(id,user_id,belief_id,action,note,created_at) VALUES(?,?,?,?,?,?)").run(id("self_model_review"), userId, parts[2], action, optionalString(input.note) ?? "", now());
-      const status = action === "retract" ? "retracted" : action === "not_recently" ? "possibly_changed" : action === "unknown" ? "review_due" : "current";
-      db.prepare("UPDATE self_model_freshness SET freshness_status=?,last_reviewed_at=?,updated_at=? WHERE belief_id=?").run(status, now(), now(), parts[2]);
-      return json(response, 200, { beliefId: parts[2], action, freshnessStatus: status, selfModelUpdated: false });
-    }
-if (request.method === "POST" && parts.join("/") === "v1/self-understanding/analyze-personal-context") {
       const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
       const endAt = optionalString(input.endAt) ?? now(); const startAt = optionalString(input.startAt) ?? new Date(Date.parse(endAt) - 28 * 86400000).toISOString();
       if (Number.isNaN(Date.parse(startAt)) || Number.isNaN(Date.parse(endAt)) || Date.parse(startAt) >= Date.parse(endAt)) return json(response, 400, { error: "analysis_period_invalid" });
       const snapshot = await loadPersonalContextSnapshot({ startAt, endAt });
-      return json(response, 200, analyzePersonalContextSnapshot(snapshot, { startAt, endAt, minimumEntryCount: Number(input.minimumEntryCount ?? 8) }));
+      return json(response, 200, selfUnderstandingRepository.analyze(userId, snapshot, { startAt, endAt, minimumEntryCount: Number(input.minimumEntryCount ?? 8) }));
+    }
+    if (request.method === "POST" && parts.join("/") === "v1/self-understanding/analyze-personal-context") {
+      const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      const endAt = optionalString(input.endAt) ?? now(); const startAt = optionalString(input.startAt) ?? new Date(Date.parse(endAt) - 28 * 86400000).toISOString();
+      if (Number.isNaN(Date.parse(startAt)) || Number.isNaN(Date.parse(endAt)) || Date.parse(startAt) >= Date.parse(endAt)) return json(response, 400, { error: "analysis_period_invalid" });
+      const snapshot = await loadPersonalContextSnapshot({ startAt, endAt });
+      return json(response, 200, selfUnderstandingRepository.analyze(userId, snapshot, { startAt, endAt, minimumEntryCount: Number(input.minimumEntryCount ?? 8) }));
     }
     if (request.method === "POST" && parts.join("/") === "v1/experiments/personal-context-template-requests") {
       const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
@@ -888,7 +635,6 @@ if (request.method === "POST" && parts.join("/") === "v1/self-understanding/anal
       const durationDays = typeof input.durationDays === "number" && Number.isInteger(input.durationDays) && input.durationDays >= 1 && input.durationDays <= 366 ? input.durationDays : null;
       const requestInput = { schemaVersion: "pcs-experiment-template-request-v1" as const, id: id("pcs_request"), sourceSystem: "metheory" as const, hypothesisId: hypothesisId ?? null, title: optionalString(input.title)!, purpose: optionalString(input.purpose)!, durationDays, requestedFields: requestedFields as Array<{ fieldKey: string; label: string; valueType: "text" | "long_text" | "boolean" | "single_choice" | "multi_choice" | "number" | "date"; required: boolean; options?: Array<{ key: string; label: string }>; reason: string }>, createdAt: now() };
       return json(response, 201, await requestPersonalContextTemplate(requestInput));
-
     }
     if (parts[0] === "v1" && parts[1] === "activitywatch") {
       const activityWatchEnabled = process.env.ACTIVITYWATCH_ENABLED === "true";
@@ -962,6 +708,15 @@ if (request.method === "POST" && parts.join("/") === "v1/self-understanding/anal
       const candidateId = optionalString(input.candidateId) ?? "";
       if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
       if (!["fits", "does_not_fit", "on_hold"].includes(rating)) return json(response, 400, { error: "hypothesis_review_invalid" });
+      const reviewReason = optionalString(input.reason);
+      let reviewReasonResult: ReturnType<typeof reviewReasonAction> | undefined;
+      if (reviewReason) {
+        try {
+          reviewReasonResult = reviewReasonAction(reviewReason as Parameters<typeof reviewReasonAction>[0]);
+        } catch {
+          return json(response, 400, { error: "hypothesis_review_reason_invalid" });
+        }
+      }
       const snapshot = selfUnderstandingRepository.latestSnapshot(userId, candidateId) as any;
       if (!snapshot) return json(response, 404, { error: "self_understanding_candidate_not_found" });
       const period = snapshot.period as { startAt: string; endAt: string };
@@ -972,15 +727,7 @@ if (request.method === "POST" && parts.join("/") === "v1/self-understanding/anal
       const createdAt = now();
       const reviewId = id("hyp_review");
       db.prepare("INSERT INTO hypothesis_reviews(id,user_id,candidate_id,rating,note,analysis_start_at,analysis_end_at,template_version_id,field_pair_json,reviewed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(reviewId, userId, candidateId, rating, optionalString(input.note) ?? "", period.startAt, period.endAt, optionalString(input.templateVersionId) ?? null, JSON.stringify(fieldPair), createdAt, createdAt);
-      const reviewReason = optionalString(input.reason);
-      if (reviewReason) {
-        try {
-          const action = reviewReasonAction(reviewReason as Parameters<typeof reviewReasonAction>[0]);
-          experimentRepository.saveReviewReason(userId, { candidateId, reason: reviewReason, action: action.action, note: optionalString(input.note) });
-        } catch {
-          return json(response, 400, { error: "hypothesis_review_reason_invalid" });
-        }
-      }
+      if (reviewReasonResult) experimentRepository.saveReviewReason(userId, { candidateId, reason: reviewReason!, action: reviewReasonResult.action, note: optionalString(input.note) });
       let selfModelCandidateId: string | null = null;
       if (rating === "fits") {
         const statement = String(snapshot.selfModelCandidate ?? "");
@@ -1143,24 +890,128 @@ if (request.method === "POST" && parts.join("/") === "v1/self-understanding/anal
       const hypothesisId = id("hyp"); db.prepare("INSERT INTO hypotheses(id, user_id, self_belief_id, template_key, statement, state, status, spec_json, spec_version, rule_version, created_at) VALUES (?, ?, ?, ?, ?, 'tracking', 'tracking', ?, ?, ?, ?)").run(hypothesisId, userId, optionalString(input.selfBeliefId) ?? null, optionalString(input.templateKey) ?? "belief_vs_observation", optionalString(input.statement) ?? "", spec ? JSON.stringify(spec) : null, spec?.schemaVersion ?? null, RULE_VERSION, now());
       return json(response, 201, { id: hypothesisId, state: "tracking", specVersion: spec?.schemaVersion ?? null });
     }
-    if (request.method === "POST" && parts.length === 4 && parts[0] === "v1" && parts[1] === "hypotheses" && parts[3] === "review") {
-      const input = await body(request); const userId = optionalString(input.userId) ?? ""; const rating = optionalString(input.rating) ?? optionalString(input.result) ?? "";
+    if (request.method === "POST" && parts.length === 4 && parts[0] === "v1" && parts[1] === "self-understanding" && parts[3] === "experiment-draft") {
+      const input = await body(request);
+      const userId = optionalString(input.userId) ?? "";
       if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      if (!["fits", "does_not_fit", "on_hold"].includes(rating)) return json(response, 400, { error: "hypothesis_review_invalid" });
-      if (!db.prepare("SELECT 1 FROM hypotheses WHERE id=? AND user_id=?").get(parts[2], userId)) return json(response, 404, { error: "hypothesis_not_found" });
-      const reviewedAt = now(); const reviewId = id("hyp_review");
-      db.prepare("INSERT INTO hypothesis_reviews(id,user_id,candidate_id,rating,note,analysis_start_at,analysis_end_at,template_version_id,field_pair_json,reviewed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(reviewId, userId, parts[2], rating, optionalString(input.note) ?? "", null, null, null, "{}", reviewedAt, reviewedAt);
-      const reason = optionalString(input.reason);
-      if (reason) { try { const action = reviewReasonAction(reason as Parameters<typeof reviewReasonAction>[0]); experimentRepository.saveReviewReason(userId, { candidateId: parts[2], reason, action: action.action, note: optionalString(input.note) }); } catch { return json(response, 400, { error: "hypothesis_review_reason_invalid" }); } }
-      db.prepare("INSERT INTO hypothesis_timelines(id,user_id,hypothesis_id,event_type,source_id,payload_json,created_at) VALUES(?,?,?,?,?,?,?)").run(id("timeline"), userId, parts[2], "user_reviewed", reviewId, JSON.stringify({ rating, reason }), reviewedAt);
-      return json(response, 201, { id: reviewId, hypothesisId: parts[2], rating, reason: reason ?? null });
+      const snapshot = selfUnderstandingRepository.latestSnapshot(userId, parts[2]) as Record<string, unknown> | null;
+      if (!snapshot) return json(response, 404, { error: "self_understanding_candidate_not_found" });
+      const candidate = experimentCandidateFromSnapshot(snapshot, parts[2]);
+      if (!candidate.conditionParameterId || !candidate.outcomeParameterId) return json(response, 400, { error: "experiment_candidate_invalid" });
+      return json(response, 201, { draft: experimentRepository.createDraft(userId, candidate, { durationDays: Number(input.durationDays), minimumObservations: Number(input.minimumObservations), timezone: optionalString(input.timezone) }) });
     }
-    if (request.method === "GET" && parts.length === 4 && parts[0] === "v1" && parts[1] === "hypotheses" && parts[3] === "timeline") {
+    if (parts[0] === "v1" && parts[1] === "experiment-drafts") {
+      if (request.method === "GET" && parts.length === 2) {
+        const userId = requestUrl.searchParams.get("userId") ?? "";
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        return json(response, 200, { items: experimentRepository.listDrafts(userId, requestUrl.searchParams.get("status") ?? undefined) });
+      }
+      if (parts.length === 3) {
+        const input = request.method === "PATCH" || request.method === "POST" ? await body(request) : {};
+        const userId = request.method === "GET" ? requestUrl.searchParams.get("userId") ?? "" : optionalString(input.userId) ?? "";
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        if (request.method === "GET") {
+          const draft = experimentRepository.getDraft(userId, parts[2]);
+          return draft ? json(response, 200, { draft }) : json(response, 404, { error: "experiment_draft_not_found" });
+        }
+        if (request.method === "PATCH") {
+          const patch: Partial<Pick<ExperimentDraft, "title" | "statement" | "durationDays" | "minimumObservations" | "minimumPerGroup" | "suggestedSchedule" | "stopConditions">> = {};
+          if (typeof input.title === "string") patch.title = input.title;
+          if (typeof input.statement === "string") patch.statement = input.statement;
+          if (typeof input.durationDays === "number") patch.durationDays = input.durationDays;
+          if (typeof input.minimumObservations === "number") patch.minimumObservations = input.minimumObservations;
+          if (typeof input.minimumPerGroup === "number") patch.minimumPerGroup = input.minimumPerGroup;
+          if (input.suggestedSchedule && typeof input.suggestedSchedule === "object") patch.suggestedSchedule = input.suggestedSchedule as ExperimentDraft["suggestedSchedule"];
+          if (Array.isArray(input.stopConditions)) patch.stopConditions = input.stopConditions as ExperimentDraft["stopConditions"];
+          return json(response, 200, { draft: experimentRepository.updateDraft(userId, parts[2], patch) });
+        }
+      }
+      if (request.method === "POST" && parts.length === 4 && parts[3] === "accept") {
+        const input = await body(request);
+        const userId = optionalString(input.userId) ?? "";
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        return json(response, 201, { experiment: experimentRepository.acceptDraft(userId, parts[2], optionalString(input.hypothesisId)) });
+      }
+      if (request.method === "POST" && parts.length === 4 && parts[3] === "reject") {
+        const input = await body(request);
+        const userId = optionalString(input.userId) ?? "";
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        experimentRepository.rejectDraft(userId, parts[2]);
+        return json(response, 200, { rejected: true });
+      }
+    }
+    if (parts[0] === "v1" && parts[1] === "experiments") {
+      if (request.method === "GET" && parts.length === 2) {
+        const userId = requestUrl.searchParams.get("userId") ?? "";
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        return json(response, 200, { items: experimentRepository.list(userId, requestUrl.searchParams.get("status") ?? undefined) });
+      }
+      if (parts.length >= 3) {
+        const input = request.method === "POST" ? await body(request) : {};
+        const userId = request.method === "GET" ? requestUrl.searchParams.get("userId") ?? "" : optionalString(input.userId) ?? "";
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        if (request.method === "GET" && parts.length === 3) {
+          const experiment = experimentRepository.get(userId, parts[2]);
+          return experiment ? json(response, 200, { experiment, evaluation: experimentRepository.latestEvaluation(userId, parts[2]) ?? null }) : json(response, 404, { error: "experiment_not_found" });
+        }
+        if (request.method === "GET" && parts.length === 4 && parts[3] === "questions") {
+          const experiment = experimentRepository.get(userId, parts[2]);
+          if (!experiment) return json(response, 404, { error: "experiment_not_found" });
+          const rows = db.prepare("SELECT rp.parameter_id,pd.name_ja,pd.askable,rp.minimum_samples FROM experiment_required_parameters rp JOIN parameter_definitions pd ON pd.id=rp.parameter_id WHERE rp.experiment_id=? ORDER BY rp.priority").all(parts[2]) as Array<Record<string, unknown>>;
+          return json(response, 200, { items: rows.map((row) => ({ parameterId: String(row.parameter_id), text: `現在の「${String(row.name_ja)}」を記録してください。`, askable: Number(row.askable) === 1, minimumSamples: Number(row.minimum_samples), reason: "この実験に必要な観測項目です" })) });
+        }
+        if (request.method === "GET" && parts.length === 4 && parts[3] === "evaluations") return json(response, 200, { evaluation: experimentRepository.latestEvaluation(userId, parts[2]) ?? null });
+        if (request.method === "POST" && parts.length === 4 && parts[3] === "responses") {
+          const observation = { id: optionalString(input.id) ?? id("experiment_observation"), episodeId: optionalString(input.episodeId), observedAt: optionalString(input.observedAt) ?? now(), groupKey: optionalString(input.groupKey) ?? "unknown", outcome: Number(input.outcome), conditionValues: input.conditionValues && typeof input.conditionValues === "object" ? input.conditionValues as Record<string, unknown> : {}, source: (optionalString(input.source) ?? "checkin") as "checkin" | "manual" | "import", eligible: input.eligible !== false, note: optionalString(input.note) };
+          if (!Number.isFinite(observation.outcome) || !["checkin", "manual", "import"].includes(observation.source)) return json(response, 400, { error: "experiment_observation_invalid" });
+          return json(response, 201, { observation: experimentRepository.addObservationForExperiment(userId, parts[2], observation) });
+        }
+        if (request.method === "POST" && parts.length === 4 && parts[3] === "evaluate") return json(response, 200, { evaluation: experimentRepository.evaluate(userId, parts[2], optionalString(input.evaluatedAt)) });
+        const transitionRoutes: Record<string, ExperimentStatus> = { start: "active", pause: "paused", resume: "active", cancel: "cancelled", complete: "completed", archive: "archived" };
+        if (request.method === "POST" && parts.length === 4 && transitionRoutes[parts[3]]) return json(response, 200, { experiment: experimentRepository.transition(userId, parts[2], transitionRoutes[parts[3]]) });
+      }
+    }
+    if (request.method === "POST" && parts.join("/") === "v1/collection-plans") {
+      const input = await body(request);
+      const userId = optionalString(input.userId) ?? "";
+      if (!userExists(userId) || !optionalString(input.sourceAnalysisId) || !optionalString(input.targetConstruct) || !Array.isArray(input.requirements)) return json(response, 400, { error: "collection_plan_invalid" });
+      const requirements = input.requirements.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object").map((item) => ({ parameterId: String(item.parameterId ?? ""), label: String(item.label ?? item.parameterId ?? ""), groupKey: optionalString(item.groupKey), minimumSamples: Math.max(1, Number(item.minimumSamples ?? 1)), askable: item.askable !== false, preferredSource: (optionalString(item.preferredSource) ?? "user") as "user" | "system" | "device" | "external_app" }));
+      return json(response, 201, { plan: experimentRepository.createCollectionPlan(userId, { sourceAnalysisId: String(input.sourceAnalysisId), targetConstruct: String(input.targetConstruct), requirements, counts: input.counts && typeof input.counts === "object" ? input.counts as Record<string, number> : {}, includePcsTemplateRequest: input.includePcsTemplateRequest === true }) });
+    }
+    if (parts[0] === "v1" && parts[1] === "collection-plans" && parts.length >= 3) {
+      const input = request.method === "POST" ? await body(request) : {};
+      const userId = request.method === "GET" ? requestUrl.searchParams.get("userId") ?? "" : optionalString(input.userId) ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (request.method === "GET" && parts.length === 3) {
+        const plan = experimentRepository.getCollectionPlan(userId, parts[2]);
+        return plan ? json(response, 200, { plan }) : json(response, 404, { error: "collection_plan_not_found" });
+      }
+      if (request.method === "POST" && parts.length === 4 && parts[3] === "accept") return json(response, 200, { plan: experimentRepository.acceptCollectionPlan(userId, parts[2]) });
+      if (request.method === "POST" && parts.length === 4 && parts[3] === "pcs-template-request") {
+        const plan = experimentRepository.getCollectionPlan(userId, parts[2]);
+        if (!plan) return json(response, 404, { error: "collection_plan_not_found" });
+        return json(response, 200, { request: plan.pcsTemplateRequest ?? null, sent: false, note: "PCSの汎用Template Requestへ渡す前に利用者の承認が必要です" });
+      }
+    }
+    if (request.method === "GET" && parts.join("/") === "v1/self-model/review-due") {
       const userId = requestUrl.searchParams.get("userId") ?? "";
       if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      if (!db.prepare("SELECT 1 FROM hypotheses WHERE id=? AND user_id=?").get(parts[2], userId)) return json(response, 404, { error: "hypothesis_not_found" });
-      return json(response, 200, { items: db.prepare("SELECT * FROM hypothesis_timelines WHERE user_id=? AND hypothesis_id=? ORDER BY created_at").all(userId, parts[2]) });
-    }    if (request.method === "POST" && parts.join("/") === "v1/checkins/next") {
+      return json(response, 200, { items: db.prepare("SELECT sf.*,sb.statement FROM self_model_freshness sf JOIN self_beliefs sb ON sb.id=sf.belief_id WHERE sb.user_id=? AND sf.freshness_status IN('review_due','possibly_changed','unsupported_recently') ORDER BY COALESCE(sf.review_due_at,sf.updated_at)").all(userId) });
+    }
+    if (request.method === "POST" && parts.length === 4 && parts[0] === "v1" && parts[1] === "self-model" && parts[3] === "review") {
+      const input = await body(request);
+      const userId = optionalString(input.userId) ?? "";
+      const action = optionalString(input.action) ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (!["still_applies", "context_dependent", "not_recently", "unknown", "retract", "revise"].includes(action)) return json(response, 400, { error: "self_model_review_invalid" });
+      if (!db.prepare("SELECT 1 FROM self_beliefs WHERE id=? AND user_id=?").get(parts[2], userId)) return json(response, 404, { error: "self_belief_not_found" });
+      db.prepare("INSERT INTO self_model_reviews(id,user_id,belief_id,action,note,created_at) VALUES(?,?,?,?,?,?)").run(id("self_model_review"), userId, parts[2], action, optionalString(input.note) ?? "", now());
+      const freshnessStatus = action === "still_applies" ? "current" : action === "retract" ? "retracted" : action === "unknown" ? "unknown" : "review_due";
+      db.prepare("UPDATE self_model_freshness SET freshness_status=?,last_reviewed_at=?,updated_at=? WHERE belief_id=?").run(freshnessStatus, now(), now(), parts[2]);
+      if (action === "retract") db.prepare("UPDATE self_beliefs SET status='archived',last_reviewed_at=? WHERE id=? AND user_id=?").run(now(), parts[2], userId);
+      return json(response, 200, { beliefId: parts[2], action, freshnessStatus });
+    }
+    if (request.method === "POST" && parts.join("/") === "v1/checkins/next") {
       const input = await body(request); const userId = input.userId as string; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
       const hypothesis = db.prepare("SELECT id FROM hypotheses WHERE user_id = ? AND status = 'tracking' ORDER BY created_at LIMIT 1").get(userId) as { id: string } | undefined;
       const kind = input.kind === "follow_up" ? "follow_up" : input.kind === "hypothesis" && hypothesis ? "hypothesis" : "random";

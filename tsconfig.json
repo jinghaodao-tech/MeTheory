@@ -13,8 +13,6 @@
     "apps/api/**/*.ts",
     "packages/domain/**/*.ts",
     "packages/contracts/**/*.ts",
-    "packages/records/**/*.ts",
-    "packages/search-core/**/*.ts",
     "packages/self-understanding/**/*.ts",
     "test/**/*.ts"
   ]

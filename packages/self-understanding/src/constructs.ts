@@ -1,5 +1,5 @@
 import type { HypothesisCandidate } from "../../domain/src/hypothesis/candidates.ts";
-import type { SelfUnderstandingSemanticRole } from "../../templates/src/semanticRoles.ts";
+import type { SelfUnderstandingSemanticRole } from "./semanticRoles.ts";
 
 export const SELF_UNDERSTANDING_CONSTRUCT_KEYS = [
   "energy_level",

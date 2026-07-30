@@ -1,278 +1,60 @@
 #!/usr/bin/env node
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, watch, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
-import { DatabaseSync } from "node:sqlite";
-import { buildManualTemplatePrompt, type TemplateDraft } from "../../../packages/templates/src/index.ts";
-import { createAiProvider, ManualExternalAiProvider, type MeTheoryAiProvider } from "../../../packages/ai-core/src/index.ts";
-import { detectOllama, detectOpenAiCompatible, RuntimeManager } from "../../../packages/local-ai-runtime/src/index.ts";
-import { extractEntryValues, extractionIsStale } from "../../../packages/entry-extraction/src/index.ts";
-import { readMarkdownEntry, withEntryMetadata, resolveWorkspaceDatabase, validateWorkspaceConfig, type WorkspaceConfig } from "../../../packages/workspace-sync/src/index.ts";
 
 const root = process.cwd();
-const configPath = join(root, ".metheory", "workspace.json");
-const config = existsSync(configPath) ? validateWorkspaceConfig(JSON.parse(readFileSync(configPath, "utf8"))) : null;
-const api = process.env.METHEORY_API_URL ?? config?.service?.apiUrl ?? "http://127.0.0.1:8100";
+const api = process.env.METHEORY_API_URL ?? "http://127.0.0.1:8100";
 const userId = process.env.METHEORY_USER_ID ?? "local-user";
-const jsonMode = process.argv.includes("--json");
-const autoStructureTimers = new Map<string, NodeJS.Timeout>();
-const autoStructureRetries = new Map<string, number>();
-
-function printResult(value: unknown, human?: string): void { if (jsonMode) console.log(JSON.stringify(value, null, 2)); else if (human) console.log(human); else if (typeof value === "string") console.log(value); else if (value && typeof value === "object") { const record = value as Record<string, unknown>; const summary = Object.entries(record).filter(([, item]) => typeof item !== "object").map(([key, item]) => `${key}: ${String(item)}`).join(" | "); console.log(summary || "completed"); } else console.log(String(value)); }
-const nativeConsoleLog = console.log.bind(console);
-console.log = (...args: unknown[]) => { if (jsonMode || args.length !== 1 || typeof args[0] !== "string") return nativeConsoleLog(...args); const raw = args[0].trim(); if (!raw.startsWith("{") && !raw.startsWith("[")) return nativeConsoleLog(...args); try { const parsed = JSON.parse(raw) as unknown; if (Array.isArray(parsed)) return nativeConsoleLog(`items: ${parsed.length}`); if (parsed && typeof parsed === "object") { const summary = Object.entries(parsed as Record<string, unknown>).filter(([, item]) => typeof item !== "object").map(([key, item]) => `${key}: ${String(item)}`).join(" | "); return nativeConsoleLog(summary || "completed"); } } catch { /* preserve non-JSON output */ } return nativeConsoleLog(...args); };
+const databasePath = process.env.METHEORY_DB ?? join(root, "data", "metheory.sqlite3");
 
 async function request(path: string, init?: RequestInit) {
   const response = await fetch(`${api}${path}`, init);
-  const data = await response.json() as any;
-  if (!response.ok) throw new Error(data.error ?? `api_${response.status}`);
-  return data;
+  const payload = await response.json() as any;
+  if (!response.ok) throw new Error(payload.error ?? `api_${response.status}`);
+  return payload;
 }
 
-function initWorkspace() {
-  for (const directory of ["notes/inbox", "notes/journal", "notes/health", "notes/social", "notes/work", "notes/learning", "notes/other", "templates/drafts", "templates/exports", "attachments", ".metheory/cache", ".metheory/logs", ".metheory/backups"]) mkdirSync(join(root, directory), { recursive: true });
-  mkdirSync(join(root, ".vscode"), { recursive: true });
-  const workspace = { schemaVersion: 1, workspaceId: `workspace_${randomUUID().replaceAll("-", "")}`, name: "My MeTheory", database: { mode: "workspace", path: ".metheory/data.sqlite" }, service: { startupMode: "onDemand", shutdownMode: "idle", idleTimeoutMinutes: 15, apiUrl: "http://127.0.0.1:8100" }, ai: { provider: "disabled", autoStart: false, startupRetryCount: 1, startupTimeoutSeconds: 60, idleTimeoutMinutes: 15, templateGenerationModel: "", extractionModel: "", baseUrl: "", customRuntime: null }, backup: { enabled: true, beforeMigration: true, beforeBulkChange: true, periodic: true, retentionCount: 10 }, notes: { rootDirectory: "notes", maximumCategoryDepth: 2, defaultDirectory: "notes/inbox" } };
-  if (!existsSync(configPath)) writeFileSync(configPath, JSON.stringify(workspace, null, 2));
-  const schema = resolve(import.meta.dirname, "../../../db/ts_mvp_schema.sql");
-  const database = join(root, ".metheory", "data.sqlite");
-  if (!existsSync(database)) { const db = new DatabaseSync(database); db.exec(readFileSync(schema, "utf8")); db.close(); }
-  if (!existsSync(join(root, "AGENTS.md"))) writeFileSync(join(root, "AGENTS.md"), "# MeTheory Workspace Rules\n\n- Edit notes/ Markdown normally.\n- Do not edit .metheory/ directly.\n- Use metheory CLI for SQLite-backed changes.\n- Preserve metheory_entry_id and recorded_at during sync.\n- Run workspace sync after bulk changes.\n");
-  if (!existsSync(join(root, ".gitignore"))) writeFileSync(join(root, ".gitignore"), ".metheory/\nnode_modules/\n*.tmp\n*.temp\n*.bak\n*~\n");
-  writeFileSync(join(root, ".vscode", "settings.json"), JSON.stringify({ "files.exclude": { "**/.metheory": true } }, null, 2));
-  writeFileSync(join(root, ".vscode", "tasks.json"), JSON.stringify({ version: "2.0.0", tasks: ["service start", "service stop", "workspace status", "workspace sync", "workspace watch", "backup create", "verify"].map(label => ({ label: `MeTheory: ${label[0].toUpperCase()}${label.slice(1)}`, type: "shell", command: `npm run metheory -- ${label}`, problemMatcher: [] })) }, null, 2));
-  console.log(JSON.stringify({ workspaceId: workspace.workspaceId, database }, null, 2));
+function print(value: unknown) { console.log(JSON.stringify(value, null, 2)); }
+function pidPath() { return join(root, ".metheory", "analysis-service.pid"); }
+function serviceStart() {
+  mkdirSync(join(root, ".metheory"), { recursive: true });
+  if (existsSync(pidPath())) try { process.kill(Number(readFileSync(pidPath(), "utf8")), 0); return print({ started: false, reason: "already_running" }); } catch { rmSync(pidPath(), { force: true }); }
+  const server = resolve(import.meta.dirname, "../../api/src/server.ts");
+  const child = spawn(process.execPath, ["--experimental-strip-types", server], { env: { ...process.env, PORT: "8100", METHEORY_DB: databasePath }, detached: true, stdio: "ignore" });
+  writeFileSync(pidPath(), String(child.pid)); child.unref(); print({ started: true, pid: child.pid, api });
+}
+function serviceStop() { if (!existsSync(pidPath())) return print({ stopped: false, reason: "not_running" }); try { process.kill(Number(readFileSync(pidPath(), "utf8"))); } catch { /* already stopped */ } rmSync(pidPath(), { force: true }); print({ stopped: true }); }
+function serviceStatus() { let running = false; let pid: number | null = null; if (existsSync(pidPath())) { pid = Number(readFileSync(pidPath(), "utf8")); try { process.kill(pid, 0); running = true; } catch { pid = null; } } print({ running, pid, api, databasePath }); }
+
+async function selfUnderstanding(command: string, args: string[]) {
+  if (command === "analyze") { const startAt = args.find((item) => item.startsWith("--from="))?.slice(7); const endAt = args.find((item) => item.startsWith("--to="))?.slice(5); return print(await request("/v1/self-understanding/analyze", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, startAt, endAt, minimumEntryCount: 8 }) })); }
+  if (command === "review" && args[0] && args[1]) return print(await request("/v1/self-understanding/reviews", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, candidateId: args[0], rating: args[1], statement: args.slice(2).join(" ") }) }));
+  if (command === "self-model") return print(await request(`/v1/self-understanding/self-model-candidates?userId=${encodeURIComponent(userId)}`));
+  if (command === "self-model-review" && args[0] && args[1]) return print(await request("/v1/self-understanding/self-model-candidates/review", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, candidateId: args[0], status: args[1] }) }));
+  if (command === "baseline") return print(await request(`/v1/self-understanding/baseline/responses?userId=${encodeURIComponent(userId)}`));
+  throw new Error("self_understanding_command_invalid");
 }
 
-function databasePath() { return config ? resolveWorkspaceDatabase(root, config) : join(root, ".metheory", "data.sqlite"); }
-function markdownFiles(directory: string): string[] { return readdirSync(directory, { withFileTypes: true }).flatMap(item => item.isDirectory() ? markdownFiles(join(directory, item.name)) : item.name.endsWith(".md") ? [join(directory, item.name)] : []); }
-function workspaceStatus() { const files = existsSync(join(root, "notes")) ? markdownFiles(join(root, "notes")) : []; const db = existsSync(databasePath()) ? new DatabaseSync(databasePath()) : null; const entries = db ? Number((db.prepare("SELECT COUNT(*) AS count FROM entries").get() as any).count) : 0; const lastSync = db ? (db.prepare("SELECT MAX(updated_at) AS value FROM entries").get() as any).value : null; const conflicts = files.filter((file) => { try { const entry = readMarkdownEntry(relative(root, file), readFileSync(file, "utf8")); return Boolean(entry.entryId) && !db?.prepare("SELECT 1 FROM entries WHERE id=?").get(String(entry.entryId)); } catch { return true; } }).length; db?.close(); const service = serviceSnapshot(); console.log(JSON.stringify({ workspaceId: config?.workspaceId, databasePath: databasePath(), databaseMode: config?.database?.mode ?? "workspace", service, markdownFiles: files.length, entries, unsyncedOrConflictFiles: conflicts, lastEntryUpdateAt: lastSync }, null, 2)); }
-function serviceSnapshot() { const pidPath = join(root, ".metheory", "service.pid"); if (!existsSync(pidPath)) return { running: false, pid: null, api }; const pid = Number(readFileSync(pidPath, "utf8")); try { process.kill(pid, 0); return { running: true, pid, api }; } catch { return { running: false, pid: null, api }; } }
-function backupCreate(reason = "manual") { if (!config?.backup.enabled) throw new Error("backup_disabled"); mkdirSync(join(root, ".metheory", "backups"), { recursive: true }); const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z/, "Z"); const backupId = `backup_${randomUUID().replaceAll("-", "")}`; const file = join(root, ".metheory", "backups", `${stamp}-${reason}.sqlite`); copyFileSync(databasePath(), file); const checksum = createHash("sha256").update(readFileSync(file)).digest("hex"); writeFileSync(`${file}.manifest.json`, JSON.stringify({ backupId, createdAt: new Date().toISOString(), reason, workspaceId: config.workspaceId, databaseFile: file, workspaceConfigPath: configPath, schemaVersion: config.schemaVersion, checksum }, null, 2)); const manifests = readdirSync(join(root, ".metheory", "backups")).filter((name) => name.endsWith(".manifest.json")).sort().reverse(); for (const stale of manifests.slice(config.backup.retentionCount)) { const manifestPath = join(root, ".metheory", "backups", stale); const manifest = JSON.parse(readFileSync(manifestPath, "utf8")); if (typeof manifest.databaseFile === "string") rmSync(manifest.databaseFile, { force: true }); rmSync(manifestPath, { force: true }); } console.log(JSON.stringify({ backupId, file, checksum }, null, 2)); }
-function backupList() { const directory = join(root, ".metheory", "backups"); console.log(JSON.stringify(existsSync(directory) ? readdirSync(directory).filter(name => name.endsWith(".manifest.json")).map(name => JSON.parse(readFileSync(join(directory, name), "utf8"))) : [], null, 2)); }
-function backupRestore(id: string) { const directory = join(root, ".metheory", "backups"); const manifest = readdirSync(directory).map(name => name.endsWith(".manifest.json") ? JSON.parse(readFileSync(join(directory, name), "utf8")) : null).find(item => item?.backupId === id && item.workspaceId === config?.workspaceId); if (!manifest) throw new Error("backup_not_found"); if (createHash("sha256").update(readFileSync(manifest.databaseFile)).digest("hex") !== manifest.checksum) throw new Error("backup_checksum_invalid"); const restored = new DatabaseSync(manifest.databaseFile); const integrity = restored.prepare("PRAGMA integrity_check").get() as { integrity_check: string }; restored.close(); if (integrity.integrity_check !== "ok") throw new Error("backup_integrity_invalid"); copyFileSync(databasePath(), `${databasePath()}.before-restore-${Date.now()}`); copyFileSync(manifest.databaseFile, databasePath()); console.log(JSON.stringify({ restored: id, integrity: integrity.integrity_check, searchRebuildRequired: true }, null, 2)); }
-function serviceStart() { const pidPath = join(root, ".metheory", "service.pid"); if (existsSync(pidPath)) { try { process.kill(Number(readFileSync(pidPath, "utf8")), 0); console.log("service_already_running"); return; } catch { /* stale pid */ } } const server = resolve(import.meta.dirname, "../../api/src/server.ts"); const child = spawn(process.execPath, ["--experimental-strip-types", server], { env: { ...process.env, PORT: "8100", METHEORY_DB: databasePath() }, stdio: "ignore", detached: true }); writeFileSync(pidPath, String(child.pid)); child.unref(); console.log(JSON.stringify({ started: true, pid: child.pid, api }, null, 2)); }
-function serviceStop() { const pidPath = join(root, ".metheory", "service.pid"); if (!existsSync(pidPath)) { console.log("service_not_running"); return; } try { process.kill(Number(readFileSync(pidPath, "utf8"))); } catch { /* already stopped */ } rmSync(pidPath, { force: true }); console.log("service_stopped"); }
-function serviceStatus() { const pidPath = join(root, ".metheory", "service.pid"); let running = false; let pid: number | null = null; if (existsSync(pidPath)) { pid = Number(readFileSync(pidPath, "utf8")); try { process.kill(pid, 0); running = true; } catch { pid = null; } } console.log(JSON.stringify({ running, pid, api }, null, 2)); }
-
-function aiProvider(): MeTheoryAiProvider { const setting = String(config?.ai?.provider ?? process.env.AI_PROVIDER ?? "disabled"); const provider = ["ollama", "openai-compatible-local", "mock", "manual", "disabled"].includes(setting) ? setting : "disabled"; return createAiProvider({ provider: provider as any, model: config?.ai?.extractionModel ?? config?.ai?.templateGenerationModel ?? process.env.LOCAL_AI_MODEL, baseUrl: config?.ai?.baseUrl || process.env.LOCAL_AI_BASE_URL }); }
-async function aiStatus() { const [ollama, compatible] = await Promise.all([detectOllama(), detectOpenAiCompatible()]); const provider = aiProvider(); console.log(JSON.stringify({ provider: provider.id, ollama, openaiCompatible: compatible, model: config?.ai?.templateGenerationModel ?? process.env.LOCAL_AI_MODEL ?? null }, null, 2)); }
-async function aiModels() { const [ollama, compatible] = await Promise.all([detectOllama(), detectOpenAiCompatible()]); console.log(JSON.stringify({ ollama, openaiCompatible: compatible, configured: { provider: config?.ai?.provider ?? process.env.AI_PROVIDER ?? "disabled", templateGenerationModel: config?.ai?.templateGenerationModel ?? null, extractionModel: config?.ai?.extractionModel ?? null } }, null, 2)); }
-function setAiModel(purpose: string, model: string) { if (!config) throw new Error("workspace_not_initialized"); if (purpose !== "template" && purpose !== "extraction") throw new Error("ai_model_purpose_invalid"); const next = { ...config, ai: { ...config.ai, [purpose === "template" ? "templateGenerationModel" : "extractionModel"]: model } } satisfies WorkspaceConfig; validateWorkspaceConfig(next); writeFileSync(configPath, JSON.stringify(next, null, 2)); console.log(JSON.stringify({ purpose, model }, null, 2)); }
-async function aiTest() { console.log(JSON.stringify(await aiProvider().healthCheck(), null, 2)); }
-async function aiStart() { const runtime = config?.ai?.customRuntime; if (!runtime?.executablePath) { console.log(JSON.stringify({ started: false, reason: "runtime_manual_start_required", detected: await detectOllama() }, null, 2)); return; } const manager = new RuntimeManager(runtime); await manager.startWithRetry(config?.ai?.startupRetryCount ?? 1); console.log(JSON.stringify({ started: true, state: manager.state, idleTimeoutMinutes: runtime.idleTimeoutMinutes ?? config?.ai?.idleTimeoutMinutes ?? 15 }, null, 2)); }
-async function aiStop() { console.log(JSON.stringify({ stopped: false, reason: "runtime_owned_by_external_application" }, null, 2)); }
-
-function draftDirectory() { const directory = join(root, "templates", "drafts"); mkdirSync(directory, { recursive: true }); return directory; }
-function draftPath(id: string) { return join(draftDirectory(), `${id}.template.json`); }
-async function generateTemplateDraft(theme: string) { if (!theme.trim()) throw new Error("template_theme_required"); const provider = aiProvider(); const input = { userId, theme: theme.trim() }; if (provider.id === "manual") { const id = `draft_${randomUUID().replaceAll("-", "")}`; const record = { id, status: "awaiting_manual_result", provider: provider.id, theme: input.theme, prompt: buildManualTemplatePrompt(input), createdAt: new Date().toISOString() }; writeFileSync(draftPath(id), JSON.stringify(record, null, 2)); console.log(JSON.stringify({ id, provider: provider.id, promptPath: `templates/drafts/${id}.template.json`, copyPrompt: true }, null, 2)); return; } const draft = await provider.generateTemplateDraft(input); const id = `draft_${randomUUID().replaceAll("-", "")}`; writeFileSync(draftPath(id), JSON.stringify({ id, status: "pending", provider: provider.id, theme: input.theme, draft, createdAt: new Date().toISOString() }, null, 2)); console.log(JSON.stringify({ id, provider: provider.id, status: "pending", path: `templates/drafts/${id}.template.json` }, null, 2)); }
-function listTemplateDrafts() { const drafts = readdirSync(draftDirectory()).filter(name => name.endsWith(".template.json")).map(name => { const item = JSON.parse(readFileSync(join(draftDirectory(), name), "utf8")); return { id: item.id, status: item.status, provider: item.provider, theme: item.theme, createdAt: item.createdAt }; }); console.log(JSON.stringify(drafts, null, 2)); }
-function showTemplateDraft(id: string) { console.log(readFileSync(draftPath(id), "utf8")); }
-function setManualTemplateResult(id: string, resultFile: string) { const path = draftPath(id); const item = JSON.parse(readFileSync(path, "utf8")); const draft = new ManualExternalAiProvider().parseTemplate(readFileSync(resolve(root, resultFile), "utf8")); item.draft = draft; item.status = "pending"; item.validatedAt = new Date().toISOString(); writeFileSync(path, JSON.stringify(item, null, 2)); console.log(JSON.stringify({ id, status: item.status, validated: true }, null, 2)); }
-async function approveTemplateDraft(id: string) { const path = draftPath(id); const item = JSON.parse(readFileSync(path, "utf8")); if (!item.draft) throw new Error("manual_result_required_before_approval"); const saved = await request("/v1/templates", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, ...item.draft }) }); item.status = "approved"; item.approvedAt = new Date().toISOString(); item.savedTemplateId = saved.id; writeFileSync(path, JSON.stringify(item, null, 2)); console.log(JSON.stringify({ approved: true, templateId: saved.id }, null, 2)); }
-
-async function structureEntry(file: string) {
-  const path = resolve(root, file);
-  const text = readFileSync(path, "utf8");
-  const entry = readMarkdownEntry(file, text);
-  if (!entry.templateId || !entry.templateVersionId) throw new Error("entry_approved_template_required");
-  if (!entry.autoStructure || !entry.tracked) throw new Error("entry_auto_structure_disabled");
-  const template = await request(`/v1/templates/${encodeURIComponent(entry.templateId)}?userId=${encodeURIComponent(userId)}`);
-  const version = template.currentVersion;
-  if (version.id !== entry.templateVersionId) throw new Error("entry_template_version_not_current");
-  const aiTemplate = {
-    id: template.id,
-    currentVersion: {
-      id: version.id,
-      fields: (version.fields as Array<any>).map((field) => ({
-        fieldKey: field.field_key,
-        label: field.label,
-        description: field.description,
-        inputType: field.input_type,
-        valueType: field.value_type,
-        required: Boolean(field.required),
-        displayOrder: field.display_order,
-        options: field.options,
-        minimum: field.minimum ?? undefined,
-        maximum: field.maximum ?? undefined,
-        unit: field.unit ?? undefined,
-        sensitivity: field.sensitivity,
-        sensitivityLevel: field.sensitivity_level,
-        classificationSource: field.classification_source
-      }))
-    }
-  };
-  const provider = aiProvider();
-  const record = await extractEntryValues({ entryId: entry.entryId ?? "unregistered", template: aiTemplate, content: entry.body, sourceUpdatedAt: new Date(statSync(path).mtimeMs).toISOString(), provider });
-  (record as any).notePath = relative(root, path);
-  (record as any).sourceExcerpt = entry.body.replace(/\s+/g, " ").trim().slice(0, 180);
-  writeFileSync(join(draftDirectory(), `${record.id}.extraction.json`), JSON.stringify(record, null, 2));
-  console.log(JSON.stringify({ status: record.status, id: record.id, path: `templates/drafts/${record.id}.extraction.json`, sourceContentHash: record.sourceContentHash, templateVersionId: version.id }, null, 2));
-}
-function decideExtraction(id: string, fieldKey: string, decision: "suggested" | "review_required" | "unanswered", explicitApproval = false) { const path = join(draftDirectory(), `${id}.extraction.json`); const extraction = JSON.parse(readFileSync(path, "utf8")); if (!Object.prototype.hasOwnProperty.call(extraction.result?.values ?? {}, fieldKey) && decision !== "unanswered") throw new Error("extraction_field_not_found"); extraction.result.decisions = { ...(extraction.result.decisions ?? {}), [fieldKey]: decision }; extraction.explicitApprovals = { ...(extraction.explicitApprovals ?? {}), [fieldKey]: explicitApproval }; extraction.status = "review_required"; extraction.updatedAt = new Date().toISOString(); writeFileSync(path, JSON.stringify(extraction, null, 2)); console.log(JSON.stringify({ id, fieldKey, decision, explicitApproval }, null, 2)); }
-function approveExtraction(id: string, fieldKey: string) { return decideExtraction(id, fieldKey, "suggested", true); }
-function editExtraction(id: string, fieldKey: string, rawValue: string) { const path = join(draftDirectory(), `${id}.extraction.json`); const extraction = JSON.parse(readFileSync(path, "utf8")); let value: unknown = rawValue; try { value = JSON.parse(rawValue); } catch { /* plain text is a valid short value */ } extraction.result.values = { ...(extraction.result.values ?? {}), [fieldKey]: value }; extraction.result.decisions = { ...(extraction.result.decisions ?? {}), [fieldKey]: "suggested" }; extraction.explicitApprovals = { ...(extraction.explicitApprovals ?? {}), [fieldKey]: true }; extraction.status = "review_required"; extraction.updatedAt = new Date().toISOString(); writeFileSync(path, JSON.stringify(extraction, null, 2)); console.log(JSON.stringify({ id, fieldKey, edited: true, explicitApproval: true }, null, 2)); }
-async function applyStoredExtraction(id: string) { const path = join(draftDirectory(), `${id}.extraction.json`); const extraction = JSON.parse(readFileSync(path, "utf8")); if (!extraction.notePath) throw new Error("extraction_note_path_missing"); return applyExtractionReview(id, String(extraction.notePath)); }
-function scheduleAutoStructure(file: string) { const absolute = resolve(root, file); const existing = autoStructureTimers.get(absolute); if (existing) clearTimeout(existing); const timer = setTimeout(async () => { autoStructureTimers.delete(absolute); try { if (!existsSync(absolute)) return; const current = readMarkdownEntry(relative(root, absolute), readFileSync(absolute, "utf8")); if (!current.autoStructure || !current.tracked || !current.templateId || !current.templateVersionId) return; await structureEntry(relative(root, absolute)); autoStructureRetries.delete(absolute); } catch (error) { const retries = autoStructureRetries.get(absolute) ?? 0; if (retries < 1) { autoStructureRetries.set(absolute, retries + 1); scheduleAutoStructure(absolute); } else { appendFileSync(join(root, ".metheory", "logs", "auto-structure.log"), `${new Date().toISOString()} ${error instanceof Error ? error.message : "failed"}\n`); } } }, 3000); autoStructureTimers.set(absolute, timer); }
-function listExtractions() { const records = readdirSync(draftDirectory()).filter(name => name.endsWith(".extraction.json")).map(name => { const item = JSON.parse(readFileSync(join(draftDirectory(), name), "utf8")); return { id: item.id, entryId: item.entryId, status: item.status, sourceContentHash: item.sourceContentHash, createdAt: item.createdAt }; }); console.log(JSON.stringify(records, null, 2)); }
-async function applyExtractionReview(id: string, file: string, overrideArgs: string[] = []) { const path = join(draftDirectory(), `${id}.extraction.json`); const extraction = JSON.parse(readFileSync(path, "utf8")); const notePath = resolve(root, file); const entry = readMarkdownEntry(file, readFileSync(notePath, "utf8")); if (extractionIsStale(extraction, entry.body)) throw new Error("extraction_stale"); const values = Object.fromEntries(Object.entries(extraction.result.values).filter(([key]) => extraction.result.decisions?.[key] === "suggested" && (Boolean(extraction.explicitApprovals?.[key]) || Number(extraction.result.confidence?.[key] ?? 0) >= 0.85))); const privacyOverrides = Object.fromEntries(overrideArgs.filter(item => item.includes("=")).map(item => item.split("=", 2))); const result = await request(`/v1/entries/${encodeURIComponent(extraction.entryId)}/extraction/apply`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, entryId: extraction.entryId, templateVersionId: extraction.templateVersionId, values, confidence: extraction.result.confidence, sourceContentHash: extraction.sourceContentHash, sourceUpdatedAt: extraction.sourceUpdatedAt, provider: extraction.result.providerId, model: extraction.result.model, privacyOverrides }) }); extraction.status = "applied"; extraction.appliedAt = new Date().toISOString(); writeFileSync(path, JSON.stringify(extraction, null, 2)); console.log(JSON.stringify(result, null, 2)); }
-function rejectExtraction(id: string) { const path = join(draftDirectory(), `${id}.extraction.json`); const extraction = JSON.parse(readFileSync(path, "utf8")); extraction.status = "rejected"; extraction.rejectedAt = new Date().toISOString(); writeFileSync(path, JSON.stringify(extraction, null, 2)); console.log(JSON.stringify({ id, status: extraction.status }, null, 2)); }
-function showExtractionReview(id: string) { const extraction = JSON.parse(readFileSync(join(draftDirectory(), `${id}.extraction.json`), "utf8")); const stale = extraction.notePath && existsSync(resolve(root, extraction.notePath)) ? extractionIsStale(extraction, readMarkdownEntry(extraction.notePath, readFileSync(resolve(root, extraction.notePath), "utf8")).body) : true; console.log(JSON.stringify({ id: extraction.id, entryId: extraction.entryId, notePath: extraction.notePath, templateVersionId: extraction.templateVersionId, status: extraction.status, provider: extraction.result?.providerId, model: extraction.result?.model, confidence: extraction.result?.confidence, values: extraction.result?.values ?? {}, decisions: extraction.result?.decisions ?? {}, explicitApprovals: extraction.explicitApprovals ?? {}, sourceExcerpt: extraction.sourceExcerpt ?? "", stale, sourceContentHash: extraction.sourceContentHash, createdAt: extraction.createdAt }, null, 2)); }
-async function privacyStatus() { console.log(JSON.stringify(await request(`/v1/privacy/status?userId=${encodeURIComponent(userId)}`), null, 2)); }
-async function privacyConsentsList() { console.log(JSON.stringify(await request(`/v1/privacy/consents?userId=${encodeURIComponent(userId)}&includeRevoked=true`), null, 2)); }
-async function privacyAuditList() { console.log(JSON.stringify(await request(`/v1/privacy/audit-events?userId=${encodeURIComponent(userId)}`), null, 2)); }
-async function privacySafeDeleteStatus(id: string) { console.log(JSON.stringify(await request(`/v1/privacy/safe-delete/status/${encodeURIComponent(id)}?userId=${encodeURIComponent(userId)}`), null, 2)); }
-async function privacyConsentShow(id: string) { console.log(JSON.stringify(await request(`/v1/privacy/consents/${encodeURIComponent(id)}?userId=${encodeURIComponent(userId)}`), null, 2)); }
-async function privacyConsentRevoke(id: string) { console.log(JSON.stringify(await request(`/v1/privacy/consents/${encodeURIComponent(id)}/revoke?userId=${encodeURIComponent(userId)}`, { method: "POST" }), null, 2)); }
-async function privacyConsentGrant(args: string[]) { if (args[5] !== "--confirm") throw new Error("confirmation_required"); const [templateId, fieldKey, consentType, providerId, fingerprint] = args; console.log(JSON.stringify(await request("/v1/privacy/consents", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, templateId, fieldKey, consentType, providerId: providerId || null, destinationFingerprint: fingerprint || null, scope: consentType === "external_ai_transfer" ? "single_value" : "field", grantedAt: new Date().toISOString() }) }), null, 2)); }
-async function privacyFieldsList() { console.log(JSON.stringify(await request(`/v1/privacy/fields?userId=${encodeURIComponent(userId)}`), null, 2)); }
-async function privacyFieldShow(templateId: string, fieldKey: string) { console.log(JSON.stringify(await request(`/v1/privacy/fields/${encodeURIComponent(templateId)}/${encodeURIComponent(fieldKey)}?userId=${encodeURIComponent(userId)}`), null, 2)); }
-function markdownFilesAtRoot(): string[] { return existsSync(join(root, "notes")) ? markdownFiles(join(root, "notes")) : []; }
-function extractionCandidates(selector: Record<string, string>) { const directory = draftDirectory(); return readdirSync(directory).filter(name => name.endsWith(".extraction.json")).map(name => ({ name, path: join(directory, name), record: JSON.parse(readFileSync(join(directory, name), "utf8")) })).filter(item => (!selector.entryId || item.record.entryId === selector.entryId) && (!selector.templateId || item.record.templateId === selector.templateId) && (!selector.fieldKey || Object.prototype.hasOwnProperty.call(item.record.result?.values ?? {}, selector.fieldKey))); }
-async function privacySafeDeletePlan(selectorText: string) { const selector = JSON.parse(selectorText) as Record<string, string>; const needle = selector.fieldKey; const files = markdownFilesAtRoot().map(path => { const text = readFileSync(path, "utf8"); const matches = needle ? (text.match(new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi")) ?? []).length : 0; const preview = needle && matches ? text.replace(new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), "[REDACTED]").slice(0, 240) : undefined; return { path: relative(root, path), matches, preview }; }).filter(item => item.matches > 0); const candidates = extractionCandidates(selector); console.log(JSON.stringify(await request("/v1/privacy/safe-delete/plan", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, ...selector, markdownFiles: files, extractionCandidateCount: candidates.length, backupCount: existsSync(join(root, ".metheory", "backups")) ? readdirSync(join(root, ".metheory", "backups")).filter(name => name.endsWith(".manifest.json")).length : 0 }) }), null, 2)); }
-async function privacySafeDeleteExecute(planId: string, confirmation: string) { const result = await request("/v1/privacy/safe-delete/execute", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, planId, confirmation }) }); const selector = result.selector as Record<string, string>; let extractionsDeleted = 0; for (const candidate of extractionCandidates(selector)) { rmSync(candidate.path, { force: true }); extractionsDeleted += 1; } const backupDirectory = join(root, ".metheory", "backups"); let backupsDeleted = 0; if (existsSync(backupDirectory)) for (const manifestName of readdirSync(backupDirectory).filter(name => name.endsWith(".manifest.json"))) { const manifestPath = join(backupDirectory, manifestName); const manifest = JSON.parse(readFileSync(manifestPath, "utf8")); if (manifest.workspaceId !== config?.workspaceId) continue; const backupFile = typeof manifest.databaseFile === "string" ? resolve(manifest.databaseFile) : ""; if (backupFile.startsWith(resolve(backupDirectory) + "\\") && existsSync(backupFile)) rmSync(backupFile, { force: true }); rmSync(manifestPath, { force: true }); backupsDeleted += 1; } console.log(JSON.stringify({ ...result, extractionsDeleted, backupsDeleted, markdownFilesChanged: 0 }, null, 2)); }
-async function privacyDowngrade(templateId: string, fieldKey: string, consentId: string) { console.log(JSON.stringify(await request(`/v1/privacy/templates/${encodeURIComponent(templateId)}/downgrade`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, fieldKey, consentId }) }), null, 2)); }
-async function selfUnderstandingAnalyze(args: string[]) { const startAt = args.find(item => item.startsWith("--from="))?.slice(7); const endAt = args.find(item => item.startsWith("--to="))?.slice(5); const templateId = args.find(item => item.startsWith("--template="))?.slice(11); const fieldKeys = args.filter(item => item.startsWith("--field=")).map(item => item.slice(8)).filter(Boolean); console.log(JSON.stringify(await request("/v1/self-understanding/analyze", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, startAt, endAt, templateId, fieldKeys, minimumEntryCount: 8 }) }), null, 2)); }
-async function selfUnderstandingReview(args: string[]) { const candidateId = args[0]; const rating = args[1]; if (!candidateId || !["fits", "does_not_fit", "on_hold"].includes(rating ?? "")) throw new Error("hypothesis_review_invalid"); console.log(JSON.stringify(await request("/v1/self-understanding/reviews", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, candidateId, rating, statement: args.slice(2).join(" ") }) }), null, 2)); }
-async function selfModelCandidates() { console.log(JSON.stringify(await request(`/v1/self-understanding/self-model-candidates?userId=${encodeURIComponent(userId)}`), null, 2)); }
-async function selfModelReview(args: string[]) { if (!args[0] || !["accepted", "rejected"].includes(args[1] ?? "")) throw new Error("self_model_review_invalid"); console.log(JSON.stringify(await request("/v1/self-understanding/self-model-candidates/review", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, candidateId: args[0], status: args[1] }) }), null, 2)); }
-async function personalContextMigrationExport() { printResult(await request(`/v1/self-understanding/context-export?userId=${encodeURIComponent(userId)}`)); }
-async function personalContextCandidateExport(args: string[]) { if (!args[0]) throw new Error("context_candidate_id_required"); printResult(await request("/v1/self-understanding/context-candidates", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, candidateId: args[0], rating: args[1] ?? "fits" }) })); }
-async function activityWatchCommand(subcommand: string, args: string[]) {
-  if (subcommand === "status" || subcommand === "buckets") return console.log(JSON.stringify(await request(`/v1/activitywatch/${subcommand}`), null, 2));
-  if (subcommand === "list") return console.log(JSON.stringify(await request(`/v1/activitywatch/observations?userId=${encodeURIComponent(userId)}`), null, 2));
-  if (subcommand === "review") {
-    const observationId = args[0] ?? "";
-    const reviewState = args.find((item) => item.startsWith("--state="))?.slice(8) ?? "";
-    if (!observationId || !["reviewed", "excluded"].includes(reviewState)) throw new Error("activitywatch_review_state_required");
-    return console.log(JSON.stringify(await request(`/v1/activitywatch/observations/${encodeURIComponent(observationId)}/review`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, reviewState }) }), null, 2));
-  }
-  const startAt = args.find(item => item.startsWith("--from="))?.slice(7) ?? "";
-  const endAt = args.find(item => item.startsWith("--to="))?.slice(5) ?? "";
-  const bucketIds = args.filter(item => item.startsWith("--bucket=")).map(item => item.slice(9)).filter(Boolean);
+async function activityWatch(command: string, args: string[]) {
+  if (command === "status" || command === "buckets") return print(await request(`/v1/activitywatch/${command}`));
+  if (command === "list") return print(await request(`/v1/activitywatch/observations?userId=${encodeURIComponent(userId)}`));
+  const startAt = args.find((item) => item.startsWith("--from="))?.slice(7) ?? ""; const endAt = args.find((item) => item.startsWith("--to="))?.slice(5) ?? "";
+  const bucketIds = args.filter((item) => item.startsWith("--bucket=")).map((item) => item.slice(9));
   if (!startAt || !endAt || !bucketIds.length) throw new Error("activitywatch_period_and_bucket_required");
-  const path = subcommand === "preview" ? "preview" : "import";
-  return console.log(JSON.stringify(await request(`/v1/activitywatch/${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, startAt, endAt, bucketIds, confirm: args.includes("--confirm") }) }), null, 2));
-}
-async function baselineCommand(subcommand: string, args: string[]) {
-  if (subcommand === "items") return console.log(JSON.stringify(await request("/v1/self-understanding/baseline"), null, 2));
-  if (subcommand === "list") return console.log(JSON.stringify(await request(`/v1/self-understanding/baseline/responses?userId=${encodeURIComponent(userId)}`), null, 2));
-  if (subcommand === "disable") return console.log(JSON.stringify(await request("/v1/self-understanding/baseline/disable", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId }) }), null, 2));
-  if (subcommand === "answer" && args[0] && args[1]) return console.log(JSON.stringify(await request("/v1/self-understanding/baseline/responses", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, itemKey: args[0], response: Number(args[1]) }) }), null, 2));
-  throw new Error("baseline_command_invalid");
+  return print(await request(`/v1/activitywatch/${command === "preview" ? "preview" : "import"}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, startAt, endAt, bucketIds, confirm: args.includes("--confirm") }) }));
 }
 
-function flagValue(args: string[], name: string): string | undefined { const prefix = `${name}=`; return args.find((item) => item.startsWith(prefix))?.slice(prefix.length); }
-function flagNumber(args: string[], name: string): number | undefined { const value = flagValue(args, name); if (value === undefined) return undefined; const number = Number(value); if (!Number.isFinite(number)) throw new Error(`${name.replace(/^--/, "")}_invalid`); return number; }
-
-async function experimentCommand(subcommand: string, args: string[]) {
-  if (subcommand === "draft-from-hypothesis") {
-    if (!args[0]) throw new Error("candidate_id_required");
-    return printResult(await request(`/v1/self-understanding/${encodeURIComponent(args[0])}/experiment-draft`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, durationDays: flagNumber(args, "--duration-days"), minimumObservations: flagNumber(args, "--minimum-observations"), timezone: flagValue(args, "--timezone") }) }));
-  }
-  if (subcommand === "draft-list") return printResult(await request(`/v1/experiment-drafts?userId=${encodeURIComponent(userId)}${flagValue(args, "--status") ? `&status=${encodeURIComponent(flagValue(args, "--status") ?? "")}` : ""}`));
-  if (subcommand === "draft-show" && args[0]) return printResult(await request(`/v1/experiment-drafts/${encodeURIComponent(args[0])}?userId=${encodeURIComponent(userId)}`));
-  if (subcommand === "draft-edit" && args[0]) {
-    const patch: Record<string, unknown> = {};
-    const title = flagValue(args, "--title"); const statement = flagValue(args, "--statement"); const durationDays = flagNumber(args, "--duration-days"); const minimumObservations = flagNumber(args, "--minimum-observations"); const minimumPerGroup = flagNumber(args, "--minimum-per-group");
-    if (title !== undefined) patch.title = title; if (statement !== undefined) patch.statement = statement; if (durationDays !== undefined) patch.durationDays = durationDays; if (minimumObservations !== undefined) patch.minimumObservations = minimumObservations; if (minimumPerGroup !== undefined) patch.minimumPerGroup = minimumPerGroup;
-    if (!Object.keys(patch).length) throw new Error("draft_patch_required");
-    return printResult(await request(`/v1/experiment-drafts/${encodeURIComponent(args[0])}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, ...patch }) }));
-  }
-  if (subcommand === "draft-accept" && args[0]) return printResult(await request(`/v1/experiment-drafts/${encodeURIComponent(args[0])}/accept`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, hypothesisId: flagValue(args, "--hypothesis") ?? null }) }));
-  if (subcommand === "draft-reject" && args[0]) return printResult(await request(`/v1/experiment-drafts/${encodeURIComponent(args[0])}/reject`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId }) }));
-  if (subcommand === "list") return printResult(await request(`/v1/experiments?userId=${encodeURIComponent(userId)}${flagValue(args, "--status") ? `&status=${encodeURIComponent(flagValue(args, "--status") ?? "")}` : ""}`));
-  if (subcommand === "show" && args[0]) return printResult(await request(`/v1/experiments/${encodeURIComponent(args[0])}?userId=${encodeURIComponent(userId)}`));
-  if (["start", "pause", "resume", "complete", "cancel", "archive"].includes(subcommand) && args[0]) return printResult(await request(`/v1/experiments/${encodeURIComponent(args[0])}/${subcommand}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId }) }));
-  if (subcommand === "questions" && args[0]) return printResult(await request(`/v1/experiments/${encodeURIComponent(args[0])}/questions?userId=${encodeURIComponent(userId)}`));
-  if (subcommand === "observe" && args[0]) {
-    const groupKey = flagValue(args, "--group"); const outcome = flagNumber(args, "--outcome");
-    if (!groupKey || outcome === undefined) throw new Error("experiment_observation_group_and_outcome_required");
-    return printResult(await request(`/v1/experiments/${encodeURIComponent(args[0])}/responses`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, groupKey, outcome, source: flagValue(args, "--source") ?? "manual", eligible: flagValue(args, "--eligible") !== "false", note: flagValue(args, "--note"), observedAt: flagValue(args, "--observed-at") }) }));
-  }
-  if (subcommand === "evaluate" && args[0]) return printResult(await request(`/v1/experiments/${encodeURIComponent(args[0])}/evaluate`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, evaluatedAt: flagValue(args, "--evaluated-at") }) }));
-  throw new Error("experiment_command_invalid");
-}
-
-async function collectionPlanCommand(subcommand: string, args: string[]) {
-  if (subcommand === "show" && args[0]) return printResult(await request(`/v1/collection-plans/${encodeURIComponent(args[0])}?userId=${encodeURIComponent(userId)}`));
-  if (subcommand === "request-pcs-template" && args[0]) return printResult(await request(`/v1/collection-plans/${encodeURIComponent(args[0])}/pcs-template-request`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId }) }));
-  if (subcommand === "accept" && args[0]) return printResult(await request(`/v1/collection-plans/${encodeURIComponent(args[0])}/accept`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId }) }));
-  throw new Error("collection_plan_command_invalid");
-}
-
-async function selfModelCommand(subcommand: string, args: string[]) {
-  if (subcommand === "review-due") return printResult(await request(`/v1/self-model/review-due?userId=${encodeURIComponent(userId)}`));
-  if (subcommand === "review" && args[0]) return printResult(await request(`/v1/self-model/${encodeURIComponent(args[0])}/review`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, action: flagValue(args, "--action") ?? args[1] ?? "unknown", note: flagValue(args, "--note") }) }));
-  throw new Error("self_model_command_invalid");
-}
-async function syncFile(file: string) { const path = relative(root, resolve(root, file)); const absolute = resolve(root, file); const text = readFileSync(absolute, "utf8"); const entry = readMarkdownEntry(path, text); if (entry.entryId) { const duplicates = markdownFiles(join(root, "notes")).filter((candidate) => candidate !== absolute).filter((candidate) => { try { return readMarkdownEntry(relative(root, candidate), readFileSync(candidate, "utf8")).entryId === entry.entryId; } catch { return false; } }); if (duplicates.length) throw new Error(`sync_conflict_duplicate_entry_id:${entry.entryId}`); } const result = await request("/v1/entries", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: entry.entryId, userId, externalSource: "vscode", externalSourceId: path, title: entry.title, body: entry.body, recordedAt: entry.recordedAt, sourceUpdatedAt: new Date(statSync(absolute).mtimeMs).toISOString(), templateId: entry.templateId }) }); if (!entry.entryId) writeFileSync(absolute, withEntryMetadata(text, { metheory_entry_id: String(result.entry.id) })); if (entry.autoStructure && entry.tracked && entry.templateId && entry.templateVersionId) scheduleAutoStructure(path); console.log(JSON.stringify({ path, status: result.created ? "created" : "updated", created: result.created, id: result.entry.id })); }
-async function attachTemplate(file: string, templateId: string) { const absolute = resolve(root, file); const path = relative(root, absolute); const template = await request(`/v1/templates/${encodeURIComponent(templateId)}?userId=${encodeURIComponent(userId)}`); if (!template.currentVersion?.id) throw new Error("template_version_not_found"); const text = readFileSync(absolute, "utf8"); writeFileSync(absolute, withEntryMetadata(text, { template_id: templateId, template_version_id: String(template.currentVersion.id), template_status: "approved", tracked: true, auto_structure: true })); await syncFile(path); console.log(JSON.stringify({ path, templateId, templateVersionId: template.currentVersion.id, status: "approved" }, null, 2)); }
-async function watchWorkspace() { const notes = join(root, "notes"); let timer: NodeJS.Timeout | undefined; const watcher = watch(notes, { recursive: true }, (_, name) => { if (!name || !String(name).endsWith(".md")) return; if (timer) clearTimeout(timer); timer = setTimeout(() => void syncFile(join(notes, String(name))), 350); }); console.log("watching_notes"); await new Promise<void>(resolvePromise => process.on("SIGINT", () => { watcher.close(); if (timer) clearTimeout(timer); resolvePromise(); })); }
-async function recordTemplate(templateId: string) { const detail = await request(`/v1/templates/${encodeURIComponent(templateId)}?userId=${encodeURIComponent(userId)}`); const fields = detail.currentVersion.fields as Array<any>; const values: Record<string, unknown> = {}; for (const field of fields) { const answer = globalThis.prompt?.(`${field.label}${field.required ? " *" : ""}`) ?? ""; if (field.value_type === "boolean") values[field.field_key] = answer.toLowerCase() === "true" || answer === "1"; else if (["integer", "number", "scale", "duration_seconds"].includes(field.value_type)) values[field.field_key] = Number(answer); else if (field.value_type === "multi_choice") values[field.field_key] = answer.split(",").map((item: string) => item.trim()).filter(Boolean); else values[field.field_key] = answer; } const created = await request(`/v1/templates/${encodeURIComponent(templateId)}/entries`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, values, title: detail.name, body: "" }) }); mkdirSync(join(root, "notes"), { recursive: true }); writeFileSync(join(root, "notes", `${new Date().toISOString().slice(0, 10)}-${created.id}.md`), `---\nmetheory_entry_id: ${created.id}\ntemplate_id: ${templateId}\ntemplate_version_id: ${created.templateVersionId}\nrecorded_at: ${new Date().toISOString()}\n---\n\n# ${detail.name}\n`); console.log(JSON.stringify({ id: created.id }, null, 2)); }
-
-async function main() { const [, , command, sub, ...args] = process.argv;
-  if (command === "workspace" && sub === "init") return initWorkspace();
-  if (command === "workspace" && sub === "status") return workspaceStatus();
-  if (command === "workspace" && sub === "watch") return watchWorkspace();
-  if (command === "workspace" && sub === "sync") { for (const file of markdownFiles(join(root, "notes"))) await syncFile(file); return; }
-  if (command === "entry" && sub === "sync" && args[0]) return syncFile(args[0]);
-  if (command === "entry" && sub === "template" && args[0] === "attach" && args[1] && args[2]) return attachTemplate(args[1], args[2]);
-  if (command === "entry" && sub === "structure" && args[0]) return structureEntry(args[0]);
-  if (command === "entry" && sub === "extraction-list") return listExtractions();
-  if (command === "entry" && sub === "extraction-apply" && args[0] && args[1]) return applyExtractionReview(args[0], args[1], args.slice(2));
-  if (command === "entry" && sub === "extraction-reject" && args[0]) return rejectExtraction(args[0]);
-  if (command === "extraction" && sub === "review" && args[0]) return showExtractionReview(args[0]);
-  if (command === "extraction" && sub === "decide" && args[0] && args[1] && args[2]) return decideExtraction(args[0], args[1], args[2] as "suggested" | "review_required" | "unanswered");
-  if (command === "extraction" && sub === "approve" && args[0] && args[1]) return approveExtraction(args[0], args[1]);
-  if (command === "extraction" && sub === "edit" && args[0] && args[1] && args[2]) return editExtraction(args[0], args[1], args.slice(2).join(" "));
-  if (command === "extraction" && sub === "apply" && args[0]) return applyStoredExtraction(args[0]);
-  if (command === "self-understanding" && sub === "analyze") return selfUnderstandingAnalyze(args);
-  if (command === "self-understanding" && sub === "review" && args[0] && args[1]) return selfUnderstandingReview(args);
-  if (command === "self-understanding" && sub === "self-model") return selfModelCandidates();
-  if (command === "self-understanding" && sub === "self-model-review") return selfModelReview(args);
-  if (command === "self-understanding" && sub === "context-candidate" && args[0] === "export") return personalContextCandidateExport(args.slice(1));
-  if (command === "personal-context" && sub === "export-migration") return personalContextMigrationExport();
-  if (command === "experiment") return experimentCommand(sub ?? "", args);
-  if (command === "collection-plan") return collectionPlanCommand(sub ?? "", args);
-  if (command === "self-model") return selfModelCommand(sub ?? "", args);
-  if (command === "activitywatch") return activityWatchCommand(sub ?? "", args);
-  if (command === "self-understanding" && sub === "baseline") return baselineCommand(args[0] ?? "", args.slice(1));
-  if (command === "privacy" && sub === "status") return privacyStatus();
-  if (command === "privacy" && sub === "consents" && args[0] === "list") return privacyConsentsList();
-  if (command === "privacy" && sub === "audit" && args[0] === "list") return privacyAuditList();
-  if (command === "privacy" && sub === "consent" && args[0] === "show" && args[1]) return privacyConsentShow(args[1]);
-  if (command === "privacy" && sub === "consent" && args[0] === "revoke" && args[1]) return privacyConsentRevoke(args[1]);
-  if (command === "privacy" && sub === "consent" && args[0] === "grant") return privacyConsentGrant(args.slice(1));
-  if (command === "privacy" && sub === "fields" && args[0] === "list") return privacyFieldsList();
-  if (command === "privacy" && sub === "fields" && args[0] === "show" && args[1] && args[2]) return privacyFieldShow(args[1], args[2]);
-  if (command === "privacy" && sub === "safe-delete" && args[0] === "plan" && args[1]) return privacySafeDeletePlan(args[1]);
-  if (command === "privacy" && sub === "safe-delete" && args[0] === "status" && args[1]) return privacySafeDeleteStatus(args[1]);
-  if (command === "privacy" && sub === "safe-delete" && args[0] === "execute" && args[1] && args[2]) return privacySafeDeleteExecute(args[1], args.slice(2).join(" "));
-  if (command === "privacy" && sub === "fields" && args[0] === "downgrade" && args[1] && args[2] && args[3]) return privacyDowngrade(args[1], args[2], args[3]);
-  if (command === "entry" && sub === "list") return console.log(JSON.stringify(await request(`/v1/entries?userId=${encodeURIComponent(userId)}`), null, 2));
-  if (command === "entry" && sub === "search") return console.log(JSON.stringify(await request(`/v1/search?userId=${encodeURIComponent(userId)}&q=${encodeURIComponent(args.join(" "))}`), null, 2));
-  if (command === "ai" && ["detect", "status"].includes(sub ?? "")) return aiStatus();
-  if (command === "ai" && sub === "models") return aiModels();
-  if (command === "ai" && sub === "model" && args[0] && args[1]) return setAiModel(args[0], args.slice(1).join(" "));
-  if (command === "ai" && sub === "test") return aiTest();
-  if (command === "ai" && sub === "start") return aiStart();
-  if (command === "ai" && sub === "stop") return aiStop();
-  if (command === "template" && sub === "list") return console.log(JSON.stringify(await request(`/v1/templates?userId=${encodeURIComponent(userId)}`), null, 2));
-  if (command === "template" && (sub === "generate" || sub === "suggest")) { const themeIndex = args.indexOf("--theme"); const theme = themeIndex >= 0 ? args[themeIndex + 1] ?? "" : args.filter(item => item !== "--json").join(" "); return generateTemplateDraft(theme); }
-  if (command === "template" && sub === "draft" && args[0] === "list") return listTemplateDrafts();
-  if (command === "template" && sub === "draft" && args[0] === "show" && args[1]) return showTemplateDraft(args[1]);
-  if (command === "template" && sub === "draft" && args[0] === "set-result" && args[1] && args[2]) return setManualTemplateResult(args[1], args[2]);
-  if (command === "template" && sub === "draft" && args[0] === "approve" && args[1]) return approveTemplateDraft(args[1]);
-  if (command === "template" && sub === "record" && args[0]) return recordTemplate(args[0]);
+async function main() {
+  const [, , command, sub, ...args] = process.argv;
   if (command === "service" && sub === "start") return serviceStart();
   if (command === "service" && sub === "stop") return serviceStop();
   if (command === "service" && sub === "status") return serviceStatus();
-  if (command === "backup" && sub === "create") return backupCreate(args[0] ?? "manual");
-  if (command === "backup" && sub === "list") return backupList();
-  if (command === "backup" && sub === "restore" && args[0]) return backupRestore(args[0]);
-  console.error("usage: activitywatch status|buckets|preview --bucket=<id> --from=<iso> --to=<iso>|import ... --confirm|list|review <id> --state=reviewed|excluded; self-understanding baseline items|list|answer <itemKey> <1-5>|disable; workspace init|status|sync|watch; ..."); process.exitCode = 1;
+  if (command === "personal-context" && sub === "export-migration") return print(await request(`/v1/self-understanding/context-export?userId=${encodeURIComponent(userId)}`));
+  if (command === "self-understanding" && sub === "context-candidate" && args[0] === "export") return print(await request("/v1/self-understanding/context-candidates", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, candidateId: args[1], rating: args[2] ?? "fits" }) }));
+  if (command === "self-understanding") return selfUnderstanding(sub ?? "", args);
+  if (command === "activitywatch") return activityWatch(sub ?? "", args);
+  throw new Error("usage: service|self-understanding|personal-context|activitywatch");
 }
 
-main().catch(error => { mkdirSync(join(root, ".metheory", "logs"), { recursive: true }); appendFileSync(join(root, ".metheory", "logs", "cli.log"), `${new Date().toISOString()} ${error instanceof Error ? error.message : "error"}\n`); console.error(error instanceof Error ? error.message : "error"); process.exitCode = 1; });
+main().catch((error) => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });

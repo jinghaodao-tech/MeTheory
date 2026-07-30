@@ -9,7 +9,7 @@ import {
   inferSemanticRole,
   isSelfUnderstandingSemanticRole,
   type SelfUnderstandingSemanticRole
-} from "../../templates/src/semanticRoles.ts";
+} from "./semanticRoles.ts";
 import {
   SELF_UNDERSTANDING_CONSTRUCT_CATALOG,
   alternativeExplanationsFor,

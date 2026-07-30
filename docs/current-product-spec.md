@@ -12,19 +12,19 @@ The first practical version is complete when a user can record and review contex
 
 ## Local-first policy
 
-Personal Context Studio owns Markdown and its local SQLite store for documents, templates, structured field values, review state, and search. MeTheory owns its separate local SQLite store for experiment observations, hypotheses, evidence, consent, and Self Model changes. The two services exchange versioned localhost JSON only; no cloud sync is required.
+Personal Context Studio owns Markdown and its local SQLite store for documents, templates, structured field values, review state, search, local-AI execution, and all consent for sending record content to an external AI. MeTheory owns its separate local SQLite store for experiment observations, hypotheses, evidence, experiment-specific privacy decisions, and Self Model changes. The two services exchange versioned localhost JSON only; no cloud sync is required.
 
 ## Responsibility boundaries
 
-- **Personal Context Studio / Markdown:** editor-agnostic writing, local search, templates, local-AI candidates, and the human-readable record. VS Code, Cursor, and Obsidian are interchangeable editors of the same folder.
+- **Personal Context Studio / Markdown:** editor-agnostic writing, local search, templates, local-AI candidates, the human-readable record, and document/field/provider/host external-AI consent. VS Code, Cursor, and Obsidian are interchangeable editors of the same folder.
 - **PCS analysis snapshot:** reviewed, shareable structured values and source references, without Markdown bodies.
-- **MeTheory SQLite:** experiments, hypotheses, evidence, privacy decisions, and Self Model changes.
+- **MeTheory SQLite:** experiments, hypotheses, evidence, experiment-specific privacy decisions, and Self Model changes. It never receives Markdown bodies.
 - **Experiment data:** explicit observations and parameter values used for evaluation. An Entry is never implicitly converted into an experiment observation.
 - **CLI:** scriptable local operations, with human-readable output by default and stable JSON only with `--json`.
 
 ## AI boundary
 
-AI may suggest templates, titles, structured values, wording for questions, and plain-language explanations of an already computed self-understanding candidate. AI must not decide facts, evidence strength, diagnosis, hypothesis status, consent, notification timing, or Self Model updates. Self-understanding explanation receives a versioned DTO with aggregate statistics and allowlisted Entry references, never Markdown bodies. Only localhost AI endpoints are accepted; invalid JSON, invented statistics, unknown Entry IDs, or clinical and absolute claims fall back to deterministic wording. Every extracted value is reviewable, stale extraction results are rejected, and deterministic fallback behavior keeps recording available.
+PCS may suggest templates and structured values. Before record content goes to a manual external-AI provider, PCS requires active consent for the document and every selected template field, scoped by provider and destination host; `never` and `highly_sensitive` fields are refused. MeTheory AI may only provide plain-language wording for an already computed self-understanding candidate and receives a versioned DTO with aggregate statistics and allowlisted Entry references, never Markdown bodies. AI must not decide facts, evidence strength, diagnosis, hypothesis status, consent, notification timing, or Self Model updates. Invalid JSON, invented statistics, unknown Entry IDs, or clinical and absolute claims fall back to deterministic wording.
 
 ## Supported clients
 
@@ -32,9 +32,9 @@ Personal Context Studio watches a configured Markdown folder and provides local 
 
 ## Implemented now
 
-- Local Node API and SQLite schema for Entries, templates, structured field values, hypotheses, evaluations, evidence, privacy, and search.
+- Local Node API and SQLite schema for experiment observations, hypotheses, evaluations, evidence, experiment privacy, and Self Model changes.
 - PCS-owned Markdown parsing, timestamp preservation, stable-save watching, regenerable search indexing, and stale extraction rejection.
-- PCS CLI/API workflows for templates, extraction candidates, per-value Review, privacy, and bounded context access.
+- PCS CLI/API workflows for templates, extraction candidates, per-value Review, local runtime control, external-AI consent, and bounded context access.
 - A read-only PCS MCP surface for search, excerpts, confirmed context, and pending Review status.
 - Self-understanding: confirmed-value-only analysis, eight-record quality gate, semantic-role-to-construct mapping, candidate history and deduplication, emerging/state-dependent/relatively-stable scopes, deterministic Japanese explanations, optional validated localhost-AI wording, evidence links, ratings, and editable user-confirmed Self Model additions.
 - External-asset safety: versioned `SelfUnderstandingInterpretationV3` validation with deterministic fallback, localhost-only ActivityWatch preview/import with normalized provenance, separate original IPIP-inspired self-perception responses, deterministic question-quality checks, and fixed non-AI chart data models.

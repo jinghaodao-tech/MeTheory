@@ -1,7 +1,7 @@
 # MeTheory
 
-MeTheory is a local-first personal information foundation. It can keep free
-form records, later structure selected information, and use the existing
+MeTheory is a local-first self-understanding and experiment engine. It receives
+user-confirmed structured context from Personal Context Studio and uses its
 deterministic hypothesis system when a user wants to test a self-belief.
 
 The current product specification is [`docs/current-product-spec.md`](docs/current-product-spec.md).
@@ -29,8 +29,6 @@ notification timing, hypothesis status, or Self Model updates.
 - `docs/integration-architecture.md`: Personal Context Studio, experiments, and analysis boundaries.
 - `docs/technical-architecture.md`: module boundaries and runtime flow.
 - `docs/privacy-retention.md`: retention, consent, erasure, and AI safety baseline.
-- `docs/local-ai-phase3.md`: local AI providers, draft approval, extraction, and review boundaries.
-- `docs/privacy-phase4.md`: field privacy classification, consent, safe deletion, and privacy audit behavior.
 - `docs/implementation-roadmap.md`: phased implementation and beta criteria.
 - `docs/current-product-spec.md`: current product scope, boundaries, and implementation status.
 - `docs/self-understanding-practical-v1.md`: confirmed-value analysis and Self Model review flow.
@@ -50,7 +48,6 @@ notification timing, hypothesis status, or Self Model updates.
  - `docs/openapi-ai.yaml`: read-only AI HTTP contract.
  - `docs/mcp-tools.md`: read-only MCP tool boundary.
 - `apps/api/src/server.ts`: TypeScript Node MVP API.
-- `packages/records/src/`: platform-neutral Entry types and validation.
 - `backend/core.py`: Python reference implementation kept during migration.
 
 ## Commands
@@ -97,27 +94,19 @@ maintains a local search index, and exposes reviewed structured values to
 MeTheory through a versioned localhost snapshot. Opening that folder in
 Obsidian is optional and requires no MeTheory-specific plugin.
 
-MeTheory's existing `entries` remain an internal analysis/reference model and
-are deliberately separate from `observation_episodes` and `parameter_values`.
-New free-record authoring, indexing, template, extraction, and Review work
-belongs in PCS.
+MeTheory does not store or index Markdown Entries. New free-record authoring,
+indexing, template, extraction, Review, and record-level privacy work belongs
+in PCS. MeTheory stores only its own experiments, observations, hypotheses,
+Evidence, and user-approved Self Model updates.
 
 See `docs/integration-architecture.md` for the current architecture, API
 surface, timestamp semantics, and the planned search boundary.
 
 ## Local record search
 
-Entry text is indexed into the derived `search_documents` table when it is
-saved. The local API provides `GET /v1/search?userId=...&q=...` and returns a
-BM25-ranked list with source references, snippets, matched terms, and recorded
-timestamps. Existing Entries can be indexed with
-`POST /v1/search-documents/rebuild`, which transactionally removes all Entry
-documents for that user and rebuilds only current, unarchived Entries. Its
-response includes `{ sourceKind: "entry", deleted, indexed }`; `removed` is
-also returned as a compatibility alias for callers that used the earlier
-rebuild response. Search documents are not authoritative and can be rebuilt
-from Entries; hypothesis, Evidence, and parameter-value search builders remain
-future work.
+Full-text Markdown search is a PCS responsibility. MeTheory never receives
+Markdown bodies through the analysis bridge; it receives only the reviewed,
+shareable values needed for a selected analysis period.
 
 Run the Python compatibility tests:
 
@@ -260,10 +249,6 @@ SQLite benchmark results are written to the ignored artifacts directory and
 include insert/query timings and EXPLAIN QUERY PLAN output. The large profile
 uses 500,000 parameter_values; adjust the profile argument for a larger local
 dataset.
-## Entry Templates
-
-Entry Templates provide reusable, user-approved structures for free records. AI generation returns an unsaved draft; the user must approve it before storage. Templates and immutable versions are stored in local SQLite, and each template Entry keeps the version used at creation. Typed field values are intentionally separate from `observations` and `parameter_values`, so free records do not silently enter hypothesis evaluation. See `docs/template-system.md`.
-
 ## Local AI and Review
 
 Local-AI template generation, Markdown extraction, stale-result checks, and
@@ -275,30 +260,20 @@ authoring workflow or alter Markdown.
 
 ## Privacy and Safe Delete
 
-Phase 4 adds `normal`, `sensitive`, and `highly_sensitive` field policies.
-Classification suggestions are advisory; the stored policy records the source
-of the final user or system choice. Sensitive field values require field-level
-consent before storage. External AI transfer requires separate consent for the
-field and a hashed destination fingerprint; API keys and raw destination
-secrets are never stored.
-
-`privacy status`, `privacy consents list`, `privacy fields list`, and
-`privacy safe-delete plan <selector-json>` expose the privacy state. Safe
-delete always creates a plan with affected counts and an exact confirmation
-string. Execution is user-scoped and transactional for SQLite values and
-derived Entry search documents. Markdown files are reported for review and
-are never modified automatically. Consent history and deletion audit events
-contain metadata and counts only, not values or note bodies.
+PCS owns `normal`, `sensitive`, and `highly_sensitive` record policies,
+field-level consent, external-AI destination approval, and safe deletion of
+record-derived data. MeTheory keeps separate access controls for experiment
+parameters and never receives record bodies or secrets.
 
 ## Self-understanding vertical slice
 
-`POST /v1/self-understanding/analyze` aggregates reviewed Entry field values
-over a selected one-to-four-week period. It accepts optional `templateId` and
-`fieldKeys` filters, requires eight Entries by default, and returns at most five
-deterministic, non-diagnostic hypotheses. When data is insufficient it returns
-a concrete shortage instead of a hypothesis. Each result includes a status,
-period, supporting and contradicting Entry IDs, missing-data flags, a Japanese
-fallback explanation, a small next action, and a proposed Self Model statement.
+`POST /v1/self-understanding/analyze` requests a reviewed PCS snapshot for a
+selected one-to-four-week period, requires eight records by default, and returns
+at most five deterministic, non-diagnostic hypotheses. When data is
+insufficient it returns a concrete shortage instead of a hypothesis. Each
+result includes a status, period, supporting and contradicting record IDs,
+missing-data flags, a fallback explanation, a small next action, and a
+proposed Self Model statement.
 
 Request a PCS analysis snapshot for the selected period and analyze its
 confirmed fields in MeTheory. Rate a result as `fits`,
@@ -307,9 +282,9 @@ Only a separate explicit acceptance adds it to Self Model. See
 [`docs/self-understanding-practical-v1.md`](docs/self-understanding-practical-v1.md)
 for the complete boundary and API workflow.
 
-Templates may attach an allowlisted semantic role to each field.
-`POST /v1/templates/suggest-semantic-roles` returns deterministic suggestions;
-ambiguous, sensitive, and role-changing suggestions still require approval.
+PCS templates may attach an allowlisted semantic role to each field.
+Ambiguous, sensitive, and role-changing roles require confirmation before they
+are included in a snapshot.
 Analysis maps confirmed roles to a non-clinical construct and records history
 to distinguish emerging, state-dependent, and relatively stable evidence.
 Fields from different templates remain separate unless both explicitly permit a
@@ -317,4 +292,4 @@ compatible semantic merge. See
 [`docs/self-understanding-construct-catalog.md`](docs/self-understanding-construct-catalog.md).
 
 From the workspace CLI, use
-`self-understanding analyze --from=2026-07-01T00:00:00.000Z --to=2026-07-28T00:00:00.000Z --template=<template-id> --field=<field-key>`.
+`self-understanding analyze --from=2026-07-01T00:00:00.000Z --to=2026-07-28T00:00:00.000Z`.

@@ -14,8 +14,6 @@
     "**/*.tsx",
     ".expo/types/**/*.ts",
     "../../packages/domain/src/**/*.ts",
-    "../../packages/records/src/**/*.ts",
-    "../../packages/search-core/src/**/*.ts",
     "expo-env.d.ts"
   ]
 }

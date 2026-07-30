@@ -3,7 +3,7 @@ import {
   type PcsAnalysisSnapshotV2,
   type PcsAnalysisUsage
 } from "../../contracts/src/pcsAnalysisSnapshotV2.ts";
-import { isSelfUnderstandingSemanticRole, type SelfUnderstandingSemanticRole } from "../../templates/src/semanticRoles.ts";
+import { isSelfUnderstandingSemanticRole, type SelfUnderstandingSemanticRole } from "./semanticRoles.ts";
 import {
   generateSelfUnderstanding,
   type EvidenceView,
