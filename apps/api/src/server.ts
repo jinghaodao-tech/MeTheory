@@ -1,7 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { evaluateEvidence, directionForObservation, RULE_VERSION, type ObservationInput } from "../../../packages/domain/src/index.ts";
 import { buildEpisodes } from "../../../packages/domain/src/hypothesis/episodes.ts";
@@ -27,97 +26,26 @@ import {
   IPIP_BASELINE_ITEM_SET_VERSION
 } from "../../../packages/self-understanding/src/index.ts";
 import { ActivityWatchAdapter, activityWatchObservationIdentity, summarizeActivityWatchDaily } from "../../../packages/domain/src/activitywatch.ts";
+import { reviewReasonAction, type CandidateForExperiment, type ExperimentDraft, type ExperimentStatus } from "../../../packages/domain/src/experiments.ts";
+import { SqliteExperimentRepository } from "./experimentRepository.ts";
+import { migrateDatabase } from "./db/migrate.ts";
+import { SqlitePcsAnalysisRepository } from "./pcsAnalysisRepository.ts";
+import { analyzePcsAnalysisSnapshot } from "../../../packages/self-understanding/src/pcsSnapshotAnalysis.ts";
+import { validatePcsAnalysisSnapshotV2 } from "../../../packages/contracts/src/pcsAnalysisSnapshotV2.ts";
+import { analyzeBoundPcsSnapshot, validateBoundPcsSnapshot } from "./services/pcsAnalysisService.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.METHEORY_DB ?? resolve(root, "data", "metheory.sqlite3");
 const db = new DatabaseSync(databasePath);
-db.exec(readFileSync(resolve(root, "db", "ts_mvp_schema.sql"), "utf8"));
+migrateDatabase(db, root);
 const aiQueryService = createAiQueryService(db);
 const entryRepository = new SqliteEntryRepository(db);
 const searchDocumentRepository = new SqliteSearchDocumentRepository(db);
 const templateRepository = new SqliteTemplateRepository(db);
 const privacyRepository = new SqlitePrivacyRepository(db);
 const selfUnderstandingRepository = new SqliteSelfUnderstandingRepository(db);
-
-function ensureColumn(table: string, column: string, definition: string): void {
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<Record<string, unknown>>;
-  if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-}
-
-ensureColumn("hypotheses", "state", "TEXT NOT NULL DEFAULT 'tracking'");
-ensureColumn("entries", "source_updated_at", "TEXT");
-ensureColumn("entries", "template_version_id", "TEXT");
-if ((db.prepare("PRAGMA table_info(entries)").all() as Array<{ name: string }>).some((column) => column.name === "source_modified_at")) db.exec("UPDATE entries SET source_updated_at=source_modified_at WHERE source_updated_at IS NULL");
-ensureColumn("hypotheses", "spec_json", "TEXT");
-ensureColumn("hypotheses", "spec_version", "TEXT");
-ensureColumn("responses", "capture_mode", "TEXT NOT NULL DEFAULT 'momentary_observation'");
-ensureColumn("hypothesis_evaluations", "hypothesis_spec_version", "TEXT NOT NULL DEFAULT '1'");
-ensureColumn("hypothesis_evaluations", "evaluator_version", "TEXT NOT NULL DEFAULT 'comparison-v1'");
-ensureColumn("hypothesis_evaluations", "evaluated_at", "TEXT NOT NULL DEFAULT ''");
-ensureColumn("hypothesis_evaluations", "window_start", "TEXT NOT NULL DEFAULT ''");
-ensureColumn("hypothesis_evaluations", "window_end", "TEXT NOT NULL DEFAULT ''");
-ensureColumn("hypothesis_evaluations", "result", "TEXT NOT NULL DEFAULT 'inconclusive'");
-ensureColumn("hypothesis_evaluations", "cohort_metrics_json", "TEXT NOT NULL DEFAULT '[]'");
-ensureColumn("hypothesis_evaluations", "observed_effect", "REAL");
-ensureColumn("hypothesis_evaluations", "required_effect", "REAL NOT NULL DEFAULT 0");
-ensureColumn("hypothesis_evaluations", "data_quality_json", "TEXT NOT NULL DEFAULT '[]'");
-ensureColumn("entry_field_values", "source_content_hash", "TEXT");
-ensureColumn("entry_field_values", "source_updated_at", "TEXT");
-ensureColumn("entry_field_values", "confidence", "REAL");
-ensureColumn("entry_field_values", "source", "TEXT");
-ensureColumn("entry_field_values", "reviewed_at", "TEXT");
-ensureColumn("entry_field_values", "updated_at", "TEXT");
-ensureColumn("entry_template_fields", "sensitivity_level", "TEXT NOT NULL DEFAULT 'normal'");
-ensureColumn("entry_template_fields", "classification_source", "TEXT NOT NULL DEFAULT 'system_rule'");
-ensureColumn("entry_template_fields", "prohibited_secret_risk", "INTEGER NOT NULL DEFAULT 0");
-ensureColumn("entry_template_fields", "semantic_role", "TEXT");
-ensureColumn("entry_template_fields", "semantic_role_source", "TEXT");
-ensureColumn("entry_template_fields", "semantic_role_confidence", "REAL");
-ensureColumn("entry_template_fields", "semantic_role_confirmed", "INTEGER NOT NULL DEFAULT 0");
-ensureColumn("entry_template_fields", "semantic_merge_allowed", "INTEGER NOT NULL DEFAULT 0");
-ensureColumn("hypothesis_reviews", "analysis_start_at", "TEXT");
-ensureColumn("hypothesis_reviews", "analysis_end_at", "TEXT");
-ensureColumn("hypothesis_reviews", "template_version_id", "TEXT");
-ensureColumn("hypothesis_reviews", "field_pair_json", "TEXT NOT NULL DEFAULT '{}' ");
-ensureColumn("hypothesis_reviews", "reviewed_at", "TEXT");
-ensureColumn("self_model_candidates", "source_hypothesis_id", "TEXT");
-ensureColumn("self_model_candidates", "supporting_period_start", "TEXT");
-ensureColumn("self_model_candidates", "supporting_period_end", "TEXT");
-ensureColumn("self_model_candidates", "user_note", "TEXT NOT NULL DEFAULT ''");
-ensureColumn("self_model_candidates", "accepted_at", "TEXT");
-ensureColumn("self_model_candidates", "last_reviewed_at", "TEXT");
-ensureColumn("self_model_candidates", "construct_key", "TEXT");
-ensureColumn("self_model_candidates", "tendency_scope", "TEXT");
-ensureColumn("self_model_candidates", "source_analysis_periods_json", "TEXT NOT NULL DEFAULT '[]'");
-ensureColumn("self_model_candidates", "supporting_field_pairs_json", "TEXT NOT NULL DEFAULT '[]'");
-ensureColumn("self_model_candidates", "resolution_action", "TEXT NOT NULL DEFAULT 'new'");
-ensureColumn("self_model_candidates", "target_self_belief_id", "TEXT");
-ensureColumn("self_beliefs", "source_hypothesis_id", "TEXT");
-ensureColumn("self_beliefs", "status", "TEXT NOT NULL DEFAULT 'active'");
-ensureColumn("self_beliefs", "user_note", "TEXT NOT NULL DEFAULT ''");
-ensureColumn("self_beliefs", "accepted_at", "TEXT");
-ensureColumn("self_beliefs", "last_reviewed_at", "TEXT");
-ensureColumn("self_beliefs", "supporting_period_start", "TEXT");
-ensureColumn("self_beliefs", "supporting_period_end", "TEXT");
-ensureColumn("self_beliefs", "construct_key", "TEXT");
-ensureColumn("self_beliefs", "tendency_scope", "TEXT");
-ensureColumn("self_beliefs", "source_analysis_periods_json", "TEXT NOT NULL DEFAULT '[]'");
-ensureColumn("self_beliefs", "supporting_field_pairs_json", "TEXT NOT NULL DEFAULT '[]'");
-ensureColumn("self_understanding_analysis_history", "condition_template_id", "TEXT");
-ensureColumn("self_understanding_analysis_history", "condition_template_version_id", "TEXT");
-ensureColumn("self_understanding_analysis_history", "condition_field_key", "TEXT");
-ensureColumn("self_understanding_analysis_history", "condition_scale_fingerprint", "TEXT");
-ensureColumn("self_understanding_analysis_history", "outcome_template_id", "TEXT");
-ensureColumn("self_understanding_analysis_history", "outcome_template_version_id", "TEXT");
-ensureColumn("self_understanding_analysis_history", "outcome_field_key", "TEXT");
-ensureColumn("self_understanding_analysis_history", "outcome_scale_fingerprint", "TEXT");
-ensureColumn("self_understanding_analysis_history", "source_entry_ids_json", "TEXT NOT NULL DEFAULT '[]'");
-ensureColumn("self_understanding_analysis_history", "source_entry_fingerprint", "TEXT NOT NULL DEFAULT ''");
-ensureColumn("self_understanding_analysis_history", "evidence_provenance_json", "TEXT NOT NULL DEFAULT '[]'");
-ensureColumn("external_observations", "review_state", "TEXT NOT NULL DEFAULT 'imported'");
-ensureColumn("external_observations", "local_date", "TEXT");
-ensureColumn("external_observations", "source_bucket_id", "TEXT");
-ensureColumn("external_observations", "source_identity", "TEXT");
+const experimentRepository = new SqliteExperimentRepository(db);
+const pcsAnalysisRepository = new SqlitePcsAnalysisRepository(db);
 
 type LegacyActivityWatchObservation = {
   id: string;
@@ -307,6 +235,35 @@ function personalContextCandidate(snapshot: any, reviewStatus: "fits" | "does_no
     createdAt
   };
 }
+
+function experimentCandidateFromSnapshot(snapshot: Record<string, unknown>, candidateId: string): CandidateForExperiment {
+  const candidate = snapshot.candidate && typeof snapshot.candidate === "object" ? snapshot.candidate as Record<string, unknown> : snapshot;
+  const interpretation = snapshot.interpretationInput && typeof snapshot.interpretationInput === "object" ? snapshot.interpretationInput as Record<string, unknown> : {};
+  const condition = interpretation.condition && typeof interpretation.condition === "object" ? interpretation.condition as Record<string, unknown> : {};
+  const outcome = interpretation.outcome && typeof interpretation.outcome === "object" ? interpretation.outcome as Record<string, unknown> : {};
+  const cohortA = candidate.cohortA && typeof candidate.cohortA === "object" ? candidate.cohortA as Record<string, unknown> : {};
+  const cohortB = candidate.cohortB && typeof candidate.cohortB === "object" ? candidate.cohortB as Record<string, unknown> : {};
+  const conditionParameterId = String(candidate.conditionParameterId ?? condition.fieldKey ?? condition.field ?? "");
+  const outcomeParameterId = String(candidate.outcomeParameterId ?? outcome.fieldKey ?? outcome.field ?? "");
+  const cohortAKey = String(candidate.cohortAKey ?? cohortA.key ?? "group_a");
+  const cohortBKey = String(candidate.cohortBKey ?? cohortB.key ?? "group_b");
+  const effectValue = Number(candidate.effectValue ?? 0);
+  return {
+    id: candidateId,
+    conditionParameterId,
+    outcomeParameterId,
+    conditionLabel: String(condition.label ?? conditionParameterId),
+    outcomeLabel: String(outcome.label ?? outcomeParameterId),
+    cohortAKey,
+    cohortBKey,
+    cohortALabel: typeof cohortA.label === "string" ? cohortA.label : undefined,
+    cohortBLabel: typeof cohortB.label === "string" ? cohortB.label : undefined,
+    effectValue: Number.isFinite(effectValue) ? effectValue : 0,
+    sampleCount: Number(candidate.completePairCount ?? candidate.sampleCount ?? 0),
+    minimumPerGroup: Number(candidate.minimumPerGroup ?? 3),
+    statement: typeof snapshot.statement === "string" ? snapshot.statement : undefined
+  };
+}
 function analyzeSelfUnderstanding(userId: string, input: Record<string, unknown>) { const endAt = typeof input.endAt === "string" ? input.endAt : now(); const startAt = typeof input.startAt === "string" ? input.startAt : new Date(Date.parse(endAt) - 28 * 86400000).toISOString(); const minimumEntryCount = Math.max(2, Math.min(100, Number(input.minimumEntryCount ?? 4))); const rows = db.prepare("SELECT e.id,e.recorded_at,e.title,f.field_key,f.label,f.value_type,f.options_json,ev.is_missing,ev.boolean_value,ev.integer_value,ev.number_value,ev.text_value,ev.json_value,ev.date_value,ev.datetime_value,ev.duration_seconds FROM entries e JOIN entry_field_values ev ON ev.entry_id=e.id JOIN entry_template_fields f ON f.id=ev.template_field_id WHERE e.user_id=? AND e.archived_at IS NULL AND ev.reviewed_at IS NOT NULL AND e.recorded_at>=? AND e.recorded_at<=? ORDER BY e.recorded_at").all(userId, startAt, endAt) as Array<Record<string, unknown>>; const entryCount = new Set(rows.map(row => String(row.id))).size; if (entryCount < minimumEntryCount) return { period: { startAt, endAt }, entryCount, minimumEntryCount, dataShortage: { needed: minimumEntryCount - entryCount, message: "Confirmed structured values are insufficient for a reliable hypothesis." }, hypotheses: [] }; const definitions = new Map<string, { id: string; nameJa: string; valueType: string; minimumValue?: number; maximumValue?: number; usableAsCondition: boolean; usableAsOutcome: boolean }>(); const allowedValues: Record<string, Array<{ valueKey: string; labelJa: string }>> = {}; const records = new Map<string, UnderstandingRecord>(); const observations: Array<{ episodeId: string; parameterId: string; value: unknown; isMissing: boolean; observedAt: string }> = []; for (const row of rows) { const parameterId = String(row.field_key); const valueType = row.value_type === "choice" ? "single_choice" : ["integer", "number", "scale", "duration_seconds"].includes(String(row.value_type)) ? "number" : String(row.value_type); if (!["boolean", "single_choice", "integer", "number"].includes(valueType)) continue; if (!definitions.has(parameterId)) { definitions.set(parameterId, { id: parameterId, nameJa: String(row.label ?? parameterId), valueType, minimumValue: 0, maximumValue: valueType === "boolean" || valueType === "single_choice" ? undefined : 100, usableAsCondition: true, usableAsOutcome: true }); try { const options = JSON.parse(String(row.options_json ?? "[]")) as Array<{ key?: string; label?: string }>; allowedValues[parameterId] = options.map(option => ({ valueKey: String(option.key ?? ""), labelJa: String(option.label ?? option.key ?? "") })).filter(option => option.valueKey); } catch { allowedValues[parameterId] = []; } } const value = fieldValue(row); observations.push({ episodeId: String(row.id), parameterId, value, isMissing: value === null, observedAt: String(row.recorded_at) }); const record = records.get(String(row.id)) ?? { id: String(row.id), recordedAt: String(row.recorded_at), title: String(row.title), conditionValues: {}, outcomeValues: {} }; record.conditionValues[parameterId] = value; record.outcomeValues[parameterId] = value; records.set(String(row.id), record); } const hypotheses = generateSelfUnderstanding({ parameters: [...definitions.values()], observations, records: [...records.values()], allowedValues, startAt, now: endAt, maximumCandidates: 5 } as any); return { period: { startAt, endAt }, entryCount, minimumEntryCount, hypotheses }; }
 function analyzeSelfUnderstandingPractical(userId: string, input: Record<string, unknown>) { const endAt = typeof input.endAt === "string" ? input.endAt : now(); const startAt = typeof input.startAt === "string" ? input.startAt : new Date(Date.parse(endAt) - 28 * 86400000).toISOString(); const minimumEntryCount = Math.max(8, Math.min(100, Number(input.minimumEntryCount ?? 8))); const templateId = typeof input.templateId === "string" && input.templateId ? input.templateId : undefined; const fieldKeys = Array.isArray(input.fieldKeys) ? input.fieldKeys.filter((item): item is string => typeof item === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(item)).slice(0, 30) : []; const clauses = ["e.user_id=?", "e.archived_at IS NULL", "ev.reviewed_at IS NOT NULL", "e.recorded_at>=?", "e.recorded_at<=?"]; const params: string[] = [userId, startAt, endAt]; if (templateId) { clauses.push("e.template_id=?"); params.push(templateId); } if (fieldKeys.length) { clauses.push(`f.field_key IN (${fieldKeys.map(() => "?").join(",")})`); params.push(...fieldKeys); } const rows = db.prepare(`SELECT e.id,e.recorded_at,e.title,e.template_id,ev.template_version_id,f.field_key,f.label,f.value_type,f.options_json,f.minimum,f.maximum,ev.is_missing,ev.boolean_value,ev.integer_value,ev.number_value,ev.text_value,ev.json_value,ev.date_value,ev.datetime_value,ev.duration_seconds FROM entries e JOIN entry_field_values ev ON ev.entry_id=e.id JOIN entry_template_fields f ON f.id=ev.template_field_id WHERE ${clauses.join(" AND ")} ORDER BY e.recorded_at`).all(...params) as Array<Record<string, unknown>>; const entryCount = new Set(rows.map(row => String(row.id))).size; const templateVersionIds = [...new Set(rows.map(row => typeof row.template_version_id === "string" ? row.template_version_id : "").filter(Boolean))]; const options = { templateId: templateId ?? null, templateVersionId: templateVersionIds.length === 1 ? templateVersionIds[0] : null, templateVersionIds, fieldKeys }; if (entryCount < minimumEntryCount) return { status: "insufficient", statusLabelJa: "データ不足", period: { startAt, endAt }, filters: options, entryCount, minimumEntryCount, dataShortage: { needed: minimumEntryCount - entryCount, message: "確認済みの構造化記録が不足しています。条件と結果を同じEntryで記録してください。", recommendedFields: fieldKeys }, hypotheses: [] }; const definitions = new Map<string, { id: string; nameJa: string; valueType: string; minimumValue?: number; maximumValue?: number; usableAsCondition: boolean; usableAsOutcome: boolean }>(); const allowedValues: Record<string, Array<{ valueKey: string; labelJa: string }>> = {}; const records = new Map<string, UnderstandingRecord>(); const observations: Array<{ episodeId: string; parameterId: string; value: unknown; isMissing: boolean; observedAt: string }> = []; for (const row of rows) { const parameterId = String(row.field_key); const valueType = row.value_type === "choice" ? "single_choice" : ["integer", "number", "scale", "duration_seconds"].includes(String(row.value_type)) ? "number" : String(row.value_type); if (!["boolean", "single_choice", "integer", "number"].includes(valueType)) continue; if (!definitions.has(parameterId)) { definitions.set(parameterId, { id: parameterId, nameJa: String(row.label ?? parameterId), valueType, minimumValue: typeof row.minimum === "number" ? row.minimum : 0, maximumValue: typeof row.maximum === "number" ? row.maximum : valueType === "boolean" || valueType === "single_choice" ? undefined : 100, usableAsCondition: true, usableAsOutcome: true }); try { const choices = JSON.parse(String(row.options_json ?? "[]")) as Array<{ key?: string; label?: string }>; allowedValues[parameterId] = choices.map(choice => ({ valueKey: String(choice.key ?? ""), labelJa: String(choice.label ?? choice.key ?? "") })).filter(choice => choice.valueKey); } catch { allowedValues[parameterId] = []; } } const value = fieldValue(row); observations.push({ episodeId: String(row.id), parameterId, value, isMissing: value === null, observedAt: String(row.recorded_at) }); const record = records.get(String(row.id)) ?? { id: String(row.id), recordedAt: String(row.recorded_at), title: String(row.title), conditionValues: {}, outcomeValues: {} }; record.conditionValues[parameterId] = value; record.outcomeValues[parameterId] = value; records.set(String(row.id), record); } const hypotheses = generateSelfUnderstanding({ parameters: [...definitions.values()], observations, records: [...records.values()], allowedValues, now: endAt, config: { minimumTotalSamples: minimumEntryCount, maximumCandidates: 5 } }); return { status: hypotheses.length ? "ready" : "insufficient", statusLabelJa: hypotheses.length ? "分析候補あり" : "比較可能な差が不足", period: { startAt, endAt }, filters: options, entryCount, minimumEntryCount, hypotheses, explanationMode: "deterministic_fallback" }; }
 
@@ -406,7 +363,9 @@ function includeArchived(url: URL): boolean {
 }
 
 function pathParts(request: IncomingMessage): string[] {
-  return new URL(request.url ?? "/", "http://localhost").pathname.split("/").filter(Boolean);
+  return new URL(request.url ?? "/", "http://localhost").pathname.split("/").filter(Boolean).map((part) => {
+    try { return decodeURIComponent(part); } catch { return part; }
+  });
 }
 
 function userExists(userId: string): boolean {
@@ -539,6 +498,148 @@ function latestInsight(hypothesisId: string): Record<string, unknown> | null {
 const server = createServer(async (request, response) => {
   const parts = pathParts(request);
   const requestUrl = new URL(request.url ?? "/", "http://localhost");
+
+  if (parts[0] === "v1" && parts[1] === "pcs") {
+    if (request.method === "GET" && parts[2] === "profile-binding") {
+      const userId = requestUrl.searchParams.get("userId") ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      return json(response, 200, { binding: pcsAnalysisRepository.getBinding(userId) ?? null });
+    }
+    if ((request.method === "PUT" || request.method === "POST") && parts[2] === "profile-binding") {
+      const input = await body(request);
+      const userId = optionalString(input.userId) ?? "";
+      const profileId = optionalString(input.pcsProfileId) ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (!profileId) return json(response, 400, { error: "pcs_profile_binding_invalid" });
+      return json(response, 200, { binding: pcsAnalysisRepository.bind(userId, profileId) });
+    }
+    if (request.method === "DELETE" && parts[2] === "profile-binding") {
+      const userId = requestUrl.searchParams.get("userId") ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      return json(response, 200, { removed: pcsAnalysisRepository.remove(userId) });
+    }
+    if (request.method === "GET" && parts[2] === "analysis-history") {
+      const userId = requestUrl.searchParams.get("userId") ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      return json(response, 200, { items: pcsAnalysisRepository.listRuns(userId) });
+    }
+    if (request.method === "POST" && parts.length === 7 && parts[2] === "analysis-runs" && parts[4] === "candidates" && parts[6] === "review") {
+      const input = await body(request);
+      const userId = optionalString(input.userId) ?? "";
+      const rating = optionalString(input.rating) ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (!["fits", "does_not_fit", "on_hold"].includes(rating)) return json(response, 400, { error: "hypothesis_review_invalid" });
+      const run = pcsAnalysisRepository.getRun(userId, parts[3]);
+      const candidateId = parts[5];
+      const candidateSummary = run?.resultSummary?.candidates.find((item) => item.id === candidateId);
+      if (!run || !candidateSummary) return json(response, 404, { error: "pcs_analysis_candidate_not_found" });
+      const reviewedAt = now();
+      const reviewId = id("hyp_review");
+      const pair = { condition: candidateSummary.candidate.conditionParameterId, outcome: candidateSummary.candidate.outcomeParameterId };
+      db.prepare("INSERT INTO hypothesis_reviews(id,user_id,candidate_id,rating,note,analysis_start_at,analysis_end_at,template_version_id,field_pair_json,reviewed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(reviewId, userId, candidateId, rating, optionalString(input.note) ?? "", candidateSummary.period.startAt, candidateSummary.period.endAt, null, JSON.stringify(pair), reviewedAt, reviewedAt);
+      let selfModelCandidateId: string | null = null;
+      if (rating === "fits") {
+        const statement = candidateSummary.statement.trim();
+        if (!validateSelfModelStatement(statement)) return json(response, 400, { error: "self_model_statement_invalid" });
+        selfModelCandidateId = id("self_model_candidate");
+        db.prepare(`INSERT INTO self_model_candidates(
+          id,user_id,candidate_id,statement,status,source_hypothesis_id,
+          supporting_period_start,supporting_period_end,construct_key,tendency_scope,
+          source_analysis_periods_json,supporting_field_pairs_json,
+          resolution_action,target_self_belief_id,user_note,created_at,last_reviewed_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+          selfModelCandidateId,
+          userId,
+          candidateId,
+          statement,
+          "proposed",
+          candidateId,
+          candidateSummary.period.startAt,
+          candidateSummary.period.endAt,
+          candidateSummary.construct,
+          candidateSummary.tendencyScope,
+          JSON.stringify([candidateSummary.period]),
+          JSON.stringify([pair]),
+          "new",
+          null,
+          optionalString(input.note) ?? "",
+          reviewedAt,
+          reviewedAt
+        );
+      }
+      return json(response, 201, { reviewId, candidateId, rating, selfModelCandidateId });
+    }    if (request.method === "GET" && parts.length === 4 && parts[2] === "analysis-runs") {
+      const userId = requestUrl.searchParams.get("userId") ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      const run = pcsAnalysisRepository.getRun(userId, parts[3]);
+      return run ? json(response, 200, { run }) : json(response, 404, { error: "pcs_analysis_run_not_found" });
+    }
+    if (request.method === "POST" && parts.length === 5 && parts[2] === "analysis-runs" && parts[4] === "experiment-draft") {
+      const input = await body(request);
+      const userId = optionalString(input.userId) ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      const run = pcsAnalysisRepository.getRun(userId, parts[3]);
+      const candidateId = optionalString(input.candidateId) ?? "";
+      const candidateSummary = run?.resultSummary?.candidates.find((item) => item.id === candidateId);
+      if (!run || !candidateSummary) return json(response, 404, { error: "pcs_analysis_candidate_not_found" });
+      const candidate = experimentCandidateFromSnapshot({ candidate: candidateSummary.candidate, interpretationInput: candidateSummary.interpretationInput, statement: candidateSummary.statement }, candidateSummary.id);
+      if (!candidate.conditionParameterId || !candidate.outcomeParameterId) return json(response, 400, { error: "experiment_candidate_invalid" });
+      return json(response, 201, { draft: experimentRepository.createDraft(userId, candidate, { durationDays: Number(input.durationDays), minimumObservations: Number(input.minimumObservations), timezone: optionalString(input.timezone) }), sourceAnalysisId: run.id, sourceCandidateId: candidateSummary.id });
+    }
+    if (request.method === "POST" && (parts[2] === "validate" || parts[2] === "analyze")) {
+      const input = await body(request);
+      const userId = optionalString(input.userId) ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      const bound = validateBoundPcsSnapshot(input.snapshot, pcsAnalysisRepository.getBinding(userId));
+      if (!bound.ok) return json(response, bound.status, { error: bound.error, ...(bound.details ? { details: bound.details } : {}) });
+      if (parts[2] === "validate") return json(response, 200, { valid: true, snapshotId: bound.value.snapshotId, profileId: bound.value.profileId });
+      const analysis = analyzeBoundPcsSnapshot(bound.value, {
+        minimumTotalSamples: Number.isFinite(Number(input.minimumTotalSamples)) ? Number(input.minimumTotalSamples) : undefined,
+        maximumCandidates: Number.isFinite(Number(input.maximumCandidates)) ? Number(input.maximumCandidates) : undefined
+      });
+      const run = pcsAnalysisRepository.saveRun(userId, bound.value, analysis);
+      return json(response, 200, { analysisId: run.id, run, analysis });
+    }
+    if (request.method === "POST" && parts[2] === "live-analyze") {
+      const input = await body(request);
+      const userId = optionalString(input.userId) ?? "";
+      const pcsUrl = optionalString(input.pcsUrl) ?? "";
+      const profileId = optionalString(input.profileId) ?? "";
+      const from = optionalString(input.from) ?? "";
+      const to = optionalString(input.to) ?? "";
+      const timezone = optionalString(input.timezone) ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      const binding = pcsAnalysisRepository.getBinding(userId);
+      if (!binding) return json(response, 409, { error: "pcs_profile_not_bound" });
+      if (!profileId || binding.pcsProfileId !== profileId) return json(response, 409, { error: "pcs_profile_mismatch" });
+      let url: URL;
+      try {
+        url = new URL(pcsUrl);
+        if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "::1"].includes(url.hostname)) throw new Error("not_local");
+      } catch {
+        return json(response, 400, { error: "pcs_unavailable" });
+      }
+      url.pathname = "/v1/context/analysis-snapshot";
+      url.search = new URLSearchParams({ profileId, from, to, timezone }).toString();
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2000);
+      try {
+        const upstream = await fetch(url, { signal: controller.signal });
+        if (!upstream.ok) return json(response, 503, { error: "pcs_unavailable" });
+        const snapshot = await upstream.json();
+        const bound = validateBoundPcsSnapshot(snapshot, binding);
+        if (!bound.ok) return json(response, bound.status, { error: bound.error, ...(bound.details ? { details: bound.details } : {}) });
+        const analysis = analyzeBoundPcsSnapshot(bound.value);
+        const run = pcsAnalysisRepository.saveRun(userId, bound.value, analysis);
+        return json(response, 200, { analysisId: run.id, run, analysis });
+      } catch (error) {
+        return json(response, error instanceof Error && error.name === "AbortError" ? 504 : 503, { error: error instanceof Error && error.name === "AbortError" ? "pcs_timeout" : "pcs_unavailable" });
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+  }
+
   try {
     if (request.method === "GET" && parts.join("/") === "healthz") return json(response, 200, { status: "ok", service: "metheory-api" });
     if (parts[0] === "v1" && parts[1] === "templates") {
@@ -662,6 +763,112 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && parts.join("/") === "v1/self-understanding/analyze") {
       const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, await analyzeSelfUnderstandingWithInterpretation(userId, input));
     }
+    if (request.method === "POST" && parts.length === 4 && parts[0] === "v1" && parts[1] === "self-understanding" && parts[3] === "experiment-draft") {
+      const input = await body(request);
+      const userId = optionalString(input.userId) ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      const snapshot = selfUnderstandingRepository.latestSnapshot(userId, parts[2]);
+      if (!snapshot) return json(response, 404, { error: "self_understanding_candidate_not_found" });
+      const candidate = experimentCandidateFromSnapshot(snapshot, parts[2]);
+      if (!candidate.conditionParameterId || !candidate.outcomeParameterId) return json(response, 400, { error: "experiment_candidate_invalid" });
+      return json(response, 201, { draft: experimentRepository.createDraft(userId, candidate, { durationDays: Number(input.durationDays), minimumObservations: Number(input.minimumObservations), timezone: optionalString(input.timezone) }) });
+    }
+    if (parts[0] === "v1" && parts[1] === "experiment-drafts") {
+      if (request.method === "GET" && parts.length === 2) {
+        const userId = requestUrl.searchParams.get("userId") ?? "";
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        return json(response, 200, { items: experimentRepository.listDrafts(userId, requestUrl.searchParams.get("status") ?? undefined) });
+      }
+      if (parts.length === 3) {
+        const input = request.method === "PATCH" || request.method === "POST" ? await body(request) : {};
+        const userId = request.method === "GET" ? requestUrl.searchParams.get("userId") ?? "" : optionalString(input.userId) ?? "";
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        if (request.method === "GET") { const draft = experimentRepository.getDraft(userId, parts[2]); return draft ? json(response, 200, { draft }) : json(response, 404, { error: "experiment_draft_not_found" }); }
+        if (request.method === "PATCH") {
+          const patch: Partial<Pick<ExperimentDraft, "title" | "statement" | "durationDays" | "minimumObservations" | "minimumPerGroup" | "suggestedSchedule" | "stopConditions">> = {};
+          if (typeof input.title === "string") patch.title = input.title;
+          if (typeof input.statement === "string") patch.statement = input.statement;
+          if (typeof input.durationDays === "number") patch.durationDays = input.durationDays;
+          if (typeof input.minimumObservations === "number") patch.minimumObservations = input.minimumObservations;
+          if (typeof input.minimumPerGroup === "number") patch.minimumPerGroup = input.minimumPerGroup;
+          if (input.suggestedSchedule && typeof input.suggestedSchedule === "object") patch.suggestedSchedule = input.suggestedSchedule as ExperimentDraft["suggestedSchedule"];
+          if (Array.isArray(input.stopConditions)) patch.stopConditions = input.stopConditions as ExperimentDraft["stopConditions"];
+          return json(response, 200, { draft: experimentRepository.updateDraft(userId, parts[2], patch) });
+        }
+        if (parts.length === 3 && input.action === "reject") { experimentRepository.rejectDraft(userId, parts[2]); return json(response, 200, { rejected: true }); }
+      }
+      if (request.method === "POST" && parts.length === 4 && parts[3] === "accept") {
+        const input = await body(request); const userId = optionalString(input.userId) ?? "";
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        return json(response, 201, { experiment: experimentRepository.acceptDraft(userId, parts[2], optionalString(input.hypothesisId)) });
+      }
+      if (request.method === "POST" && parts.length === 4 && parts[3] === "reject") {
+        const input = await body(request); const userId = optionalString(input.userId) ?? "";
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        experimentRepository.rejectDraft(userId, parts[2]); return json(response, 200, { rejected: true });
+      }
+    }
+    if (parts[0] === "v1" && parts[1] === "experiments") {
+      if (request.method === "GET" && parts.length === 2) {
+        const userId = requestUrl.searchParams.get("userId") ?? "";
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        return json(response, 200, { items: experimentRepository.list(userId, requestUrl.searchParams.get("status") ?? undefined) });
+      }
+      if (parts.length >= 3) {
+        const input = request.method === "POST" ? await body(request) : {};
+        const userId = request.method === "GET" ? requestUrl.searchParams.get("userId") ?? "" : optionalString(input.userId) ?? "";
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        if (request.method === "GET" && parts.length === 3) { const experiment = experimentRepository.get(userId, parts[2]); return experiment ? json(response, 200, { experiment, evaluation: experimentRepository.latestEvaluation(userId, parts[2]) ?? null }) : json(response, 404, { error: "experiment_not_found" }); }
+        if (request.method === "GET" && parts.length === 4 && parts[3] === "questions") {
+          const experiment = experimentRepository.get(userId, parts[2]);
+          if (!experiment) return json(response, 404, { error: "experiment_not_found" });
+          const rows = db.prepare("SELECT rp.parameter_id,pd.name_ja,pd.askable,rp.minimum_samples FROM experiment_required_parameters rp JOIN parameter_definitions pd ON pd.id=rp.parameter_id WHERE rp.experiment_id=? ORDER BY rp.priority").all(parts[2]) as Array<Record<string, unknown>>;
+          return json(response, 200, { items: rows.map((row) => ({ parameterId: String(row.parameter_id), text: `現在の「${String(row.name_ja)}」を記録してください。`, askable: Number(row.askable) === 1, minimumSamples: Number(row.minimum_samples), reason: "この実験に必要な観測項目です" })) });
+        }
+        if (request.method === "GET" && parts.length === 4 && parts[3] === "evaluations") return json(response, 200, { evaluation: experimentRepository.latestEvaluation(userId, parts[2]) ?? null });
+        if (request.method === "POST" && parts.length === 4 && parts[3] === "responses") {
+          const observation = { id: optionalString(input.id) ?? id("experiment_observation"), episodeId: optionalString(input.episodeId), observedAt: optionalString(input.observedAt) ?? now(), groupKey: optionalString(input.groupKey) ?? "unknown", outcome: Number(input.outcome), conditionValues: input.conditionValues && typeof input.conditionValues === "object" ? input.conditionValues as Record<string, unknown> : {}, source: (optionalString(input.source) ?? "checkin") as "checkin" | "manual" | "import", eligible: input.eligible !== false, note: optionalString(input.note) };
+          if (!Number.isFinite(observation.outcome) || !["checkin", "manual", "import"].includes(observation.source)) return json(response, 400, { error: "experiment_observation_invalid" });
+          return json(response, 201, { observation: experimentRepository.addObservationForExperiment(userId, parts[2], observation) });
+        }
+        if (request.method === "POST" && parts.length === 4 && parts[3] === "evaluate") return json(response, 200, { evaluation: experimentRepository.evaluate(userId, parts[2], optionalString(input.evaluatedAt)) });
+        const transitionRoutes: Record<string, ExperimentStatus> = { start: "active", pause: "paused", resume: "active", cancel: "cancelled", complete: "completed", archive: "archived" };
+        if (request.method === "POST" && parts.length === 4 && transitionRoutes[parts[3]]) return json(response, 200, { experiment: experimentRepository.transition(userId, parts[2], transitionRoutes[parts[3]]) });
+      }
+    }
+    if (request.method === "POST" && parts.join("/") === "v1/collection-plans") {
+      const input = await body(request); const userId = optionalString(input.userId) ?? "";
+      if (!userExists(userId) || !optionalString(input.sourceAnalysisId) || !optionalString(input.targetConstruct) || !Array.isArray(input.requirements)) return json(response, 400, { error: "collection_plan_invalid" });
+      const requirements = input.requirements.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object").map((item) => ({ parameterId: String(item.parameterId ?? ""), label: String(item.label ?? item.parameterId ?? ""), groupKey: optionalString(item.groupKey), minimumSamples: Math.max(1, Number(item.minimumSamples ?? 1)), askable: item.askable !== false, preferredSource: (optionalString(item.preferredSource) ?? "user") as "user" | "system" | "device" | "external_app" }));
+      return json(response, 201, { plan: experimentRepository.createCollectionPlan(userId, { sourceAnalysisId: String(input.sourceAnalysisId), targetConstruct: String(input.targetConstruct), requirements, counts: input.counts && typeof input.counts === "object" ? input.counts as Record<string, number> : {}, includePcsTemplateRequest: input.includePcsTemplateRequest === true }) });
+    }
+    if (parts[0] === "v1" && parts[1] === "collection-plans" && parts.length >= 3) {
+      const input = request.method === "POST" ? await body(request) : {};
+      const userId = request.method === "GET" ? requestUrl.searchParams.get("userId") ?? "" : optionalString(input.userId) ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (request.method === "GET" && parts.length === 3) { const plan = experimentRepository.getCollectionPlan(userId, parts[2]); return plan ? json(response, 200, { plan }) : json(response, 404, { error: "collection_plan_not_found" }); }
+      if (request.method === "POST" && parts.length === 4 && parts[3] === "accept") return json(response, 200, { plan: experimentRepository.acceptCollectionPlan(userId, parts[2]) });
+      if (request.method === "POST" && parts.length === 4 && parts[3] === "pcs-template-request") {
+        const plan = experimentRepository.getCollectionPlan(userId, parts[2]);
+        if (!plan) return json(response, 404, { error: "collection_plan_not_found" });
+        return json(response, 200, { request: plan.pcsTemplateRequest ?? null, sent: false, note: "PCSの汎用Template Requestへ渡す前に利用者の承認が必要です" });
+      }
+    }
+    if (request.method === "GET" && parts.join("/") === "v1/self-model/review-due") {
+      const userId = requestUrl.searchParams.get("userId") ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      return json(response, 200, { items: db.prepare("SELECT sf.*,sb.statement FROM self_model_freshness sf JOIN self_beliefs sb ON sb.id=sf.belief_id WHERE sb.user_id=? AND sf.freshness_status IN('review_due','possibly_changed','unsupported_recently') ORDER BY COALESCE(sf.review_due_at,sf.updated_at)").all(userId) });
+    }
+    if (request.method === "POST" && parts.length === 4 && parts[0] === "v1" && parts[1] === "self-model" && parts[3] === "review") {
+      const input = await body(request); const userId = optionalString(input.userId) ?? ""; const action = optionalString(input.action) ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (!["still_applies", "context_dependent", "not_recently", "unknown", "retract", "revise"].includes(action)) return json(response, 400, { error: "self_model_review_invalid" });
+      if (!db.prepare("SELECT 1 FROM self_beliefs WHERE id=? AND user_id=?").get(parts[2], userId)) return json(response, 404, { error: "self_belief_not_found" });
+      db.prepare("INSERT INTO self_model_reviews(id,user_id,belief_id,action,note,created_at) VALUES(?,?,?,?,?,?)").run(id("self_model_review"), userId, parts[2], action, optionalString(input.note) ?? "", now());
+      const status = action === "retract" ? "retracted" : action === "not_recently" ? "possibly_changed" : action === "unknown" ? "review_due" : "current";
+      db.prepare("UPDATE self_model_freshness SET freshness_status=?,last_reviewed_at=?,updated_at=? WHERE belief_id=?").run(status, now(), now(), parts[2]);
+      return json(response, 200, { beliefId: parts[2], action, freshnessStatus: status, selfModelUpdated: false });
+    }
     if (parts[0] === "v1" && parts[1] === "activitywatch") {
       const activityWatchEnabled = process.env.ACTIVITYWATCH_ENABLED === "true";
       const adapter = new ActivityWatchAdapter({ baseUrl: process.env.ACTIVITYWATCH_URL ?? "http://127.0.0.1:5600" });
@@ -744,6 +951,15 @@ const server = createServer(async (request, response) => {
       const createdAt = now();
       const reviewId = id("hyp_review");
       db.prepare("INSERT INTO hypothesis_reviews(id,user_id,candidate_id,rating,note,analysis_start_at,analysis_end_at,template_version_id,field_pair_json,reviewed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(reviewId, userId, candidateId, rating, optionalString(input.note) ?? "", period.startAt, period.endAt, optionalString(input.templateVersionId) ?? null, JSON.stringify(fieldPair), createdAt, createdAt);
+      const reviewReason = optionalString(input.reason);
+      if (reviewReason) {
+        try {
+          const action = reviewReasonAction(reviewReason as Parameters<typeof reviewReasonAction>[0]);
+          experimentRepository.saveReviewReason(userId, { candidateId, reason: reviewReason, action: action.action, note: optionalString(input.note) });
+        } catch {
+          return json(response, 400, { error: "hypothesis_review_reason_invalid" });
+        }
+      }
       let selfModelCandidateId: string | null = null;
       if (rating === "fits") {
         const statement = String(snapshot.selfModelCandidate ?? "");
@@ -906,7 +1122,24 @@ const server = createServer(async (request, response) => {
       const hypothesisId = id("hyp"); db.prepare("INSERT INTO hypotheses(id, user_id, self_belief_id, template_key, statement, state, status, spec_json, spec_version, rule_version, created_at) VALUES (?, ?, ?, ?, ?, 'tracking', 'tracking', ?, ?, ?, ?)").run(hypothesisId, userId, optionalString(input.selfBeliefId) ?? null, optionalString(input.templateKey) ?? "belief_vs_observation", optionalString(input.statement) ?? "", spec ? JSON.stringify(spec) : null, spec?.schemaVersion ?? null, RULE_VERSION, now());
       return json(response, 201, { id: hypothesisId, state: "tracking", specVersion: spec?.schemaVersion ?? null });
     }
-    if (request.method === "POST" && parts.join("/") === "v1/checkins/next") {
+    if (request.method === "POST" && parts.length === 4 && parts[0] === "v1" && parts[1] === "hypotheses" && parts[3] === "review") {
+      const input = await body(request); const userId = optionalString(input.userId) ?? ""; const rating = optionalString(input.rating) ?? optionalString(input.result) ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (!["fits", "does_not_fit", "on_hold"].includes(rating)) return json(response, 400, { error: "hypothesis_review_invalid" });
+      if (!db.prepare("SELECT 1 FROM hypotheses WHERE id=? AND user_id=?").get(parts[2], userId)) return json(response, 404, { error: "hypothesis_not_found" });
+      const reviewedAt = now(); const reviewId = id("hyp_review");
+      db.prepare("INSERT INTO hypothesis_reviews(id,user_id,candidate_id,rating,note,analysis_start_at,analysis_end_at,template_version_id,field_pair_json,reviewed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(reviewId, userId, parts[2], rating, optionalString(input.note) ?? "", null, null, null, "{}", reviewedAt, reviewedAt);
+      const reason = optionalString(input.reason);
+      if (reason) { try { const action = reviewReasonAction(reason as Parameters<typeof reviewReasonAction>[0]); experimentRepository.saveReviewReason(userId, { candidateId: parts[2], reason, action: action.action, note: optionalString(input.note) }); } catch { return json(response, 400, { error: "hypothesis_review_reason_invalid" }); } }
+      db.prepare("INSERT INTO hypothesis_timelines(id,user_id,hypothesis_id,event_type,source_id,payload_json,created_at) VALUES(?,?,?,?,?,?,?)").run(id("timeline"), userId, parts[2], "user_reviewed", reviewId, JSON.stringify({ rating, reason }), reviewedAt);
+      return json(response, 201, { id: reviewId, hypothesisId: parts[2], rating, reason: reason ?? null });
+    }
+    if (request.method === "GET" && parts.length === 4 && parts[0] === "v1" && parts[1] === "hypotheses" && parts[3] === "timeline") {
+      const userId = requestUrl.searchParams.get("userId") ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (!db.prepare("SELECT 1 FROM hypotheses WHERE id=? AND user_id=?").get(parts[2], userId)) return json(response, 404, { error: "hypothesis_not_found" });
+      return json(response, 200, { items: db.prepare("SELECT * FROM hypothesis_timelines WHERE user_id=? AND hypothesis_id=? ORDER BY created_at").all(userId, parts[2]) });
+    }    if (request.method === "POST" && parts.join("/") === "v1/checkins/next") {
       const input = await body(request); const userId = input.userId as string; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
       const hypothesis = db.prepare("SELECT id FROM hypotheses WHERE user_id = ? AND status = 'tracking' ORDER BY created_at LIMIT 1").get(userId) as { id: string } | undefined;
       const kind = input.kind === "follow_up" ? "follow_up" : input.kind === "hypothesis" && hypothesis ? "hypothesis" : "random";

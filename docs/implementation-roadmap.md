@@ -71,3 +71,36 @@ desktop product flow.
 
 The earlier beta checklist is retained for reference. It does not require
 cloud deployment or a PostgreSQL migration for the current local-first MVP.
+
+## Stage 4: closed-loop experiments
+
+Implemented baseline: candidate-to-draft generation, explicit draft approval,
+condition-comparison/behavioral-intervention/observation-only domain types,
+required parameters, deterministic questions, pause/resume/complete/cancel,
+experiment observations, evaluation, adherence separation, sensitivity
+explanations, and hypothesis timeline links.
+
+Remaining refinement: richer draft field editing and experiment-specific native
+notification scheduling in the mobile UI. These are not required to write or
+analyze a free record, and their absence must not block recording.
+
+## Stage 5: Self Model freshness
+
+Implemented baseline: freshness rows, review-due API, explicit review actions,
+review history, and no automatic Self Model mutation. A later iteration can
+make freshness calculations more automatic after the evidence and period
+policy are validated with real use.
+
+## Stage 6: collection planning and PCS boundary
+
+Implemented baseline: shortages become a local collection plan with askable
+questions and an optional generic pending PCS template request. The request is
+previewable and remains user-controlled. No MeTheory-specific PCS Core route
+or table is required.
+
+## Stage 7: integration and verification
+
+The closed-loop domain, API, mobile repository, CLI, migration, synthetic
+fixture commands, and focused tests are included in the normal verification
+surface. Full verification still depends on the local Expo and VS Code
+workspaces being installed.

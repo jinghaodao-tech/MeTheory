@@ -130,3 +130,12 @@ covers tokenization and stable BM25 result references. Run the full suite with
 Before the next search increment, add builders for hypotheses and Evidence,
 search-quality fixtures derived from real user-approved examples, and user
 controls for any AI-assisted structuring.
+
+## Closed-loop boundary
+
+MeTheory consumes confirmed, generic PCS snapshots and may create a pending
+`Template Request` through the generic integration contract when an experiment
+has a shortage. PCS remains the owner of Markdown, templates, extraction
+review, sharing, and privacy for records. MeTheory owns hypotheses,
+experiment-specific questions, observations, evaluation, and Self Model review.
+No PCS-specific endpoint, table, or runtime dependency was added.

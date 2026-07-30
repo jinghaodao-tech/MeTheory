@@ -163,6 +163,50 @@ async function baselineCommand(subcommand: string, args: string[]) {
   throw new Error("baseline_command_invalid");
 }
 
+function flagValue(args: string[], name: string): string | undefined { const prefix = `${name}=`; return args.find((item) => item.startsWith(prefix))?.slice(prefix.length); }
+function flagNumber(args: string[], name: string): number | undefined { const value = flagValue(args, name); if (value === undefined) return undefined; const number = Number(value); if (!Number.isFinite(number)) throw new Error(`${name.replace(/^--/, "")}_invalid`); return number; }
+
+async function experimentCommand(subcommand: string, args: string[]) {
+  if (subcommand === "draft-from-hypothesis") {
+    if (!args[0]) throw new Error("candidate_id_required");
+    return printResult(await request(`/v1/self-understanding/${encodeURIComponent(args[0])}/experiment-draft`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, durationDays: flagNumber(args, "--duration-days"), minimumObservations: flagNumber(args, "--minimum-observations"), timezone: flagValue(args, "--timezone") }) }));
+  }
+  if (subcommand === "draft-list") return printResult(await request(`/v1/experiment-drafts?userId=${encodeURIComponent(userId)}${flagValue(args, "--status") ? `&status=${encodeURIComponent(flagValue(args, "--status") ?? "")}` : ""}`));
+  if (subcommand === "draft-show" && args[0]) return printResult(await request(`/v1/experiment-drafts/${encodeURIComponent(args[0])}?userId=${encodeURIComponent(userId)}`));
+  if (subcommand === "draft-edit" && args[0]) {
+    const patch: Record<string, unknown> = {};
+    const title = flagValue(args, "--title"); const statement = flagValue(args, "--statement"); const durationDays = flagNumber(args, "--duration-days"); const minimumObservations = flagNumber(args, "--minimum-observations"); const minimumPerGroup = flagNumber(args, "--minimum-per-group");
+    if (title !== undefined) patch.title = title; if (statement !== undefined) patch.statement = statement; if (durationDays !== undefined) patch.durationDays = durationDays; if (minimumObservations !== undefined) patch.minimumObservations = minimumObservations; if (minimumPerGroup !== undefined) patch.minimumPerGroup = minimumPerGroup;
+    if (!Object.keys(patch).length) throw new Error("draft_patch_required");
+    return printResult(await request(`/v1/experiment-drafts/${encodeURIComponent(args[0])}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, ...patch }) }));
+  }
+  if (subcommand === "draft-accept" && args[0]) return printResult(await request(`/v1/experiment-drafts/${encodeURIComponent(args[0])}/accept`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, hypothesisId: flagValue(args, "--hypothesis") ?? null }) }));
+  if (subcommand === "draft-reject" && args[0]) return printResult(await request(`/v1/experiment-drafts/${encodeURIComponent(args[0])}/reject`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId }) }));
+  if (subcommand === "list") return printResult(await request(`/v1/experiments?userId=${encodeURIComponent(userId)}${flagValue(args, "--status") ? `&status=${encodeURIComponent(flagValue(args, "--status") ?? "")}` : ""}`));
+  if (subcommand === "show" && args[0]) return printResult(await request(`/v1/experiments/${encodeURIComponent(args[0])}?userId=${encodeURIComponent(userId)}`));
+  if (["start", "pause", "resume", "complete", "cancel", "archive"].includes(subcommand) && args[0]) return printResult(await request(`/v1/experiments/${encodeURIComponent(args[0])}/${subcommand}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId }) }));
+  if (subcommand === "questions" && args[0]) return printResult(await request(`/v1/experiments/${encodeURIComponent(args[0])}/questions?userId=${encodeURIComponent(userId)}`));
+  if (subcommand === "observe" && args[0]) {
+    const groupKey = flagValue(args, "--group"); const outcome = flagNumber(args, "--outcome");
+    if (!groupKey || outcome === undefined) throw new Error("experiment_observation_group_and_outcome_required");
+    return printResult(await request(`/v1/experiments/${encodeURIComponent(args[0])}/responses`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, groupKey, outcome, source: flagValue(args, "--source") ?? "manual", eligible: flagValue(args, "--eligible") !== "false", note: flagValue(args, "--note"), observedAt: flagValue(args, "--observed-at") }) }));
+  }
+  if (subcommand === "evaluate" && args[0]) return printResult(await request(`/v1/experiments/${encodeURIComponent(args[0])}/evaluate`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, evaluatedAt: flagValue(args, "--evaluated-at") }) }));
+  throw new Error("experiment_command_invalid");
+}
+
+async function collectionPlanCommand(subcommand: string, args: string[]) {
+  if (subcommand === "show" && args[0]) return printResult(await request(`/v1/collection-plans/${encodeURIComponent(args[0])}?userId=${encodeURIComponent(userId)}`));
+  if (subcommand === "request-pcs-template" && args[0]) return printResult(await request(`/v1/collection-plans/${encodeURIComponent(args[0])}/pcs-template-request`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId }) }));
+  if (subcommand === "accept" && args[0]) return printResult(await request(`/v1/collection-plans/${encodeURIComponent(args[0])}/accept`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId }) }));
+  throw new Error("collection_plan_command_invalid");
+}
+
+async function selfModelCommand(subcommand: string, args: string[]) {
+  if (subcommand === "review-due") return printResult(await request(`/v1/self-model/review-due?userId=${encodeURIComponent(userId)}`));
+  if (subcommand === "review" && args[0]) return printResult(await request(`/v1/self-model/${encodeURIComponent(args[0])}/review`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, action: flagValue(args, "--action") ?? args[1] ?? "unknown", note: flagValue(args, "--note") }) }));
+  throw new Error("self_model_command_invalid");
+}
 async function syncFile(file: string) { const path = relative(root, resolve(root, file)); const absolute = resolve(root, file); const text = readFileSync(absolute, "utf8"); const entry = readMarkdownEntry(path, text); if (entry.entryId) { const duplicates = markdownFiles(join(root, "notes")).filter((candidate) => candidate !== absolute).filter((candidate) => { try { return readMarkdownEntry(relative(root, candidate), readFileSync(candidate, "utf8")).entryId === entry.entryId; } catch { return false; } }); if (duplicates.length) throw new Error(`sync_conflict_duplicate_entry_id:${entry.entryId}`); } const result = await request("/v1/entries", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: entry.entryId, userId, externalSource: "vscode", externalSourceId: path, title: entry.title, body: entry.body, recordedAt: entry.recordedAt, sourceUpdatedAt: new Date(statSync(absolute).mtimeMs).toISOString(), templateId: entry.templateId }) }); if (!entry.entryId) writeFileSync(absolute, withEntryMetadata(text, { metheory_entry_id: String(result.entry.id) })); if (entry.autoStructure && entry.tracked && entry.templateId && entry.templateVersionId) scheduleAutoStructure(path); console.log(JSON.stringify({ path, status: result.created ? "created" : "updated", created: result.created, id: result.entry.id })); }
 async function attachTemplate(file: string, templateId: string) { const absolute = resolve(root, file); const path = relative(root, absolute); const template = await request(`/v1/templates/${encodeURIComponent(templateId)}?userId=${encodeURIComponent(userId)}`); if (!template.currentVersion?.id) throw new Error("template_version_not_found"); const text = readFileSync(absolute, "utf8"); writeFileSync(absolute, withEntryMetadata(text, { template_id: templateId, template_version_id: String(template.currentVersion.id), template_status: "approved", tracked: true, auto_structure: true })); await syncFile(path); console.log(JSON.stringify({ path, templateId, templateVersionId: template.currentVersion.id, status: "approved" }, null, 2)); }
 async function watchWorkspace() { const notes = join(root, "notes"); let timer: NodeJS.Timeout | undefined; const watcher = watch(notes, { recursive: true }, (_, name) => { if (!name || !String(name).endsWith(".md")) return; if (timer) clearTimeout(timer); timer = setTimeout(() => void syncFile(join(notes, String(name))), 350); }); console.log("watching_notes"); await new Promise<void>(resolvePromise => process.on("SIGINT", () => { watcher.close(); if (timer) clearTimeout(timer); resolvePromise(); })); }
@@ -190,6 +234,9 @@ async function main() { const [, , command, sub, ...args] = process.argv;
   if (command === "self-understanding" && sub === "self-model-review") return selfModelReview(args);
   if (command === "self-understanding" && sub === "context-candidate" && args[0] === "export") return personalContextCandidateExport(args.slice(1));
   if (command === "personal-context" && sub === "export-migration") return personalContextMigrationExport();
+  if (command === "experiment") return experimentCommand(sub ?? "", args);
+  if (command === "collection-plan") return collectionPlanCommand(sub ?? "", args);
+  if (command === "self-model") return selfModelCommand(sub ?? "", args);
   if (command === "activitywatch") return activityWatchCommand(sub ?? "", args);
   if (command === "self-understanding" && sub === "baseline") return baselineCommand(args[0] ?? "", args.slice(1));
   if (command === "privacy" && sub === "status") return privacyStatus();

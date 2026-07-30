@@ -1,0 +1,25 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm install
+      - run: npm run typecheck:root
+      - run: npm run test:pcs-snapshot
+      - run: npm run test:demo-web
+      - run: npm run check:encoding
+      - run: npm run verify

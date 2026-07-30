@@ -1,5 +1,8 @@
 # MeTheory
 
+MeTheory helps a person refine self-understanding over time. It analyzes user-confirmed structured records locally, presents evidence-backed non-clinical candidates, and lets the user decide what enters a personal operating manual.
+
+The portfolio path is `PCS snapshot -> Node API -> local SQLite -> Demo Web`. Markdown and PCS remain the human-readable record layer; MeTheory is the analysis and explicit experiment layer.
 MeTheory is a local-first personal information foundation. It can keep free
 form records, later structure selected information, and use the existing
 deterministic hypothesis system when a user wants to test a self-belief.
@@ -31,10 +34,12 @@ notification timing, hypothesis status, or Self Model updates.
 - `docs/privacy-phase4.md`: field privacy classification, consent, safe deletion, and privacy audit behavior.
 - `docs/implementation-roadmap.md`: phased implementation and beta criteria.
 - `docs/current-product-spec.md`: current product scope, boundaries, and implementation status.
+- `docs/closed-loop-experiments.md`, `docs/experiment-api.md`, and `docs/closed-loop-cli.md`: hypothesis verification loop, APIs, and CLI.
+- `docs/closed-loop-db-migration.md`, `docs/closed-loop-privacy.md`, and `docs/self-model-freshness.md`: storage, safety, and freshness boundaries.
 - `docs/self-understanding-practical-v1.md`: confirmed-value analysis and Self Model review flow.
 - `docs/self-understanding-construct-catalog.md`: allowlisted non-clinical constructs and semantic-role mapping.
 - `docs/external-assets.md`: local structured output, ActivityWatch, baseline self-perception, question quality, fixed charts, and provenance.
-- `docs/ai-review-loop-setup.md`: optional ChatGPT Review Bridge to local Codex improvement loop.
+- `docs/ai-review-loop-setup.md`: historical review tooling, isolated from the product runtime and never required for the demo.
 - `docs/notification-policy.md`: notification constraints and user controls.
 - `prompts/ai-templates.json`: versioned AI templates.
 - `schemas/domain-schema.json`: domain data contract.
@@ -48,9 +53,21 @@ notification timing, hypothesis status, or Self Model updates.
  - `docs/openapi-ai.yaml`: read-only AI HTTP contract.
  - `docs/mcp-tools.md`: read-only MCP tool boundary.
 - `apps/api/src/server.ts`: TypeScript Node MVP API.
-- `apps/obsidian-plugin/`: minimal local Obsidian Entry registration plugin.
+- `apps/obsidian-plugin/`: compatible Markdown Entry source; the primary portfolio workflow is PCS and the Demo Web.
+- `apps/demo-web/`: deterministic fixture demo for the closed loop.
 - `packages/records/src/`: platform-neutral Entry types and validation.
 - `backend/core.py`: Python reference implementation kept during migration.
+
+## Five-minute portfolio demo
+
+```powershell
+npm install
+npm run demo
+```
+
+Open `http://127.0.0.1:8110`. The demo uses `fixtures/pcs-analysis-snapshot-v2.json`, creates a local demo user, binds a PCS profile, runs analysis, and exposes explicit review, experiment draft, check-in, evaluation, and Self Model approval actions. Live PCS mode is documented in `docs/current-product-spec.md`; it is localhost-only and never requires cloud AI.
+
+Status: implemented items are listed in `docs/current-product-spec.md`; mobile, Obsidian, and external integrations are compatible or experimental clients, not the primary product path.
 
 ## Commands
 

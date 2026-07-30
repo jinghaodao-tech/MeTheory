@@ -74,3 +74,18 @@ Candidate generation is deterministic and comparison-based. It does not infer
 causality, diagnose health conditions, or learn opaque personal weights. The
 first version uses the built-in standard explanation rather than automatically
 calling a local or external model.
+
+## Closed-loop verification
+
+After a candidate is reviewed, the user may create an experiment draft. The
+draft remains editable until explicit acceptance. The evaluator stores the
+experiment result separately from the original candidate, distinguishes
+adherence from effect for behavioral interventions, and reports missingness,
+group imbalance, alternative explanations, and deterministic sensitivity
+conditions. `supported` and `challenged` describe the configured comparison
+rule for the observed period; they are not causal conclusions.
+
+The Self Model review queue is populated for explicit human review. A new
+experiment or new record never changes a belief automatically. The user can
+keep, contextualize, mark as not recent, leave unknown, retract, or revise a
+belief, and each action is retained in the review history.

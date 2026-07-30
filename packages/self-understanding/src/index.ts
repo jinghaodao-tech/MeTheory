@@ -39,12 +39,13 @@ export * from "./structuredOutput.ts";
 export * from "./baseline.ts";
 export * from "./questionQuality.ts";
 export * from "./visualization.ts";
+export * from "./pcsSnapshotAnalysis.ts";
 
 export type UnderstandingRecord = {
   id: string;
   recordedAt: string;
   title: string;
-  kind?: "entry" | "activity_day" | "daily_join" | "linked_period";
+  kind?: "entry" | "pcs_record" | "activity_day" | "daily_join" | "experiment_checkin" | "linked_period";
   localDate?: string;
   sourceEntryIds?: string[];
   sourceObservationIds?: string[];
@@ -54,6 +55,10 @@ export type UnderstandingRecord = {
       source: "user_entry" | "activitywatch" | "baseline_self_perception";
       labelJa: string;
       observationIds?: string[];
+      sourceId?: string;
+      transformVersion?: string;
+      privacyLevel?: string;
+      provenanceSource?: "user_input" | "reviewed_ai_extraction" | "manual_import";
     }
   >;
   conditionValues: Record<string, unknown>;
@@ -86,6 +91,7 @@ export type SelfUnderstandingConfig = Pick<
   | "minimumNormalizedEffect"
   | "minimumSampleBalance"
   | "maximumCandidates"
+  | "pairAllowlistVersion"
 > & { stableMinimumSamples: number };
 export const DEFAULT_SELF_UNDERSTANDING_CONFIG: SelfUnderstandingConfig = {
   minimumSamplesPerCohort: 3,
