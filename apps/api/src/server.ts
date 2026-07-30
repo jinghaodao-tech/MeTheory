@@ -13,6 +13,7 @@ import { SqliteSearchDocumentRepository } from "./searchDocumentRepository.ts";
 import { SqliteTemplateRepository } from "./templateRepository.ts";
 import { SqlitePrivacyRepository } from "./privacyRepository.ts";
 import { SqliteSelfUnderstandingRepository } from "./selfUnderstandingRepository.ts";
+import { loadPersonalContextSnapshot, requestPersonalContextTemplate } from "./personalContextClient.ts";
 import { MockTemplateGenerationProvider, UnavailableTemplateGenerationProvider, DisabledTemplateGenerationProvider, ManualChatGPTTemplateProvider, OpenAITemplateGenerationProvider, TEMPLATE_PROMPT_VERSION, suggestSemanticRolesForTemplate, validateTemplateDraft } from "../../../packages/templates/src/index.ts";
 import {
   generateSelfUnderstanding,
@@ -25,6 +26,7 @@ import {
   createBaselineResponse,
   IPIP_BASELINE_ITEM_SET_VERSION
 } from "../../../packages/self-understanding/src/index.ts";
+import { analyzePersonalContextSnapshot } from "../../../packages/self-understanding/src/personalContext.ts";
 import { ActivityWatchAdapter, activityWatchObservationIdentity, summarizeActivityWatchDaily } from "../../../packages/domain/src/activitywatch.ts";
 import { reviewReasonAction, type CandidateForExperiment, type ExperimentDraft, type ExperimentStatus } from "../../../packages/domain/src/experiments.ts";
 import { SqliteExperimentRepository } from "./experimentRepository.ts";
@@ -763,6 +765,7 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && parts.join("/") === "v1/self-understanding/analyze") {
       const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, await analyzeSelfUnderstandingWithInterpretation(userId, input));
     }
+
     if (request.method === "POST" && parts.length === 4 && parts[0] === "v1" && parts[1] === "self-understanding" && parts[3] === "experiment-draft") {
       const input = await body(request);
       const userId = optionalString(input.userId) ?? "";
@@ -868,6 +871,24 @@ const server = createServer(async (request, response) => {
       const status = action === "retract" ? "retracted" : action === "not_recently" ? "possibly_changed" : action === "unknown" ? "review_due" : "current";
       db.prepare("UPDATE self_model_freshness SET freshness_status=?,last_reviewed_at=?,updated_at=? WHERE belief_id=?").run(status, now(), now(), parts[2]);
       return json(response, 200, { beliefId: parts[2], action, freshnessStatus: status, selfModelUpdated: false });
+    }
+if (request.method === "POST" && parts.join("/") === "v1/self-understanding/analyze-personal-context") {
+      const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      const endAt = optionalString(input.endAt) ?? now(); const startAt = optionalString(input.startAt) ?? new Date(Date.parse(endAt) - 28 * 86400000).toISOString();
+      if (Number.isNaN(Date.parse(startAt)) || Number.isNaN(Date.parse(endAt)) || Date.parse(startAt) >= Date.parse(endAt)) return json(response, 400, { error: "analysis_period_invalid" });
+      const snapshot = await loadPersonalContextSnapshot({ startAt, endAt });
+      return json(response, 200, analyzePersonalContextSnapshot(snapshot, { startAt, endAt, minimumEntryCount: Number(input.minimumEntryCount ?? 8) }));
+    }
+    if (request.method === "POST" && parts.join("/") === "v1/experiments/personal-context-template-requests") {
+      const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      const hypothesisId = optionalString(input.hypothesisId); if (hypothesisId && !db.prepare("SELECT 1 FROM hypotheses WHERE id=? AND user_id=?").get(hypothesisId, userId)) return json(response, 404, { error: "hypothesis_not_found" });
+      const requestedFields = Array.isArray(input.requestedFields) ? input.requestedFields.filter((field): field is Record<string, unknown> => Boolean(field) && typeof field === "object" && !Array.isArray(field)).map((field) => ({ fieldKey: optionalString(field.fieldKey) ?? "", label: optionalString(field.label) ?? "", valueType: optionalString(field.valueType) ?? "", required: field.required === true, options: Array.isArray(field.options) ? field.options.filter((option): option is { key: string; label: string } => Boolean(option) && typeof option === "object" && typeof (option as any).key === "string" && typeof (option as any).label === "string") : undefined, reason: optionalString(field.reason) ?? "" })) : [];
+      const allowedValueTypes = new Set(["text", "long_text", "boolean", "single_choice", "multi_choice", "number", "date"]);
+      if (!optionalString(input.title) || !optionalString(input.purpose) || !requestedFields.length || requestedFields.some((field) => !/^[a-z][a-z0-9_]{0,63}$/.test(field.fieldKey) || !field.label || !field.reason || !allowedValueTypes.has(field.valueType))) return json(response, 400, { error: "experiment_template_request_invalid" });
+      const durationDays = typeof input.durationDays === "number" && Number.isInteger(input.durationDays) && input.durationDays >= 1 && input.durationDays <= 366 ? input.durationDays : null;
+      const requestInput = { schemaVersion: "pcs-experiment-template-request-v1" as const, id: id("pcs_request"), sourceSystem: "metheory" as const, hypothesisId: hypothesisId ?? null, title: optionalString(input.title)!, purpose: optionalString(input.purpose)!, durationDays, requestedFields: requestedFields as Array<{ fieldKey: string; label: string; valueType: "text" | "long_text" | "boolean" | "single_choice" | "multi_choice" | "number" | "date"; required: boolean; options?: Array<{ key: string; label: string }>; reason: string }>, createdAt: now() };
+      return json(response, 201, await requestPersonalContextTemplate(requestInput));
+
     }
     if (parts[0] === "v1" && parts[1] === "activitywatch") {
       const activityWatchEnabled = process.env.ACTIVITYWATCH_ENABLED === "true";

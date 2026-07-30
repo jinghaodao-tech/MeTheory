@@ -6,8 +6,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { validateEntryWriteInput } from "../packages/records/src/index.ts";
-import { entryBodyFromNote, entryIdFromFrontmatter, entryRecordedAtFromFrontmatter, entryRecordedAtFromPath, entryTitleFromPath } from "../apps/obsidian-plugin/src/frontmatter.ts";
-import { entryRegistrationPayload } from "../apps/obsidian-plugin/src/entryRegistration.ts";
 import { SqliteEntryRepository } from "../apps/api/src/entryRepository.ts";
 import { SqliteSearchDocumentRepository } from "../apps/api/src/searchDocumentRepository.ts";
 
@@ -38,7 +36,7 @@ test("entry schema can be applied more than once", () => {
   }
 });
 
-test("Entry API upserts an Obsidian note, archives it, and exports it", async () => {
+test("Entry API upserts a source-backed note, archives it, and exports it", async () => {
   const port = 18350 + Math.floor(Math.random() * 200);
   const directory = mkdtempSync(join(tmpdir(), "metheory-entry-api-"));
   const database = join(directory, "api.sqlite3");
@@ -61,7 +59,7 @@ test("Entry API upserts an Obsidian note, archives it, and exports it", async ()
     });
     assert.equal(repeatedUser.status, 200);
     assert.equal((await repeatedUser.json() as { id: string }).id, user.id);
-    const original = { userId: user.id, externalSource: "obsidian", externalSourceId: "daily/2026-07-25.md", title: "2026-07-25", body: "first note", recordedAt: "2026-07-25T09:00:00.000Z" };
+    const original = { userId: user.id, externalSource: "personal_context_studio", externalSourceId: "daily/2026-07-25.md", title: "2026-07-25", body: "first note", recordedAt: "2026-07-25T09:00:00.000Z" };
     const createdResponse = await fetch(`http://127.0.0.1:${port}/v1/entries`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(original) });
     assert.equal(createdResponse.status, 201);
     const created = await createdResponse.json() as { created: boolean; entry: { id: string; body: string; recordedAt: string; sourceUpdatedAt: string | null } };
@@ -92,7 +90,7 @@ test("Entry API upserts an Obsidian note, archives it, and exports it", async ()
 
     const secondUserResponse = await fetch(`http://127.0.0.1:${port}/v1/users`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ authSubject: `entry-isolation-${port}` }) });
     const secondUser = await secondUserResponse.json() as { id: string };
-    const secondEntryResponse = await fetch(`http://127.0.0.1:${port}/v1/entries`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId: secondUser.id, externalSource: "obsidian", externalSourceId: "daily/second.md", title: "second", body: "isolated entry" }) });
+    const secondEntryResponse = await fetch(`http://127.0.0.1:${port}/v1/entries`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId: secondUser.id, externalSource: "personal_context_studio", externalSourceId: "daily/second.md", title: "second", body: "isolated entry" }) });
     assert.equal(secondEntryResponse.status, 201);
     assert.equal(Number.isFinite(Date.parse((await secondEntryResponse.json() as { entry: { recordedAt: string } }).entry.recordedAt)), true);
 
@@ -112,7 +110,7 @@ test("Entry API upserts an Obsidian note, archives it, and exports it", async ()
     const isolatedSearch = await fetch(`http://127.0.0.1:${port}/v1/search?userId=${secondUser.id}&q=isolated`);
     assert.equal((await isolatedSearch.json() as { items: Array<{ sourceKind: string }> }).items.length, 1);
 
-    const invalidIdentity = await fetch(`http://127.0.0.1:${port}/v1/entries`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId: user.id, externalSource: "obsidian", title: "invalid", body: "invalid" }) });
+    const invalidIdentity = await fetch(`http://127.0.0.1:${port}/v1/entries`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId: user.id, externalSource: "personal_context_studio", title: "invalid", body: "invalid" }) });
     assert.equal(invalidIdentity.status, 400);
     const entries = await fetch(`http://127.0.0.1:${port}/v1/entries?userId=${user.id}`);
     assert.equal((await entries.json() as { items: unknown[] }).items.length, 1);
@@ -142,12 +140,8 @@ test("Entry API upserts an Obsidian note, archives it, and exports it", async ()
   }
 });
 
-test("Entry validation and Obsidian frontmatter keep text records separate from observations", () => {
-  assert.throws(() => validateEntryWriteInput({ userId: "u", externalSource: "obsidian", title: "note", body: "body" }));
-  const note = "---\nmetheory_entry_id: entry_123\ntags: [daily]\n---\n# Today\nbody";
-  assert.equal(entryIdFromFrontmatter(note), "entry_123");
-  assert.equal(entryBodyFromNote(note), "# Today\nbody");
-  assert.equal(entryTitleFromPath("daily/2026-07-25.md"), "2026-07-25");
+test("Entry validation keeps text records separate from observations", () => {
+  assert.throws(() => validateEntryWriteInput({ userId: "u", externalSource: "personal_context_studio", title: "note", body: "body" }));
 });
 
 test("Node startup migrates legacy source_modified_at without changing recordedAt", async () => {
@@ -176,45 +170,6 @@ test("Node startup migrates legacy source_modified_at without changing recordedA
     await new Promise((resolve) => setTimeout(resolve, 150));
     try { rmSync(directory, { recursive: true, force: true }); } catch { /* Windows can retain a closed SQLite handle momentarily. */ }
   }
-});
-
-test("Obsidian recordedAt rules prefer canonical frontmatter, then daily filename", () => {
-  const explicit = "---\nmetheory_entry_id: entry_existing\nrecorded_at: 2026-07-22T09:30:00+09:00\n---\nbody";
-  assert.equal(entryIdFromFrontmatter(explicit), "entry_existing");
-  assert.equal(entryRecordedAtFromFrontmatter(explicit), "2026-07-22T00:30:00.000Z");
-  assert.equal(entryRecordedAtFromFrontmatter("---\ndate: 2026-07-23\n---\nbody"), "2026-07-23T00:00:00.000Z");
-  assert.equal(entryRecordedAtFromPath("daily/2026-07-24.md"), "2026-07-24T00:00:00.000Z");
-  assert.equal(entryRecordedAtFromPath("daily/2026-07-24"), "2026-07-24T00:00:00.000Z");
-  assert.equal(entryRecordedAtFromPath("notes/ordinary.md"), null);
-  assert.throws(() => entryRecordedAtFromFrontmatter("---\nrecorded_at: not-a-date\n---\nbody"), /invalid_frontmatter_recorded_at/);
-  assert.throws(() => entryRecordedAtFromFrontmatter("---\nrecorded_at: 2026-02-30T09:00:00Z\n---\nbody"), /invalid_frontmatter_recorded_at/);
-  assert.throws(() => entryRecordedAtFromPath("daily/2026-02-30.md"), /invalid_filename_recorded_at/);
-  assert.equal(validateEntryWriteInput({ userId: "u", externalSource: "obsidian", externalSourceId: "notes/new.md", title: "new", body: "body" }).recordedAt, undefined);
-});
-
-test("Obsidian registration payload shares ID, body, daily and ordinary note rules", () => {
-  const common = { userId: "user_1", sourceUpdatedAt: "2026-07-25T12:00:00.000Z", creationTimestamp: "2026-07-25T13:00:00.000Z" };
-  const existing = entryRegistrationPayload({ ...common, path: "daily/2026-07-22.md", note: "---\nmetheory_entry_id: entry_existing\nrecorded_at: 2026-07-01\n---\nexisting body" });
-  assert.deepEqual(existing, { id: "entry_existing", userId: "user_1", externalSource: "obsidian", externalSourceId: "daily/2026-07-22.md", title: "2026-07-22", body: "existing body", recordedAt: undefined, sourceUpdatedAt: common.sourceUpdatedAt });
-  const daily = entryRegistrationPayload({ ...common, path: "daily/2026-07-23.md", note: "# Daily\ndaily body" });
-  assert.equal(daily.recordedAt, "2026-07-23T00:00:00.000Z");
-  assert.equal(daily.body, "# Daily\ndaily body");
-  const ordinary = entryRegistrationPayload({ ...common, path: "notes/ordinary.md", note: "ordinary body" });
-  assert.equal(ordinary.recordedAt, common.creationTimestamp);
-  assert.equal(ordinary.id, undefined);
-});
-
-test("Obsidian plugin is bundled from shared TypeScript helpers", () => {
-  const source = readFileSync(join(process.cwd(), "apps", "obsidian-plugin", "src", "main.ts"), "utf8");
-  assert.match(source, /entryRegistrationPayload/);
-  assert.match(source, /entryIdFromFrontmatter/);
-  assert.match(source, /sourceUpdatedAt/);
-  const registrationSource = readFileSync(join(process.cwd(), "apps", "obsidian-plugin", "src", "entryRegistration.ts"), "utf8");
-  assert.match(registrationSource, /entryBodyFromNote/);
-  assert.match(registrationSource, /entryIdFromFrontmatter/);
-  assert.match(registrationSource, /entryRecordedAtFromFrontmatter/);
-  const bundle = readFileSync(join(process.cwd(), "apps", "obsidian-plugin", "main.js"), "utf8");
-  assert.match(bundle, /metheory_entry_id/);
 });
 
 test("search rebuild rolls back deleted documents when regeneration fails", async () => {

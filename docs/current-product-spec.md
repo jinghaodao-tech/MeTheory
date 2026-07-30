@@ -4,21 +4,21 @@ This document is the current product specification for the local-first MeTheory 
 
 ## Purpose
 
-MeTheory turns natural-language Markdown records into user-reviewed structured values, evidence-backed self-understanding hypotheses, and an editable personal operating manual. It is a private local information foundation, not a diagnostic system.
+MeTheory analyzes user-confirmed structured records from Personal Context Studio, produces evidence-backed self-understanding hypotheses, and maintains an editable personal operating manual. It is a private local analysis foundation, not a diagnostic system.
 
 ## Initial practical version
 
-The first practical version is complete when a user can create a note from a theme without waiting for AI, attach or create a template, structure only that tracked note after saving, review uncertain field values, analyze one to four weeks of structured records, inspect supporting and contradicting records, rate a hypothesis as fits/does not fit/on hold, and review a proposed Self Model change before accepting it. The flow must remain usable with no cloud AI and must preserve Markdown when local AI is unavailable.
+The first practical version is complete when a user can record and review context in Personal Context Studio, analyze one to four weeks of confirmed records in MeTheory, inspect supporting and contradicting records, rate a hypothesis as fits/does not fit/on hold, and review a proposed Self Model change before accepting it. The flow must remain usable with no cloud AI and must preserve Markdown when local AI is unavailable.
 
 ## Local-first policy
 
-Markdown is the human-readable source for free records. SQLite is the local operational store for Entries, templates, structured field values, experiment observations, hypotheses, evidence, consent, and derived search indexes. No cloud sync is required. External AI is optional and must be approved per template field, provider, and destination host. Secrets are rejected rather than stored.
+Personal Context Studio owns Markdown and its local SQLite store for documents, templates, structured field values, review state, and search. MeTheory owns its separate local SQLite store for experiment observations, hypotheses, evidence, consent, and Self Model changes. The two services exchange versioned localhost JSON only; no cloud sync is required.
 
 ## Responsibility boundaries
 
-- **Markdown / VS Code / Cursor / Obsidian:** writing, editing, and the human-readable record.
-- **Entry:** a reference to a free record, with recorded time kept separate from source update time.
-- **SQLite:** templates, extracted values, review state, experiments, hypotheses, evidence, privacy decisions, and rebuildable indexes.
+- **Personal Context Studio / Markdown:** editor-agnostic writing, local search, templates, local-AI candidates, and the human-readable record. VS Code, Cursor, and Obsidian are interchangeable editors of the same folder.
+- **PCS analysis snapshot:** reviewed, shareable structured values and source references, without Markdown bodies.
+- **MeTheory SQLite:** experiments, hypotheses, evidence, privacy decisions, and Self Model changes.
 - **Experiment data:** explicit observations and parameter values used for evaluation. An Entry is never implicitly converted into an experiment observation.
 - **CLI:** scriptable local operations, with human-readable output by default and stable JSON only with `--json`.
 
@@ -28,15 +28,14 @@ AI may suggest templates, titles, structured values, wording for questions, and 
 
 ## Supported clients
 
-VS Code and Cursor are the primary desktop workflow. The CLI provides workspace, sync, template, extraction, privacy, backup, and local AI operations. Obsidian is supported as a Markdown Entry source. The mobile app remains a compatible local experiment client; it is not the primary free-record authoring workflow.
+Personal Context Studio watches a configured Markdown folder and provides local search, template, Review, and local-AI workflows. It also exposes bounded read-only MCP tools for Codex and Claude Code. MeTheory provides the experiment and analysis workflow. The mobile app remains a compatible local experiment client; it is not the primary free-record authoring workflow.
 
 ## Implemented now
 
 - Local Node API and SQLite schema for Entries, templates, structured field values, hypotheses, evaluations, evidence, privacy, and search.
-- Shared Markdown parsing, timestamp preservation, generated Obsidian bundle, and idempotent Entry sync.
-- Local AI provider boundary, manual ChatGPT prompt/result workflow, mock provider, disabled provider, extraction hashing, stale-result rejection, and privacy checks.
-- Workspace initialization, status, backup/restore checks, CLI extraction review, and VS Code Start, Status, Privacy, Templates, Review, Self Understanding, and Entries views.
-- Provisional inbox-note creation, non-blocking template suggestions, tracked-note save debounce, a single extraction retry, and explicit extraction approval before SQLite updates.
+- PCS-owned Markdown parsing, timestamp preservation, stable-save watching, regenerable search indexing, and stale extraction rejection.
+- PCS CLI/API workflows for templates, extraction candidates, per-value Review, privacy, and bounded context access.
+- A read-only PCS MCP surface for search, excerpts, confirmed context, and pending Review status.
 - Self-understanding: confirmed-value-only analysis, eight-record quality gate, semantic-role-to-construct mapping, candidate history and deduplication, emerging/state-dependent/relatively-stable scopes, deterministic Japanese explanations, optional validated localhost-AI wording, evidence links, ratings, and editable user-confirmed Self Model additions.
 - External-asset safety: versioned `SelfUnderstandingInterpretationV3` validation with deterministic fallback, localhost-only ActivityWatch preview/import with normalized provenance, separate original IPIP-inspired self-perception responses, deterministic question-quality checks, and fixed non-AI chart data models.
 - Analysis responses include data quality and excluded fields. Unconfirmed roles, unsupported field types, and unknown semantic roles are visible to the user and do not become hypotheses.
@@ -47,7 +46,7 @@ VS Code and Cursor are the primary desktop workflow. The CLI provides workspace,
 1. Add richer Review context for field labels, source spans, existing-value diffs, and field sensitivity in the desktop UI.
 2. Complete readiness polling for each supported local runtime; process ownership, one retry, and idle-operation protection already exist.
 3. Improve ordinary backup/delete UX while keeping advanced export history and encryption out of the initial version.
-4. Add richer VS Code rendering for fixed chart models and a guided baseline questionnaire; the local API and storage contracts are already present.
+4. Add a guided baseline questionnaire and a richer client for fixed chart models; the local API and storage contracts are already present.
 
 Self-understanding explanation uses deterministic wording by default. Optional
 local wording is enabled with `SELF_UNDERSTANDING_AI_PROVIDER=ollama` or

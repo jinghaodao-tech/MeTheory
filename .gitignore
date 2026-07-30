@@ -19,15 +19,3 @@ apps/vscode-extension/dist/
 *.sqlite-shm
 *.sqlite-wal
 .env
-.ai/runs/
-.ai/chatgpt-profile/
-.ai/review-trigger-state.json
-.ai/review-trigger-state.json.tmp
-.ai/review-trigger.lock
-.ai/review-loop-status.json
-.ai/review-loop-status.json.tmp
-.ai/review-loop.log
-.ai/review-loop.log.1
-.ai/review-loop.log.2
-.ai/review-loop.lock
-.ai/installer-backup-*/

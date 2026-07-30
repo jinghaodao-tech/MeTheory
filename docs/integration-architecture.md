@@ -2,15 +2,14 @@
 
 ## Product boundary
 
-MeTheory is becoming a local-first personal information foundation. A person
-can record a note, find it again, structure selected facts, validate a
-hypothesis when useful, and deliberately adopt a statement into a personal
-model. The existing hypothesis system remains an `experiments` subsystem; it
-is not required for ordinary note taking.
+MeTheory is the analysis and experiment component of a local-first personal
+information foundation. Personal Context Studio owns recording, search, and
+reviewed structuring. MeTheory validates a hypothesis when useful and lets the
+user deliberately adopt a statement into a personal model.
 
 | Boundary | Current responsibility |
 | --- | --- |
-| Obsidian | Human-readable notes and editing |
+| Personal Context Studio Markdown folder | Human-readable notes and editing in any editor |
 | `entries` | Structured reference to a note, source identity, timestamps, and lifecycle |
 | `observation_episodes` / `parameter_values` | Typed values collected for experiments |
 | Hypotheses, Evidence, Self Model | Deterministic evaluation and user-reviewed interpretation |
@@ -34,23 +33,21 @@ The Entry repository lives behind two platform adapters:
 
 * `packages/records/src/entries.ts` owns platform-neutral Entry types and input
   validation.
-* `apps/api/src/entryRepository.ts` owns Node SQLite access for Obsidian.
+* `apps/api/src/entryRepository.ts` owns Node SQLite access for analysis references.
 * `apps/mobile/src/storage/repositories/entryRepository.ts` owns Expo SQLite
   access and is exported through the existing mobile repository facade.
 
 An Entry has a user-scoped, optional `(external_source, external_source_id)`
-identity. The database indexes the pair uniquely when it exists. The Obsidian
-plugin first uses this identity (`obsidian` and the note path), then persists
-the returned `metheory_entry_id` in frontmatter. Later registrations use that
-ID, update the existing Entry, and clear any archive marker instead of creating
-a duplicate.
+identity. The database indexes the pair uniquely when it exists. New
+free-record registration and source identity belong to Personal Context
+Studio; MeTheory retains this repository for analysis references.
 
 `recordedAt` and `sourceUpdatedAt` have separate meanings. `recordedAt` is
 the Entry's occurrence time and never changes during an upsert. A new Entry
 uses this deterministic priority: `recorded_at` frontmatter, `date`
 frontmatter, a `YYYY-MM-DD` or `YYYY-MM-DD.md` filename, then the file
 creation timestamp. Existing Entries keep their stored `recordedAt` even when
-the note is edited. `sourceUpdatedAt` records the Obsidian file mtime and may
+the note is edited. `sourceUpdatedAt` records the source file mtime and may
 change on every registration. Invalid explicit or filename dates are rejected
 rather than silently falling back to the current time.
 
@@ -66,28 +63,13 @@ The mobile JSON export now includes the `entries` and derived `search_documents`
 tables. API keys, note bodies,
 and sensitive values are not written to logs.
 
-## Obsidian integration
+## Editor integration
 
-`apps/obsidian-plugin` is a directly loadable minimal plugin. Its one command
-registers the active note by calling the local API. It sends the filename-derived
-title, note body without frontmatter, note path, resolved Entry date, and
-separate source modification time. It uses Obsidian's `processFrontMatter` API
-to save only `metheory_entry_id`; it never reformats the body. The API URL is
-configured in plugin settings. On its first registration, the plugin creates
-or reuses the local `obsidian-local` user and stores the returned ID locally;
-an explicit user ID can still be configured.
-
-`src/main.ts` imports the shared `src/frontmatter.ts` helpers and is the only
-plugin source of truth. `main.js` is a checked-in generated bundle, produced by
-`npm run build:obsidian`, because Obsidian loads that file directly. The root
-typecheck has separate Node, mobile, and Obsidian targets:
-
-```powershell
-npm run typecheck:root
-npm run typecheck:mobile
-npm run typecheck:obsidian
-npm run build:obsidian
-```
+The authoritative Markdown folder and its watcher belong to Personal Context
+Studio. VS Code, Cursor, Obsidian, or another editor may open that folder
+directly. MeTheory has no editor-specific plugin and performs no bidirectional
+note synchronization. PCS exposes reviewed values to MeTheory through the
+`pcs-analysis-snapshot-v1` localhost contract.
 
 ## Search and AI boundaries
 
@@ -121,8 +103,7 @@ personal-model claim.
 
 `test/entries.test.ts` verifies idempotent schema application, API CRUD,
 timestamp preservation, source-based note upsert, full search rebuild behavior,
-user isolation, archive exclusion, input validation, Obsidian date precedence,
-and the generated plugin artifact. It also verifies that a failed rebuild
+user isolation, archive exclusion, and input validation. It also verifies that a failed rebuild
 restores the prior Entry and non-Entry documents. `test/search-core.test.ts`
 covers tokenization and stable BM25 result references. Run the full suite with
 `npm run verify`.

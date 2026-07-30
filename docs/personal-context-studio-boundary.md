@@ -4,10 +4,10 @@ MeTheory remains the system for Entries, structured observations, deterministic
 hypothesis evaluation, Evidence, and user-reviewed self-understanding. It does
 not become an AI personal-profile store.
 
-`extracted/personal-context-studio` is a separately installable, local-only
-application for user-confirmed AI context. It owns context templates, values,
-sharing preferences, export profiles, AI-oriented exports, import decisions,
-and safe deletion.
+[Personal Context Studio](https://github.com/jinghaodao-tech/Personal-Context-Studio)
+is a separately installable, local-only application for user-confirmed AI
+context. It owns context templates, values, sharing preferences, export
+profiles, AI-oriented exports, import decisions, and safe deletion.
 
 The systems communicate only through
 `personal-context-candidate-v1` JSON. MeTheory exposes a read-only migration
