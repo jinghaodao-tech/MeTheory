@@ -1,7 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { evaluateEvidence, directionForObservation, RULE_VERSION, type ObservationInput } from "../../../packages/domain/src/index.ts";
 import { buildEpisodes } from "../../../packages/domain/src/hypothesis/episodes.ts";
@@ -14,6 +13,11 @@ import { SqliteSearchDocumentRepository } from "./searchDocumentRepository.ts";
 import { SqliteTemplateRepository } from "./templateRepository.ts";
 import { SqlitePrivacyRepository } from "./privacyRepository.ts";
 import { SqliteSelfUnderstandingRepository } from "./selfUnderstandingRepository.ts";
+import { SqlitePcsAnalysisRepository } from "./pcsAnalysisRepository.ts";
+import { fetchLiveSnapshot, PcsClientError } from "./pcsClient.ts";
+import { PcsExperimentRepository } from "./pcsExperimentRepository.ts";
+import { PcsAnalysisService } from "./pcsAnalysisService.ts";
+import { migratePcsSchema } from "./db/migrate.ts";
 import { MockTemplateGenerationProvider, UnavailableTemplateGenerationProvider, DisabledTemplateGenerationProvider, ManualChatGPTTemplateProvider, OpenAITemplateGenerationProvider, TEMPLATE_PROMPT_VERSION, suggestSemanticRolesForTemplate, validateTemplateDraft } from "../../../packages/templates/src/index.ts";
 import {
   generateSelfUnderstanding,
@@ -23,20 +27,24 @@ import {
   validateSelfModelStatement,
   type UnderstandingRecord,
   baselineItems,
-  createBaselineResponse
+  createBaselineResponse,
+  IPIP_BASELINE_ITEM_SET_VERSION
 } from "../../../packages/self-understanding/src/index.ts";
 import { ActivityWatchAdapter, summarizeActivityWatchDaily } from "../../../packages/domain/src/activitywatch.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.METHEORY_DB ?? resolve(root, "data", "metheory.sqlite3");
 const db = new DatabaseSync(databasePath);
-db.exec(readFileSync(resolve(root, "db", "ts_mvp_schema.sql"), "utf8"));
+migratePcsSchema(db, root);
 const aiQueryService = createAiQueryService(db);
 const entryRepository = new SqliteEntryRepository(db);
 const searchDocumentRepository = new SqliteSearchDocumentRepository(db);
 const templateRepository = new SqliteTemplateRepository(db);
 const privacyRepository = new SqlitePrivacyRepository(db);
 const selfUnderstandingRepository = new SqliteSelfUnderstandingRepository(db);
+const pcsAnalysisRepository = new SqlitePcsAnalysisRepository(db);
+const pcsAnalysisService = new PcsAnalysisService(pcsAnalysisRepository);
+const pcsExperimentRepository = new PcsExperimentRepository(db);
 
 function ensureColumn(table: string, column: string, definition: string): void {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<Record<string, unknown>>;
@@ -114,6 +122,10 @@ ensureColumn("self_understanding_analysis_history", "source_entry_ids_json", "TE
 ensureColumn("self_understanding_analysis_history", "source_entry_fingerprint", "TEXT NOT NULL DEFAULT ''");
 ensureColumn("external_observations", "review_state", "TEXT NOT NULL DEFAULT 'imported'");
 ensureColumn("external_observations", "local_date", "TEXT");
+ensureColumn("external_observations", "source_bucket_id", "TEXT");
+ensureColumn("external_observations", "source_identity", "TEXT");
+db.exec("UPDATE external_observations SET source_identity=id WHERE source_identity IS NULL OR source_identity='' ");
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS external_observations_source_identity_idx ON external_observations(user_id, source, source_identity) WHERE source_identity IS NOT NULL");
 
 function migrateBaselineSelfPerceptionSource(): void {
   const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='baseline_self_perceptions'").get() as { sql?: string } | undefined;
@@ -159,6 +171,21 @@ function migrateBaselineSelfPerceptionSource(): void {
 }
 
 migrateBaselineSelfPerceptionSource();
+function normalizeBaselineProvenance(): void {
+  const rows = db.prepare("SELECT id,provenance_json FROM baseline_self_perceptions WHERE provenance_json LIKE '%ipip%'").all() as Array<{ id: string; provenance_json: string }>;
+  const update = db.prepare("UPDATE baseline_self_perceptions SET provenance_json=? WHERE id=?");
+  for (const row of rows) {
+    try {
+      const provenance = JSON.parse(row.provenance_json) as Record<string, unknown>;
+      if (provenance.source !== "ipip") continue;
+      provenance.source = "baseline_self_perception";
+      update.run(JSON.stringify(provenance), row.id);
+    } catch {
+      // Keep malformed historical provenance intact instead of guessing its shape.
+    }
+  }
+}
+normalizeBaselineProvenance();
 db.exec("CREATE TABLE IF NOT EXISTS ai_http_access_audit_logs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, client_id TEXT NOT NULL, client_type TEXT NOT NULL, purpose TEXT NOT NULL, requested_parameter_ids_json TEXT NOT NULL, allowed_parameter_ids_json TEXT NOT NULL, denied_parameter_ids_json TEXT NOT NULL, requested_start_at TEXT, requested_end_at TEXT, returned_record_count INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, created_at TEXT NOT NULL)");
 
 const now = () => new Date().toISOString();
@@ -394,6 +421,7 @@ const server = createServer(async (request, response) => {
   const requestUrl = new URL(request.url ?? "/", "http://localhost");
   try {
     if (request.method === "GET" && parts.join("/") === "healthz") return json(response, 200, { status: "ok", service: "metheory-api" });
+    if (request.method === "POST" && parts.join("/") === "v1/users") { const input = await body(request); const userId = optionalString(input.userId) ?? id("user"); const authSubject = optionalString(input.authSubject) ?? userId; const locale = optionalString(input.locale) ?? "ja-JP"; const timezone = optionalString(input.timezone) ?? "UTC"; const existed = Boolean(db.prepare("SELECT 1 FROM users WHERE auth_subject=?").get(authSubject)); db.prepare("INSERT INTO users(id,auth_subject,locale,timezone,created_at) VALUES(?,?,?,?,?) ON CONFLICT(auth_subject) DO NOTHING").run(userId, authSubject, locale, timezone, now()); const row = db.prepare("SELECT id,auth_subject AS authSubject,locale,timezone FROM users WHERE auth_subject=?").get(authSubject); return json(response, existed ? 200 : 201, row); }
     if (parts[0] === "v1" && parts[1] === "templates") {
       if (request.method === "GET" && parts.length === 2) return json(response, 200, { items: templateRepository.list(requestUrl.searchParams.get("userId") ?? "") });
       if (request.method === "GET" && parts.length === 3) return json(response, 200, templateRepository.detail(requestUrl.searchParams.get("userId") ?? "", parts[2]));
@@ -515,6 +543,64 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && parts.join("/") === "v1/self-understanding/analyze") {
       const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); return json(response, 200, await analyzeSelfUnderstandingWithInterpretation(userId, input));
     }
+    if (parts[0] === "v1" && parts[1] === "pcs") {
+      const input = request.method === "POST" ? await body(request) : {};
+      const userId = request.method === "GET" ? requestUrl.searchParams.get("userId") ?? "" : optionalString(input.userId) ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (request.method === "GET" && parts[2] === "profile-binding") return json(response, 200, { binding: pcsAnalysisRepository.binding(userId) ?? null });
+      if (request.method === "DELETE" && parts[2] === "profile-binding") { pcsAnalysisRepository.removeBinding(userId); return json(response, 200, { removed: true }); }
+      if (request.method === "GET" && parts[2] === "analysis-history") return json(response, 200, { items: pcsAnalysisRepository.history(userId) });
+      if (request.method === "GET" && parts[2] === "experiments") return json(response, 200, { items: pcsExperimentRepository.list(userId) });
+      if (request.method === "POST" && parts[2] === "analysis-runs" && parts[3] && parts[4] === "candidate-review") { const ok=pcsExperimentRepository.review(userId,parts[3],String(input.candidateId??""),String(input.rating??""),String(input.note??"")); return ok ? json(response,201,{saved:true}) : json(response,400,{error:"candidate_review_invalid"}); }
+      if (request.method === "POST" && parts[2] === "experiment-draft" && parts[3] && parts[4] === "accept") return pcsExperimentRepository.acceptDraft(userId, parts[3]) ? json(response, 200, { id: parts[3], status: "accepted" }) : json(response, 404, { error: "experiment_draft_not_found" });
+      if (request.method === "POST" && parts[2] === "experiment-draft" && !parts[3]) { const draft = pcsExperimentRepository.draft(userId, { runId: String(input.runId ?? ""), candidateId: String(input.candidateId ?? ""), title: String(input.title ?? "Experiment"), plan: input.plan }); return json(response, 201, draft); }
+      if (request.method === "POST" && parts[2] === "experiments" && parts[3] && parts[4] === "start") { const result = pcsExperimentRepository.start(userId, parts[3]); return result ? json(response, 201, result) : json(response, 409, { error: "experiment_draft_not_accepted" }); }
+      if (request.method === "POST" && parts[2] === "experiments" && parts[3] && parts[4] === "observation") return pcsExperimentRepository.observe(userId, parts[3], input.observation) ? json(response, 201, { stored: true }) : json(response, 409, { error: "experiment_not_running" });
+      if (request.method === "POST" && parts[2] === "experiments" && parts[3] && parts[4] === "transition") return pcsExperimentRepository.transition(userId, parts[3], String(input.status ?? "")) ? json(response, 200, { id: parts[3], status: input.status }) : json(response, 409, { error: "experiment_transition_invalid" });
+      if (request.method === "POST" && parts[2] === "experiments" && parts[3] && parts[4] === "evaluate") { const result=input.evaluation===undefined?pcsExperimentRepository.evaluateDeterministic(userId,parts[3]):(pcsExperimentRepository.evaluate(userId,parts[3],input.evaluation)?{status:"evaluated"}:null); return result ? json(response,200,{...result,id:parts[3],status:"evaluated",selfModelActions:["create_new","propose_update","keep_separate"],userApprovalRequired:true}) : json(response,409,{error:"experiment_not_completed"}); }
+      if (request.method === "POST" && parts[2] === "experiments" && parts[3] && parts[4] === "self-model-candidate") {
+        const statement = optionalString(input.statement)?.trim() ?? "";
+        if (!validateSelfModelStatement(statement)) return json(response, 400, { error: "self_model_statement_invalid" });
+        const experiment = db.prepare(`SELECT e.status,e.evaluation_json,d.candidate_id,r.snapshot_json
+          FROM pcs_experiments e
+          JOIN pcs_experiment_drafts d ON d.id=e.draft_id
+          JOIN pcs_analysis_runs r ON r.id=d.run_id
+          WHERE e.id=? AND e.user_id=?`).get(parts[3], userId) as { status: string; evaluation_json: string | null; candidate_id: string; snapshot_json: string } | undefined;
+        if (!experiment) return json(response, 404, { error: "pcs_experiment_not_found" });
+        if (experiment.status !== "evaluated") return json(response, 409, { error: "experiment_not_evaluated" });
+        const existing = db.prepare("SELECT id FROM self_model_candidates WHERE user_id=? AND source_hypothesis_id=? AND candidate_id=?").get(userId, parts[3], experiment.candidate_id) as { id: string } | undefined;
+        if (existing) return json(response, 200, { candidateId: existing.id, reused: true, userApprovalRequired: true });
+        const snapshot = JSON.parse(experiment.snapshot_json) as { period?: { from?: string; to?: string }; records?: Array<{ fieldKey?: string }> };
+        const fieldKey = snapshot.records?.[0]?.fieldKey ?? "pcs";
+        const candidateId = id("self_model_candidate"); const createdAt = now();
+        db.prepare(`INSERT INTO self_model_candidates(
+          id,user_id,candidate_id,statement,status,source_hypothesis_id,
+          supporting_period_start,supporting_period_end,construct_key,tendency_scope,
+          source_analysis_periods_json,supporting_field_pairs_json,
+          resolution_action,target_self_belief_id,user_note,created_at,last_reviewed_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+          candidateId, userId, experiment.candidate_id, statement, "proposed", parts[3],
+          snapshot.period?.from ?? null, snapshot.period?.to ?? null,
+          optionalString(input.constructKey) ?? `pcs:${fieldKey}`,
+          "PCS experiment evaluation", JSON.stringify([snapshot.period ?? {}]),
+          JSON.stringify([{ fieldKey, experimentId: parts[3], evaluation: JSON.parse(experiment.evaluation_json ?? "{}") }]),
+          "new", null, optionalString(input.note) ?? "", createdAt, createdAt
+        );
+        return json(response, 201, { candidateId, userApprovalRequired: true, approvalPath: "/v1/self-understanding/self-model-candidates/review" });
+      }
+      if (request.method === "GET" && parts[2] === "analysis-runs" && parts[3]) { const run = pcsAnalysisRepository.run(userId, parts[3]); return run ? json(response, 200, run) : json(response, 404, { error: "pcs_analysis_run_not_found" }); }
+      if (request.method === "POST" && parts[2] === "profile-binding") { const profileId = optionalString(input.profileId) ?? ""; if (!profileId) return json(response, 400, { error: "pcs_profile_required" }); pcsAnalysisRepository.bind(userId, profileId); return json(response, 201, { binding: pcsAnalysisRepository.binding(userId) }); }
+      if (request.method === "POST" && parts[2] === "analyze") {
+        const result = pcsAnalysisService.analyze(userId, input.snapshot, input.maximumCandidates);
+        return result.ok ? json(response, 201, result) : json(response, result.status, { error: result.error });
+      }
+      if (request.method === "POST" && parts[2] === "live-analyze") {
+        const profileId = optionalString(input.profileId) ?? ""; const from = optionalString(input.from) ?? ""; const to = optionalString(input.to) ?? ""; const timezone = optionalString(input.timezone) ?? "UTC";
+        if (!profileId || !from || !to) return json(response, 400, { error: "pcs_period_invalid" });
+        const bound = pcsAnalysisRepository.binding(userId) as { profileId?: string } | undefined; if (bound?.profileId && bound.profileId !== profileId) return json(response, 409, { error: "pcs_profile_mismatch" });
+        try { const snapshot = await fetchLiveSnapshot({ profileId, from, to, timezone }); const result = pcsAnalysisService.saveValidated(userId, snapshot, input.maximumCandidates); return result.ok ? json(response, 201, { ...result, source: "live" }) : json(response, result.status, { error: result.error }); } catch (error) { const pcsError = error instanceof PcsClientError ? error : new PcsClientError("pcs_unavailable"); return json(response, pcsError.status, { error: pcsError.code }); }
+      }
+    }
     if (parts[0] === "v1" && parts[1] === "activitywatch") {
       const activityWatchEnabled = process.env.ACTIVITYWATCH_ENABLED === "true";
       const adapter = new ActivityWatchAdapter({ baseUrl: process.env.ACTIVITYWATCH_URL ?? "http://127.0.0.1:5600" });
@@ -527,14 +613,21 @@ const server = createServer(async (request, response) => {
         const startAt = optionalString(input.startAt) ?? "";
         const endAt = optionalString(input.endAt) ?? "";
         if (!bucketIds.length || !startAt || !endAt || Date.parse(startAt) >= Date.parse(endAt)) return json(response, 400, { error: "activitywatch_period_invalid" });
-        const observations = await adapter.preview(bucketIds, startAt, endAt);
+        const userId = optionalString(input.userId) ?? "";
+        const timezoneRow = userId ? db.prepare("SELECT timezone FROM users WHERE id=?").get(userId) as { timezone?: string } | undefined : undefined;
+        const timezone = timezoneRow?.timezone || "UTC";
+        let observations;
+        try {
+          observations = await adapter.preview(bucketIds, startAt, endAt, timezone);
+        } catch (error) {
+          return json(response, 400, { error: error instanceof Error ? error.message : "activitywatch_preview_invalid" });
+        }
         if (parts[2] === "preview") return json(response, 200, { source: "activitywatch", startAt, endAt, count: observations.length, items: observations, dailySummaries: summarizeActivityWatchDaily(observations) });
         if (input.confirm !== true) return json(response, 400, { error: "activitywatch_import_confirmation_required" });
-        const userId = optionalString(input.userId) ?? "";
         if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
         let imported = 0;
         for (const observation of observations) {
-          const result = db.prepare("INSERT OR IGNORE INTO external_observations(id,user_id,source,source_event_id,observed_at,local_date,duration_seconds,semantic_role,category,project_label,privacy_level,imported_at,user_confirmed,review_state,original_reference,transform_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(observation.id, userId, observation.source, observation.sourceEventId ?? null, observation.observedAt, observation.localDate, observation.durationSeconds ?? null, observation.semanticRole, observation.category, observation.projectLabel ?? null, observation.privacyLevel, observation.importedAt, 0, "imported", observation.sourceEventId ?? null, "activitywatch-v1");
+          const result = db.prepare("INSERT INTO external_observations(id,user_id,source,source_bucket_id,source_event_id,source_identity,observed_at,local_date,duration_seconds,semantic_role,category,project_label,privacy_level,imported_at,user_confirmed,review_state,original_reference,transform_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,source,source_identity) WHERE source_identity IS NOT NULL DO UPDATE SET observed_at=excluded.observed_at,local_date=excluded.local_date,duration_seconds=excluded.duration_seconds,semantic_role=excluded.semantic_role,category=excluded.category,project_label=excluded.project_label,privacy_level=excluded.privacy_level,imported_at=excluded.imported_at,original_reference=excluded.original_reference,transform_version=excluded.transform_version").run(observation.id, userId, observation.source, observation.sourceBucketId, observation.sourceEventId ?? null, observation.sourceIdentity, observation.observedAt, observation.localDate, observation.durationSeconds ?? null, observation.semanticRole, observation.category, observation.projectLabel ?? null, observation.privacyLevel, observation.importedAt, 0, "imported", observation.sourceEventId ?? null, "activitywatch-v2");
           imported += Number(result.changes ?? 0);
         }
         return json(response, 201, { source: "activitywatch", count: observations.length, imported, skipped: observations.length - imported, reviewState: "imported" });
@@ -553,7 +646,7 @@ const server = createServer(async (request, response) => {
       }
     }
     if (parts[0] === "v1" && parts[1] === "self-understanding" && parts[2] === "baseline") {
-      if (request.method === "GET" && parts.length === 3) return json(response, 200, { itemSetVersion: "ipip-paraphrase-ja-v1", items: baselineItems() });
+      if (request.method === "GET" && parts.length === 3) return json(response, 200, { itemSetVersion: IPIP_BASELINE_ITEM_SET_VERSION, items: baselineItems() });
       const input = request.method === "POST" ? await body(request) : {};
       const userId = request.method === "GET" ? requestUrl.searchParams.get("userId") ?? "" : optionalString(input.userId) ?? "";
       const resolvedUserId = request.method === "DELETE" ? requestUrl.searchParams.get("userId") ?? "" : userId;

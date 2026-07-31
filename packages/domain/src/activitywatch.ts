@@ -3,7 +3,9 @@ import { createHash } from "node:crypto";
 export type ExternalObservation = {
   id: string;
   source: "activitywatch";
+  sourceBucketId: string;
   sourceEventId?: string;
+  sourceIdentity: string;
   observedAt: string;
   localDate: string;
   durationSeconds?: number;
@@ -54,7 +56,37 @@ function safeProjectLabel(data: Record<string, unknown>): string | undefined {
   const value = text(data.project) ?? text(data.project_name) ?? text(data.repository);
   return value && /^[a-zA-Z0-9._ -]{1,80}$/.test(value) ? value : undefined;
 }
-export function normalizeActivityWatchEvent(bucketId: string, event: ActivityWatchEvent, importedAt = new Date().toISOString()): ExternalObservation | null {
+
+export function localDateInTimeZone(timestamp: string, timezone = "UTC"): string {
+  const instant = new Date(timestamp);
+  if (!Number.isFinite(instant.getTime())) throw new Error("activitywatch_timestamp_invalid");
+  let parts: Intl.DateTimeFormatPart[];
+  try {
+    parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).formatToParts(instant);
+  } catch {
+    throw new Error("activitywatch_timezone_invalid");
+  }
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value;
+  const year = value("year");
+  const month = value("month");
+  const day = value("day");
+  if (!year || !month || !day) throw new Error("activitywatch_timezone_invalid");
+  return `${year}-${month}-${day}`;
+}
+
+export function activityWatchObservationIdentity(bucketId: string, sourceEventId?: string, fallback?: { timestamp: string; category: ExternalObservation["category"]; projectLabel?: string; durationSeconds?: number }): string {
+  const identity = sourceEventId
+    ? ["activitywatch", bucketId, sourceEventId, fallback?.durationSeconds ?? ""]
+    : ["activitywatch", bucketId, fallback?.timestamp ?? "", fallback?.durationSeconds ?? "", fallback?.category ?? "other", fallback?.projectLabel ?? ""];
+  return createHash("sha256").update(JSON.stringify(identity)).digest("hex").slice(0, 32);
+}
+
+export function normalizeActivityWatchEvent(bucketId: string, event: ActivityWatchEvent, importedAt = new Date().toISOString(), timezone = "UTC"): ExternalObservation | null {
   if (!event.timestamp || !Number.isFinite(Date.parse(event.timestamp))) return null;
   const data = event.data ?? {};
   const durationSeconds = typeof event.duration === "number" && Number.isFinite(event.duration) && event.duration >= 0 ? Math.min(event.duration, 86400) : undefined;
@@ -62,8 +94,11 @@ export function normalizeActivityWatchEvent(bucketId: string, event: ActivityWat
   const isAfk = /afk|idle/.test(bucket) || category(data) === "idle";
   if (isAfk) return null;
   const sourceEventId = identifier(event.id);
-  const fingerprint = createHash("sha256").update(JSON.stringify([bucketId, sourceEventId ?? "", event.timestamp, durationSeconds, category(data), safeProjectLabel(data) ?? ""])).digest("hex").slice(0, 32);
-  return { id: `activitywatch_${fingerprint}`, source: "activitywatch", sourceEventId, observedAt: new Date(event.timestamp).toISOString(), localDate: event.timestamp.slice(0, 10), ...(durationSeconds === undefined ? {} : { durationSeconds }), semanticRole: durationSeconds && durationSeconds > 60 ? "task_continuation" : "observed_behavior", category: category(data), ...(safeProjectLabel(data) ? { projectLabel: safeProjectLabel(data) } : {}), privacyLevel: safeProjectLabel(data) ? "sensitive" : "normal", importedAt };
+  const categorized = category(data);
+  const projectLabel = safeProjectLabel(data);
+  const observedAt = new Date(event.timestamp).toISOString();
+  const sourceIdentity = activityWatchObservationIdentity(bucketId, sourceEventId, { timestamp: observedAt, durationSeconds, category: categorized, projectLabel });
+  return { id: `activitywatch_${sourceIdentity}`, source: "activitywatch", sourceBucketId: bucketId, sourceEventId, sourceIdentity, observedAt, localDate: localDateInTimeZone(observedAt, timezone), ...(durationSeconds === undefined ? {} : { durationSeconds }), semanticRole: durationSeconds && durationSeconds > 60 ? "task_continuation" : "observed_behavior", category: categorized, ...(projectLabel ? { projectLabel } : {}), privacyLevel: projectLabel ? "sensitive" : "normal", importedAt };
 }
 export function summarizeActivityWatchDaily(observations: ExternalObservation[]): ActivityWatchDailySummary[] {
   const byDate = new Map<string, ExternalObservation[]>();
@@ -103,5 +138,5 @@ export class ActivityWatchAdapter {
   async status(): Promise<{ running: boolean; baseUrl: string }> { try { await this.get("/api/0/info"); return { running: true, baseUrl: this.baseUrl }; } catch { return { running: false, baseUrl: this.baseUrl }; } }
   async buckets(): Promise<ActivityWatchBucket[]> { const value = await this.get<Record<string, ActivityWatchBucket>>("/api/0/buckets"); return Object.entries(value).map(([id, bucket]) => ({ ...bucket, id })); }
   async events(bucketId: string, startAt: string, endAt: string): Promise<ActivityWatchEvent[]> { const encoded = encodeURIComponent(bucketId); return this.get<ActivityWatchEvent[]>(`/api/0/buckets/${encoded}/events?starttime=${encodeURIComponent(startAt)}&endtime=${encodeURIComponent(endAt)}`); }
-  async preview(bucketIds: string[], startAt: string, endAt: string): Promise<ExternalObservation[]> { const all = (await Promise.all(bucketIds.map(async (bucketId) => (await this.events(bucketId, startAt, endAt)).map((event) => normalizeActivityWatchEvent(bucketId, event))))).flat(); return all.filter((item): item is ExternalObservation => Boolean(item)); }
+  async preview(bucketIds: string[], startAt: string, endAt: string, timezone = "UTC"): Promise<ExternalObservation[]> { const all = (await Promise.all(bucketIds.map(async (bucketId) => (await this.events(bucketId, startAt, endAt)).map((event) => normalizeActivityWatchEvent(bucketId, event, new Date().toISOString(), timezone))))).flat(); return all.filter((item): item is ExternalObservation => Boolean(item)); }
 }

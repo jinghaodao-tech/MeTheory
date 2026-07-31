@@ -8,6 +8,11 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT NOT NULL
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version TEXT PRIMARY KEY,
+  applied_at TEXT NOT NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS self_beliefs (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -284,6 +289,32 @@ CREATE TABLE IF NOT EXISTS self_model_candidates (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS self_model_candidates_user_idx ON self_model_candidates(user_id, created_at DESC);
 
+-- PCS V2 is an import boundary: the source application owns its records; this
+-- database keeps only validated snapshots and reviewable analysis metadata.
+CREATE TABLE IF NOT EXISTS pcs_profile_bindings (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  profile_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS pcs_analysis_runs (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  snapshot_id TEXT NOT NULL,
+  profile_id TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  contract_revision TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  candidates_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  UNIQUE(user_id, snapshot_id)
+) STRICT;
+CREATE INDEX IF NOT EXISTS pcs_analysis_runs_history_idx ON pcs_analysis_runs(user_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS pcs_experiment_drafts (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, run_id TEXT NOT NULL REFERENCES pcs_analysis_runs(id) ON DELETE CASCADE, candidate_id TEXT NOT NULL, title TEXT NOT NULL, plan_json TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','accepted','rejected')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL) STRICT;
+CREATE TABLE IF NOT EXISTS pcs_experiments (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, draft_id TEXT NOT NULL REFERENCES pcs_experiment_drafts(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'planned' CHECK(status IN ('planned','running','paused','completed','evaluated')), observations_json TEXT NOT NULL DEFAULT '[]', evaluation_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL) STRICT;
+CREATE INDEX IF NOT EXISTS pcs_experiments_user_idx ON pcs_experiments(user_id, updated_at DESC);
+CREATE TABLE IF NOT EXISTS pcs_candidate_reviews (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, run_id TEXT NOT NULL REFERENCES pcs_analysis_runs(id) ON DELETE CASCADE, candidate_id TEXT NOT NULL, rating TEXT NOT NULL CHECK(rating IN ('fits','does_not_fit','on_hold')), note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, UNIQUE(user_id,run_id,candidate_id)) STRICT;
+
 -- External observations are normalized before persistence. Raw ActivityWatch
 -- payloads are intentionally not stored, so this table remains safe to reuse
 -- in local analysis and can be rebuilt from the adapter when needed.
@@ -291,7 +322,9 @@ CREATE TABLE IF NOT EXISTS external_observations (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   source TEXT NOT NULL CHECK(source IN('activitywatch','manual_import','experiment')),
+  source_bucket_id TEXT,
   source_event_id TEXT,
+  source_identity TEXT,
   observed_at TEXT NOT NULL,
   local_date TEXT,
   duration_seconds REAL,
@@ -307,6 +340,7 @@ CREATE TABLE IF NOT EXISTS external_observations (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS external_observations_user_time_idx ON external_observations(user_id, observed_at);
 CREATE UNIQUE INDEX IF NOT EXISTS external_observations_fingerprint_idx ON external_observations(user_id, source, id);
+CREATE UNIQUE INDEX IF NOT EXISTS external_observations_source_identity_idx ON external_observations(user_id, source, source_identity) WHERE source_identity IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS baseline_self_perceptions (
   id TEXT PRIMARY KEY,

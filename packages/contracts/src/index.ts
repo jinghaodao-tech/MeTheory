@@ -26,3 +26,4 @@ export interface ResponseRequest {
 }
 export * from './ai.ts';
 export * from './mcp.ts';
+export * from './pcsAnalysisSnapshotV2.ts';

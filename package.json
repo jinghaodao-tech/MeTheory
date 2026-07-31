@@ -7,6 +7,7 @@
   ],
   "scripts": {
     "dev:api": "node --experimental-strip-types apps/api/src/server.ts",
+    "demo": "node apps/demo-web/server.mjs",
     "dev:mobile": "npm --workspace apps/mobile run start",
     "doctor:mobile": "cd apps/mobile && npx expo-doctor",
     "test:domain": "node --experimental-strip-types --test test/domain.test.ts",
@@ -26,6 +27,12 @@
     "test:self-understanding": "node --experimental-strip-types --test test/self-understanding.test.ts",
     "test:external-assets": "node --experimental-strip-types --test test/external-assets.test.ts",
     "test:search": "node --experimental-strip-types --test test/search-core.test.ts",
+    "test:pcs-analysis-v2": "node --experimental-strip-types --test test/pcs-analysis-v2.test.ts",
+    "test:pcs-e2e": "node --experimental-strip-types --test test/pcs-e2e.test.ts",
+    "test:pcs-client": "node --experimental-strip-types --test test/pcs-client.test.ts",
+    "test:pcs-live-stub": "node --experimental-strip-types --test test/pcs-live-stub.test.ts",
+    "test:pcs-migration": "node --experimental-strip-types --test test/pcs-migration.test.ts",
+    "test:pcs-experiment": "node --experimental-strip-types --test test/pcs-experiment-repository.test.ts",
     "test:review-bridge": "npm --prefix review-bridge test",
     "test:review-trigger": "npm --prefix review-trigger test",
     "test:ai-service": "node --experimental-strip-types --test test/ai-query-service.test.ts",
@@ -37,7 +44,7 @@
     "seed:synthetic": "node --experimental-strip-types tools/synthetic-scenarios.ts seed",
     "test:synthetic": "npm run seed:synthetic && node --experimental-strip-types tools/synthetic-scenarios.ts test",
     "reset:synthetic": "node --experimental-strip-types tools/synthetic-scenarios.ts reset",
-    "test": "npm run test:domain && npm run test:hypothesis && npm run test:candidates && npm run test:source-adapters && npm run test:completion && npm run test:benchmark && npm run test:ai-service && npm run test:api && npm run test:entries && npm run test:templates && npm run test:workspace && npm run test:ai-provider && npm run test:local-ai-runtime && npm run test:entry-extraction && npm run test:privacy && npm run test:self-understanding && npm run test:external-assets && npm run test:review-trigger && npm run test:review-bridge && npm run test:search",
+    "test": "npm run test:domain && npm run test:hypothesis && npm run test:candidates && npm run test:source-adapters && npm run test:completion && npm run test:benchmark && npm run test:ai-service && npm run test:api && npm run test:entries && npm run test:templates && npm run test:workspace && npm run test:ai-provider && npm run test:local-ai-runtime && npm run test:entry-extraction && npm run test:privacy && npm run test:self-understanding && npm run test:external-assets && npm run test:review-trigger && npm run test:review-bridge && npm run test:search && npm run test:pcs-analysis-v2 && npm run test:pcs-e2e && npm run test:pcs-client && npm run test:pcs-live-stub && npm run test:pcs-migration && npm run test:pcs-experiment",
     "test:mobile": "npm --workspace apps/mobile run test",
     "typecheck:root": "tsc --project tsconfig.json",
     "typecheck:mobile": "npm --workspace apps/mobile run typecheck",
@@ -50,6 +57,7 @@
     "check": "node --check apps/api/src/server.ts && node --check packages/domain/src/index.ts && node --check apps/obsidian-plugin/main.js && npm run check:openapi",
     "typecheck:cli": "tsc --project apps/cli/tsconfig.json",
     "verify": "npm run typecheck && npm run typecheck:cli && npm run typecheck:vscode && npm run build:obsidian && npm run build:cli && npm run build:vscode && npm run test && npm run test:mobile && npm run test:synthetic && npm run check"
+    ,"verify:ci": "npm run typecheck:root && npm test && npm run check:openapi"
   },
   "engines": {
     "node": ">=24.0.0"

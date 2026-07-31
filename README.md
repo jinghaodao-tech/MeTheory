@@ -5,6 +5,8 @@ form records, later structure selected information, and use the existing
 deterministic hypothesis system when a user wants to test a self-belief.
 
 The current product specification is [`docs/current-product-spec.md`](docs/current-product-spec.md).
+PCS Snapshot V2 integration, local analysis history, experiment APIs, and the
+local demo are documented in [`docs/pcs-analysis-v2.md`](docs/pcs-analysis-v2.md).
 For the practical self-understanding flow and its non-clinical analysis boundary,
 see [`docs/self-understanding-practical-v1.md`](docs/self-understanding-practical-v1.md).
 It is the source of truth for the Node.js, SQLite, VS Code/Cursor, CLI, and
@@ -81,6 +83,9 @@ Start the TypeScript MVP API:
 
 ```powershell
 npm.cmd run dev:api
+
+# In another terminal, run the PCS V2 local demo
+npm.cmd run demo
 ```
 
 The API listens on `http://127.0.0.1:8100`.
