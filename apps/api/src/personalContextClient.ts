@@ -22,6 +22,8 @@ export type PcsClientErrorCode =
   | "pcs_unauthorized"
   | "pcs_profile_forbidden"
   | "pcs_profile_mismatch"
+  | "pcs_url_invalid"
+  | "pcs_remote_endpoint_prohibited"
   | "pcs_snapshot_invalid"
   | "pcs_contract_revision_unsupported"
   | "pcs_timeout"
@@ -32,7 +34,7 @@ export class PcsClientError extends Error {
   readonly status?: number;
 
   constructor(code: PcsClientErrorCode, status?: number) {
-    super(code);
+    super(code === "pcs_remote_endpoint_prohibited" ? "pcs_localhost_required" : code);
     this.name = "PcsClientError";
     this.code = code;
     this.status = status;
@@ -40,8 +42,9 @@ export class PcsClientError extends Error {
 }
 
 function baseUrl(config: PcsClientConfig = {}): URL {
-  const url = new URL(config.baseUrl ?? process.env.PCS_API_URL ?? "http://127.0.0.1:8300");
-  if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) throw new Error("pcs_localhost_required");
+  let url: URL;
+  try { url = new URL(config.baseUrl ?? process.env.PCS_API_URL ?? "http://127.0.0.1:8300"); } catch { throw new PcsClientError("pcs_url_invalid"); }
+  if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) throw new PcsClientError("pcs_remote_endpoint_prohibited");
   return url;
 }
 
@@ -53,8 +56,8 @@ function mapError(status: number, error?: string): PcsClientErrorCode {
   if (status === 401) return "pcs_unauthorized";
   if (status === 403) return "pcs_profile_forbidden";
   if (status === 409 && error === "pcs_profile_mismatch") return "pcs_profile_mismatch";
-  if (status === 422 || error === "pcs_snapshot_invalid") return "pcs_snapshot_invalid";
   if (error === "pcs_contract_revision_unsupported") return "pcs_contract_revision_unsupported";
+  if (status === 422 || error === "pcs_snapshot_invalid") return "pcs_snapshot_invalid";
   return "pcs_unavailable";
 }
 

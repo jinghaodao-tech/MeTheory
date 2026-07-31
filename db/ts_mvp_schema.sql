@@ -512,6 +512,7 @@ CREATE TABLE IF NOT EXISTS experiment_observations (
   id TEXT PRIMARY KEY,
   experiment_id TEXT NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
   episode_id TEXT REFERENCES observation_episodes(id) ON DELETE SET NULL,
+  idempotency_key TEXT NOT NULL DEFAULT '',
   observed_at TEXT NOT NULL,
   group_key TEXT NOT NULL,
   outcome REAL NOT NULL,
@@ -523,6 +524,7 @@ CREATE TABLE IF NOT EXISTS experiment_observations (
   UNIQUE(experiment_id,episode_id)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS experiment_observations_lookup_idx ON experiment_observations(experiment_id,group_key,observed_at);
+CREATE UNIQUE INDEX IF NOT EXISTS experiment_observations_idempotency_idx ON experiment_observations(experiment_id,idempotency_key);
 CREATE TABLE IF NOT EXISTS experiment_adherence (
   id TEXT PRIMARY KEY,
   experiment_id TEXT NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,

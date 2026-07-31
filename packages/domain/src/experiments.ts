@@ -84,6 +84,7 @@ export type Experiment = {
 export type ExperimentObservation = {
   id: string;
   experimentId: string;
+  idempotencyKey?: string;
   episodeId?: string;
   observedAt: string;
   groupKey: string;

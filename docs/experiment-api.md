@@ -31,6 +31,10 @@ There is no endpoint that automatically updates Self Model. Invalid IDs,
 invalid state transitions, non-finite outcomes, unsupported sources, and
 cross-user access are rejected.
 
+`POST /v1/experiments/:id/responses` accepts an optional `idempotencyKey`.
+Retries with the same key return the originally stored observation and do not
+create a duplicate row. This is the client boundary for offline retry safety.
+
 ## Validation and audit rules
 
 All mutation routes require `userId`, verify the referenced record belongs to

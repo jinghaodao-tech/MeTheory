@@ -49,12 +49,25 @@ function hash(value: string) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, canonicalize(item)]));
+}
+
 export function pcsSnapshotContractHash() {
   return hash("pcs-analysis-snapshot-v2:contract-1");
 }
 
 export function pcsSourceFingerprint(snapshot: PcsAnalysisSnapshotV2) {
-  return hash(JSON.stringify([...snapshot.records].map((record) => ({ id: record.id, recordedAt: record.recordedAt, sourceDocumentId: record.sourceDocumentId })).sort((left, right) => left.id.localeCompare(right.id))));
+  return hash(JSON.stringify(canonicalize(snapshot)));
+}
+
+export class PcsSnapshotContentMismatchError extends Error {
+  constructor() {
+    super("snapshot_id_content_mismatch");
+    this.name = "PcsSnapshotContentMismatchError";
+  }
 }
 
 function resultSummaryFrom(result: PcsAnalysisResult): PcsAnalysisResultSummary {
@@ -103,6 +116,7 @@ export class SqlitePcsAnalysisRepository {
     const existing = this.getRunBySnapshot(userId, snapshot.snapshotId);
     const resultSummary = resultSummaryFrom(result);
     if (existing) {
+      if (existing.sourceFingerprint !== pcsSourceFingerprint(snapshot)) throw new PcsSnapshotContentMismatchError();
       if (!existing.resultSummary || !Array.isArray(existing.resultSummary.candidates)) {
         this.db.prepare("UPDATE pcs_analysis_runs SET result_summary_json=? WHERE user_id=? AND id=?").run(JSON.stringify(resultSummary), userId, existing.id);
         existing.resultSummary = resultSummary;

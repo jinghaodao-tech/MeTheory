@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS experiment_conditions (experiment_id TEXT NOT NULL,pa
 CREATE TABLE IF NOT EXISTS experiment_required_parameters (experiment_id TEXT NOT NULL,parameter_id TEXT NOT NULL,minimum_samples INTEGER NOT NULL DEFAULT 1,askable INTEGER NOT NULL DEFAULT 1,priority INTEGER NOT NULL DEFAULT 100,PRIMARY KEY(experiment_id,parameter_id));
 CREATE TABLE IF NOT EXISTS experiment_schedules (experiment_id TEXT PRIMARY KEY,schedule_json TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS experiment_stop_conditions (id TEXT PRIMARY KEY,experiment_id TEXT NOT NULL,kind TEXT NOT NULL,description TEXT NOT NULL,threshold REAL);
-CREATE TABLE IF NOT EXISTS experiment_observations (id TEXT PRIMARY KEY,experiment_id TEXT NOT NULL,episode_id TEXT,observed_at TEXT NOT NULL,group_key TEXT NOT NULL,outcome REAL NOT NULL,condition_values_json TEXT NOT NULL DEFAULT '{}',source TEXT NOT NULL CHECK(source IN('checkin','manual','import')),eligible INTEGER NOT NULL DEFAULT 1,note TEXT,created_at TEXT NOT NULL,UNIQUE(experiment_id,episode_id));
+CREATE TABLE IF NOT EXISTS experiment_observations (id TEXT PRIMARY KEY,experiment_id TEXT NOT NULL,episode_id TEXT,idempotency_key TEXT NOT NULL DEFAULT '',observed_at TEXT NOT NULL,group_key TEXT NOT NULL,outcome REAL NOT NULL,condition_values_json TEXT NOT NULL DEFAULT '{}',source TEXT NOT NULL CHECK(source IN('checkin','manual','import')),eligible INTEGER NOT NULL DEFAULT 1,note TEXT,created_at TEXT NOT NULL,UNIQUE(experiment_id,episode_id));
 CREATE TABLE IF NOT EXISTS experiment_adherence (id TEXT PRIMARY KEY,experiment_id TEXT NOT NULL,observation_id TEXT,attempted INTEGER NOT NULL,completed INTEGER NOT NULL,reason TEXT,burden_minutes REAL,created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS experiment_evaluations (id TEXT PRIMARY KEY,experiment_id TEXT NOT NULL,evaluation_json TEXT NOT NULL,status TEXT NOT NULL,evaluated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS experiment_hypothesis_links (experiment_id TEXT NOT NULL,hypothesis_id TEXT NOT NULL,relation TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(experiment_id,hypothesis_id,relation));
@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS self_model_reviews (id TEXT PRIMARY KEY,user_id TEXT 
 
 CREATE INDEX IF NOT EXISTS experiments_user_status_idx ON experiments(user_id,status,created_at DESC);
 CREATE INDEX IF NOT EXISTS experiment_observations_lookup_idx ON experiment_observations(experiment_id,group_key,observed_at);
+CREATE UNIQUE INDEX IF NOT EXISTS experiment_observations_idempotency_idx ON experiment_observations(experiment_id,idempotency_key);
 CREATE INDEX IF NOT EXISTS experiment_evaluations_lookup_idx ON experiment_evaluations(experiment_id,evaluated_at DESC);
 CREATE INDEX IF NOT EXISTS data_collection_plans_user_idx ON data_collection_plans(user_id,status,updated_at DESC);
 CREATE INDEX IF NOT EXISTS hypothesis_timelines_lookup_idx ON hypothesis_timelines(user_id,hypothesis_id,created_at);

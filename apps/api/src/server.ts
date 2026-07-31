@@ -8,7 +8,7 @@ import { evaluateHypothesis } from "../../../packages/domain/src/hypothesis/eval
 import { validateHypothesisSpec } from "../../../packages/domain/src/hypothesis/spec.ts";
 import { createAiQueryService } from "./aiQueryService.ts";
 import { SqliteSelfUnderstandingRepository } from "./selfUnderstandingRepository.ts";
-import { loadPersonalContextSnapshot, requestPersonalContextTemplate } from "./personalContextClient.ts";
+import { loadPersonalContextSnapshot, requestPersonalContextTemplate, PcsIntegrationClient } from "./personalContextClient.ts";
 import { SqliteExperimentRepository } from "./experimentRepository.ts";
 import { migrateDatabase } from "./db/migrate.ts";
 import { reviewReasonAction, type CandidateForExperiment, type ExperimentDraft, type ExperimentStatus } from "../../../packages/domain/src/experiments.ts";
@@ -19,6 +19,9 @@ import {
   IPIP_BASELINE_ITEM_SET_VERSION
 } from "../../../packages/self-understanding/src/index.ts";
 import { ActivityWatchAdapter, activityWatchObservationIdentity, summarizeActivityWatchDaily } from "../../../packages/domain/src/activitywatch.ts";
+import { PcsSnapshotContentMismatchError, SqlitePcsAnalysisRepository } from "./pcsAnalysisRepository.ts";
+import { analyzePcsAnalysisSnapshot } from "../../../packages/self-understanding/src/pcsSnapshotAnalysis.ts";
+import { assertValidPcsAnalysisSnapshotV2 } from "../../../packages/contracts/src/pcsAnalysisSnapshotV2.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.METHEORY_DB ?? resolve(root, "data", "metheory.sqlite3");
@@ -27,6 +30,7 @@ migrateDatabase(db, root);
 const aiQueryService = createAiQueryService(db);
 const selfUnderstandingRepository = new SqliteSelfUnderstandingRepository(db);
 const experimentRepository = new SqliteExperimentRepository(db);
+const pcsAnalysisRepository = new SqlitePcsAnalysisRepository(db);
 
 type LegacyActivityWatchObservation = {
   id: string;
@@ -353,7 +357,9 @@ function optionalString(value: unknown): string | undefined {
 }
 
 function pathParts(request: IncomingMessage): string[] {
-  return new URL(request.url ?? "/", "http://localhost").pathname.split("/").filter(Boolean);
+  return new URL(request.url ?? "/", "http://localhost").pathname.split("/").filter(Boolean).map((part) => {
+    try { return decodeURIComponent(part); } catch { return part; }
+  });
 }
 
 function userExists(userId: string): boolean {
@@ -516,6 +522,31 @@ const server = createServer(async (request, response) => {
       if (request.method === "DELETE" && parts.length === 3) { const input = await body(request); templateRepository.archive(String(input.userId ?? requestUrl.searchParams.get("userId") ?? ""), parts[2]); return json(response, 200, { archived: true }); }
     }
     */
+    if (parts.join("/") === "v1/pcs/profile-binding") {
+      if (request.method === "GET") {
+        const userId = requestUrl.searchParams.get("userId") ?? "";
+        if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+        return json(response, 200, { binding: pcsAnalysisRepository.getBinding(userId) ?? null });
+      }
+      const input = await body(request);
+      const userId = optionalString(input.userId) ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (request.method === "DELETE") return json(response, 200, { removed: pcsAnalysisRepository.remove(userId) });
+      const profileId = optionalString(input.profileId) ?? "";
+      if (!profileId) return json(response, 400, { error: "pcs_profile_id_required" });
+      if (request.method === "POST") return json(response, 200, { binding: pcsAnalysisRepository.bind(userId, profileId) });
+    }
+    if (request.method === "GET" && parts.join("/") === "v1/pcs/analysis-runs") {
+      const userId = requestUrl.searchParams.get("userId") ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      return json(response, 200, { items: pcsAnalysisRepository.listRuns(userId) });
+    }
+    if (request.method === "GET" && parts.length === 4 && parts[0] === "v1" && parts[1] === "pcs" && parts[2] === "analysis-runs") {
+      const userId = requestUrl.searchParams.get("userId") ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      const run = pcsAnalysisRepository.getRun(userId, parts[3]);
+      return run ? json(response, 200, { run }) : json(response, 404, { error: "pcs_analysis_run_not_found" });
+    }
     if (parts[0] === "v1" && parts[1] === "ai" && request.method === "GET") {
       const userId = aiUserId(request, requestUrl); const clientId = requestUrl.searchParams.get("clientId") ?? String(request.headers["x-metheory-client-id"] ?? ""); const clientType = requestUrl.searchParams.get("clientType") ?? String(request.headers["x-metheory-client-type"] ?? "other"); const purpose = requestUrl.searchParams.get("purpose") ?? "read_only_ai";
       if (!userExists(userId)) return json(response, 404, { error: "user_not_found" }); if (!aiAuthenticatedUser(request, userId)) return json(response, 401, { error: "authenticated_user_required" }); if (!aiClientAllowed(clientId, clientType)) return json(response, 403, { error: "ai_client_not_allowed" }); if (!aiPurposeAllowed(purpose)) return json(response, 403, { error: "ai_purpose_not_allowed" });
@@ -623,8 +654,22 @@ const server = createServer(async (request, response) => {
       const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
       const endAt = optionalString(input.endAt) ?? now(); const startAt = optionalString(input.startAt) ?? new Date(Date.parse(endAt) - 28 * 86400000).toISOString();
       if (Number.isNaN(Date.parse(startAt)) || Number.isNaN(Date.parse(endAt)) || Date.parse(startAt) >= Date.parse(endAt)) return json(response, 400, { error: "analysis_period_invalid" });
-      const snapshot = await loadPersonalContextSnapshot({ startAt, endAt });
-      return json(response, 200, selfUnderstandingRepository.analyze(userId, snapshot, { startAt, endAt, minimumEntryCount: Number(input.minimumEntryCount ?? 8) }));
+      const profileId = optionalString(input.profileId) ?? pcsAnalysisRepository.getBinding(userId)?.pcsProfileId;
+      if (!profileId) return json(response, 409, { error: "pcs_profile_binding_required" });
+      const binding = pcsAnalysisRepository.getBinding(userId);
+      if (binding && binding.pcsProfileId !== profileId) return json(response, 409, { error: "pcs_profile_mismatch" });
+      const snapshot = assertValidPcsAnalysisSnapshotV2(await new PcsIntegrationClient({
+        baseUrl: process.env.PCS_API_URL,
+        clientId: process.env.PCS_CLIENT_ID,
+        token: process.env.PCS_CLIENT_TOKEN,
+        profileId,
+      }).getAnalysisSnapshot({ profileId, from: startAt, to: endAt, timezone: optionalString(input.timezone) ?? process.env.PCS_TIMEZONE ?? "UTC" }));
+      const result = analyzePcsAnalysisSnapshot(snapshot, { minimumTotalSamples: Number(input.minimumEntryCount ?? 8) });
+      let run;
+      try { run = pcsAnalysisRepository.saveRun(userId, snapshot, result); }
+      catch (error) { if (error instanceof PcsSnapshotContentMismatchError) return json(response, 409, { error: "snapshot_id_content_mismatch" }); throw error; }
+      selfUnderstandingRepository.savePcsResult(userId, result);
+      return json(response, 200, { ...result, analysisRunId: run.id, snapshotId: snapshot.snapshotId });
     }
     if (request.method === "POST" && parts.join("/") === "v1/experiments/personal-context-template-requests") {
       const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
@@ -962,7 +1007,7 @@ const server = createServer(async (request, response) => {
         }
         if (request.method === "GET" && parts.length === 4 && parts[3] === "evaluations") return json(response, 200, { evaluation: experimentRepository.latestEvaluation(userId, parts[2]) ?? null });
         if (request.method === "POST" && parts.length === 4 && parts[3] === "responses") {
-          const observation = { id: optionalString(input.id) ?? id("experiment_observation"), episodeId: optionalString(input.episodeId), observedAt: optionalString(input.observedAt) ?? now(), groupKey: optionalString(input.groupKey) ?? "unknown", outcome: Number(input.outcome), conditionValues: input.conditionValues && typeof input.conditionValues === "object" ? input.conditionValues as Record<string, unknown> : {}, source: (optionalString(input.source) ?? "checkin") as "checkin" | "manual" | "import", eligible: input.eligible !== false, note: optionalString(input.note) };
+          const observation = { id: optionalString(input.id) ?? id("experiment_observation"), idempotencyKey: optionalString(input.idempotencyKey) ?? optionalString(input.id) ?? id("experiment_observation_key"), episodeId: optionalString(input.episodeId), observedAt: optionalString(input.observedAt) ?? now(), groupKey: optionalString(input.groupKey) ?? "unknown", outcome: Number(input.outcome), conditionValues: input.conditionValues && typeof input.conditionValues === "object" ? input.conditionValues as Record<string, unknown> : {}, source: (optionalString(input.source) ?? "checkin") as "checkin" | "manual" | "import", eligible: input.eligible !== false, note: optionalString(input.note) };
           if (!Number.isFinite(observation.outcome) || !["checkin", "manual", "import"].includes(observation.source)) return json(response, 400, { error: "experiment_observation_invalid" });
           return json(response, 201, { observation: experimentRepository.addObservationForExperiment(userId, parts[2], observation) });
         }

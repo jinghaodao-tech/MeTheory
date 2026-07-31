@@ -137,14 +137,17 @@ export class SqliteExperimentRepository {
     const experiment = this.get(userId, experimentId);
     if (!experiment) throw new Error("experiment_not_found");
     if (!["active", "paused"].includes(experiment.status)) throw new Error("experiment_not_active");
-    this.db.prepare("INSERT OR IGNORE INTO experiment_observations(id,experiment_id,episode_id,observed_at,group_key,outcome,condition_values_json,source,eligible,note,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(observation.id, experimentId, observation.episodeId ?? null, observation.observedAt, observation.groupKey, observation.outcome, json(observation.conditionValues ?? {}), observation.source, observation.eligible ? 1 : 0, observation.note ?? null, new Date().toISOString());
-    return { ...observation, experimentId };
+    const idempotencyKey = observation.idempotencyKey ?? observation.id;
+    this.db.prepare("INSERT OR IGNORE INTO experiment_observations(id,experiment_id,episode_id,idempotency_key,observed_at,group_key,outcome,condition_values_json,source,eligible,note,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(observation.id, experimentId, observation.episodeId ?? null, idempotencyKey, observation.observedAt, observation.groupKey, observation.outcome, json(observation.conditionValues ?? {}), observation.source, observation.eligible ? 1 : 0, observation.note ?? null, new Date().toISOString());
+    const stored = this.db.prepare("SELECT * FROM experiment_observations WHERE experiment_id=? AND idempotency_key=?").get(experimentId, idempotencyKey) as Row | undefined;
+    if (!stored) throw new Error("experiment_observation_save_failed");
+    return { id: String(stored.id), experimentId, idempotencyKey, episodeId: typeof stored.episode_id === "string" ? stored.episode_id : undefined, observedAt: String(stored.observed_at), groupKey: String(stored.group_key), outcome: Number(stored.outcome), conditionValues: parse(stored.condition_values_json, {}), source: String(stored.source) as ExperimentObservation["source"], eligible: Number(stored.eligible) === 1, note: typeof stored.note === "string" ? stored.note : undefined };
   }
 
   observations(userId: string, experimentId: string): ExperimentObservation[] {
     if (!this.get(userId, experimentId)) throw new Error("experiment_not_found");
     const rows = this.db.prepare("SELECT * FROM experiment_observations WHERE experiment_id=? ORDER BY observed_at,id").all(experimentId) as Row[];
-    return rows.map((row) => ({ id: String(row.id), experimentId: String(row.experiment_id), episodeId: typeof row.episode_id === "string" ? row.episode_id : undefined, observedAt: String(row.observed_at), groupKey: String(row.group_key), outcome: Number(row.outcome), conditionValues: parse(row.condition_values_json, {}), source: String(row.source) as ExperimentObservation["source"], eligible: Number(row.eligible) === 1, note: typeof row.note === "string" ? row.note : undefined }));
+    return rows.map((row) => ({ id: String(row.id), experimentId: String(row.experiment_id), idempotencyKey: String(row.idempotency_key ?? row.id), episodeId: typeof row.episode_id === "string" ? row.episode_id : undefined, observedAt: String(row.observed_at), groupKey: String(row.group_key), outcome: Number(row.outcome), conditionValues: parse(row.condition_values_json, {}), source: String(row.source) as ExperimentObservation["source"], eligible: Number(row.eligible) === 1, note: typeof row.note === "string" ? row.note : undefined }));
   }
 
   evaluate(userId: string, experimentId: string, evaluatedAt?: string): ExperimentEvaluation {

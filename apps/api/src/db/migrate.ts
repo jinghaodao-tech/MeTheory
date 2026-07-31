@@ -130,6 +130,15 @@ export function migrateDatabase(db: DatabaseSync, root: string) {
       apply: () => {
         db.exec(readFileSync(resolve(root, "db", "closed-loop-experiments-migration.sql"), "utf8"));
       }
+    },
+    {
+      id: "experiment-observation-idempotency-v1",
+      apply: () => {
+        const columns = db.prepare("PRAGMA table_info(experiment_observations)").all() as Array<{ name: string }>;
+        if (!columns.some((item) => item.name === "idempotency_key")) db.exec("ALTER TABLE experiment_observations ADD COLUMN idempotency_key TEXT NOT NULL DEFAULT ''");
+        db.exec("UPDATE experiment_observations SET idempotency_key=id WHERE idempotency_key='' OR idempotency_key IS NULL");
+        db.exec("CREATE UNIQUE INDEX IF NOT EXISTS experiment_observations_idempotency_idx ON experiment_observations(experiment_id,idempotency_key)");
+      }
     }
   ];
   for (const migration of migrations) {

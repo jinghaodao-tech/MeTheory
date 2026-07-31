@@ -29,9 +29,12 @@ test("experiment repository preserves user isolation and evaluates a closed loop
     assert.equal(experiment.status, "ready");
     repository.transition("user-a", experiment.id, "active");
     for (let index = 0; index < 4; index += 1) {
-      repository.addObservationForExperiment("user-a", experiment.id, { id: `obs-a-${index}`, observedAt: `2026-07-${10 + index}T09:00:00.000Z`, groupKey: "evening", outcome: 1, source: "checkin", eligible: true });
+      repository.addObservationForExperiment("user-a", experiment.id, { id: `obs-a-${index}`, idempotencyKey: `event-a-${index}`, observedAt: `2026-07-${10 + index}T09:00:00.000Z`, groupKey: "evening", outcome: 1, source: "checkin", eligible: true });
       repository.addObservationForExperiment("user-a", experiment.id, { id: `obs-b-${index}`, observedAt: `2026-07-${10 + index}T10:00:00.000Z`, groupKey: "morning", outcome: 0, source: "checkin", eligible: true });
     }
+    const duplicate = repository.addObservationForExperiment("user-a", experiment.id, { id: "different-id", idempotencyKey: "event-a-0", observedAt: "2026-07-10T09:00:00.000Z", groupKey: "evening", outcome: 99, source: "checkin", eligible: true });
+    assert.equal(duplicate.id, "obs-a-0");
+    assert.equal(repository.observations("user-a", experiment.id).length, 8);
     repository.transition("user-a", experiment.id, "completed");
     const evaluation = repository.evaluate("user-a", experiment.id);
     assert.equal(evaluation.status, "supported");

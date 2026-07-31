@@ -36,10 +36,12 @@
                     "build:cli":  "tsc --project apps/cli/tsconfig.json",
                     "check":  "node --check apps/api/src/server.ts \u0026\u0026 node --check packages/domain/src/index.ts \u0026\u0026 npm run check:openapi \u0026\u0026 npm run check:encoding",
                     "typecheck:cli":  "tsc --project apps/cli/tsconfig.json",
+                    "verify:ci":  "npm ci \u0026\u0026 npm run verify",
                     "verify":  "npm run typecheck \u0026\u0026 npm run typecheck:cli \u0026\u0026 npm run build:cli \u0026\u0026 npm run test \u0026\u0026 npm run test:mobile \u0026\u0026 npm run test:synthetic \u0026\u0026 npm run check",
                     "test:pcs-client":  "node --experimental-strip-types --test test/pcs-client.test.ts",
                     "test:pcs-cross-repository":  "node --experimental-strip-types --test test/pcs-cross-repository.test.ts",
                     "test:pcs-snapshot":  "node --experimental-strip-types --test test/pcs-snapshot.test.ts",
+                    "test:e2e:closed-loop":  "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/closed-loop-e2e.ps1",
                     "test:demo-web":  "node --test test/demo-web.test.mjs",
                     "test:experiments":  "node --experimental-strip-types --test test/experiments.test.ts test/experiments-api.test.ts test/closed-loop-synthetic.test.ts"
                 },

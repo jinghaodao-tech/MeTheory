@@ -23,6 +23,13 @@ The primary snapshot contract is `pcs-analysis-snapshot-v2` with revision
 the primary analysis flow. The contract is an HTTP boundary, not a shared
 SQLite schema or a database copy.
 
+## Persisted analysis boundary
+
+MeTheory exposes `POST/GET/DELETE /v1/pcs/profile-binding` for an explicit
+user-to-PCS-profile binding and persists each analyzed snapshot as a
+provenance-bearing analysis run. The same `snapshotId` is reused idempotently;
+a different bound profile is rejected before analysis.
+
 ## Experiments
 
 MeTheory creates short experiments directly when a few check-ins and values are
@@ -84,3 +91,13 @@ The client refuses non-local URLs, requires all three credentials for snapshot
 access, sends `profileId`, `from`, `to`, and `timezone`, and maps authorization,
 profile, validation, timeout, and unavailable failures to stable `pcs_*` error
 codes.
+
+## Live cross-repository verification
+
+Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+scripts/closed-loop-e2e.ps1` from the MeTheory repository to start temporary PCS
+and MeTheory API processes and temporary SQLite databases. The flow exercises
+profile binding, the official snapshot endpoint, analysis-run idempotency,
+candidate review, experiment collection and evaluation, and explicit Self Model
+approval. A repeated `snapshotId` with different canonical content is rejected
+with `409 snapshot_id_content_mismatch`.
