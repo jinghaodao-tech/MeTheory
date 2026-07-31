@@ -1,4 +1,5 @@
 export const PCS_ANALYSIS_SNAPSHOT_V2 = "pcs-analysis-snapshot-v2" as const;
+export const PCS_ANALYSIS_CONTRACT_REVISION = "pcs-analysis-snapshot-v2.1" as const;
 
 export type PcsAnalysisValueType =
   | "boolean"
@@ -14,6 +15,7 @@ export type PcsAnalysisPrivacyLevel = "normal" | "sensitive";
 
 export type PcsAnalysisSnapshotV2 = {
   schemaVersion: typeof PCS_ANALYSIS_SNAPSHOT_V2;
+  contractRevision?: typeof PCS_ANALYSIS_CONTRACT_REVISION;
   snapshotId: string;
   profileId: string;
   generatedAt: string;
@@ -66,7 +68,7 @@ export type PcsSnapshotValidationResult =
   | { ok: true; value: PcsAnalysisSnapshotV2 }
   | { ok: false; errors: PcsSnapshotValidationIssue[] };
 
-const topKeys = new Set(["schemaVersion", "snapshotId", "profileId", "generatedAt", "period", "records", "excluded"]);
+const topKeys = new Set(["schemaVersion", "contractRevision", "snapshotId", "profileId", "generatedAt", "period", "records", "excluded"]);
 const periodKeys = new Set(["startAt", "endAt", "timezone"]);
 const recordKeys = new Set(["id", "recordedAt", "title", "sourceDocumentId", "values"]);
 const valueKeys = new Set(["fieldKey", "label", "valueType", "value", "templateId", "templateVersionId", "analysisRole", "analysisRoleConfirmed", "analysisUsage", "analysisMergeAllowed", "scaleFingerprint", "unit", "minimum", "maximum", "allowedValues", "provenance"]);
@@ -148,6 +150,7 @@ export function validatePcsAnalysisSnapshotV2(input: unknown): PcsSnapshotValida
   if (!isRecord(input)) return { ok: false, errors: [{ path: "", code: "object_required" }] };
   keysOnly(input, topKeys, "", errors);
   if (input.schemaVersion !== PCS_ANALYSIS_SNAPSHOT_V2) errors.push({ path: "schemaVersion", code: "contract_version_unsupported" });
+  if (input.contractRevision !== undefined && input.contractRevision !== PCS_ANALYSIS_CONTRACT_REVISION) errors.push({ path: "contractRevision", code: "contract_revision_unsupported" });
   for (const key of ["snapshotId", "profileId"] as const) if (!nonEmptyString(input[key])) errors.push({ path: key, code: "non_empty_string_required" });
   if (!timestamp(input.generatedAt)) errors.push({ path: "generatedAt", code: "timestamp_invalid" });
   if (!isRecord(input.period)) errors.push({ path: "period", code: "period_required" });

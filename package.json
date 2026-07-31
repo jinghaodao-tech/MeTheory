@@ -28,7 +28,7 @@
                     "seed:synthetic":  "node --experimental-strip-types tools/synthetic-scenarios.ts seed",
                     "test:synthetic":  "npm run seed:synthetic \u0026\u0026 node --experimental-strip-types tools/synthetic-scenarios.ts test",
                     "reset:synthetic":  "node --experimental-strip-types tools/synthetic-scenarios.ts reset",
-                    "test":  "npm run test:domain \u0026\u0026 npm run test:hypothesis \u0026\u0026 npm run test:candidates \u0026\u0026 npm run test:source-adapters \u0026\u0026 npm run test:completion \u0026\u0026 npm run test:benchmark \u0026\u0026 npm run test:ai-service \u0026\u0026 npm run test:api \u0026\u0026 npm run test:self-understanding \u0026\u0026 npm run test:pcs-snapshot \u0026\u0026 npm run test:demo-web \u0026\u0026 npm run test:experiments \u0026\u0026 npm run test:external-assets",
+                    "test":  "npm run test:domain \u0026\u0026 npm run test:hypothesis \u0026\u0026 npm run test:candidates \u0026\u0026 npm run test:source-adapters \u0026\u0026 npm run test:completion \u0026\u0026 npm run test:benchmark \u0026\u0026 npm run test:ai-service \u0026\u0026 npm run test:api \u0026\u0026 npm run test:self-understanding \u0026\u0026 npm run test:pcs-client \u0026\u0026 npm run test:pcs-cross-repository \u0026\u0026 npm run test:pcs-snapshot \u0026\u0026 npm run test:demo-web \u0026\u0026 npm run test:experiments \u0026\u0026 npm run test:external-assets",
                     "test:mobile":  "npm --workspace apps/mobile run test",
                     "typecheck:root":  "tsc --project tsconfig.json",
                     "typecheck:mobile":  "npm --workspace apps/mobile run typecheck",
@@ -37,6 +37,8 @@
                     "check":  "node --check apps/api/src/server.ts \u0026\u0026 node --check packages/domain/src/index.ts \u0026\u0026 npm run check:openapi \u0026\u0026 npm run check:encoding",
                     "typecheck:cli":  "tsc --project apps/cli/tsconfig.json",
                     "verify":  "npm run typecheck \u0026\u0026 npm run typecheck:cli \u0026\u0026 npm run build:cli \u0026\u0026 npm run test \u0026\u0026 npm run test:mobile \u0026\u0026 npm run test:synthetic \u0026\u0026 npm run check",
+                    "test:pcs-client":  "node --experimental-strip-types --test test/pcs-client.test.ts",
+                    "test:pcs-cross-repository":  "node --experimental-strip-types --test test/pcs-cross-repository.test.ts",
                     "test:pcs-snapshot":  "node --experimental-strip-types --test test/pcs-snapshot.test.ts",
                     "test:demo-web":  "node --test test/demo-web.test.mjs",
                     "test:experiments":  "node --experimental-strip-types --test test/experiments.test.ts test/experiments-api.test.ts test/closed-loop-synthetic.test.ts"

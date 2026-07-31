@@ -73,9 +73,10 @@ deterministic; and the result is retained as a hypothesis timeline event.
 Self Model freshness is a review queue, not an automatic update.
 
 Experiment questions and collection plans are local and deterministic. A plan
-may contain a generic pending PCS template request, but MeTheory does not call a
-PCS-specific endpoint, activate a template, write a confirmed PCS value, or
-copy Markdown bodies into its database.
+may contain a generic pending PCS template request. MeTheory uses the official
+localhost PCS Integration API client for the profile-scoped analysis snapshot,
+but does not activate a template, write a confirmed PCS value, or copy
+Markdown bodies into its database.
 ## Portfolio primary flow
 
 The reproducible portfolio flow is:
