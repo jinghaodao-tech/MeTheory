@@ -1,0 +1,4 @@
+import { createServer, type Server } from "node:http";
+import type { PcsAnalysisSnapshotV2 } from "../../../packages/contracts/src/pcsAnalysisSnapshotV2.ts";
+export type PcsStubMode = "ok" | "unauthorized" | "forbidden" | "invalid_snapshot" | "unavailable";
+export function createPcsStubServer(snapshot: PcsAnalysisSnapshotV2, mode: PcsStubMode = "ok"): Server { return createServer((request, response) => { if (mode === "unavailable") { request.socket.destroy(); return; } if (!request.url?.startsWith("/v1/metheory/analysis-snapshot?") || request.method !== "GET") { response.writeHead(404).end(); return; } if (mode === "unauthorized") { response.writeHead(401).end(); return; } if (mode === "forbidden") { response.writeHead(403).end(); return; } response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(mode === "invalid_snapshot" ? {} : snapshot)); }); }

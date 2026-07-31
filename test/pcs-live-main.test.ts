@@ -1,0 +1,9 @@
+import assert from "node:assert/strict";
+import { once } from "node:events";
+import { test } from "node:test";
+import { createPcsStubServer, type PcsStubMode } from "../apps/api/src/pcsStubServer.ts";
+import { fetchLiveSnapshot, PcsClientError } from "../apps/api/src/pcsClient.ts";
+import type { PcsAnalysisSnapshotV2 } from "../packages/contracts/src/pcsAnalysisSnapshotV2.ts";
+const snapshot: PcsAnalysisSnapshotV2 = { schemaVersion: "pcs-analysis-snapshot-v2", snapshotId: "main-stub", profileId: "p", generatedAt: "2026-07-01T00:00:00.000Z", period: { startAt: "2026-07-01T00:00:00.000Z", endAt: "2026-07-02T00:00:00.000Z", timezone: "UTC" }, records: [], excluded: { unconfirmed: 0, nonShareable: 0, highlySensitive: 0, invalid: 0 } };
+async function run(mode: PcsStubMode, action: () => Promise<void>) { const server = createPcsStubServer(snapshot, mode); server.listen(0, "127.0.0.1"); await once(server, "listening"); const address = server.address(); process.env.PCS_API_URL = `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}`; try { await action(); } finally { server.close(); } }
+test("main PCS live client enforces localhost and error contract", async () => { await run("ok", async () => assert.equal((await fetchLiveSnapshot({ profileId: "p", from: snapshot.period.startAt, to: snapshot.period.endAt, timezone: "UTC" })).snapshotId, "main-stub")); for (const [mode, code] of [["unauthorized", "pcs_unauthorized"], ["forbidden", "pcs_profile_forbidden"], ["invalid_snapshot", "pcs_snapshot_invalid"], ["unavailable", "pcs_unavailable"]] as const) await run(mode, async () => assert.rejects(fetchLiveSnapshot({ profileId: "p", from: snapshot.period.startAt, to: snapshot.period.endAt, timezone: "UTC" }), (error: unknown) => error instanceof PcsClientError && error.code === code)); });

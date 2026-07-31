@@ -146,3 +146,8 @@ export function migrateDatabase(db: DatabaseSync, root: string) {
     }
   }
 }
+
+/** Roll back only the migration marker; data/schema deletion remains explicit and destructive. */
+export function rollbackMigrationMarker(db: DatabaseSync, id: string): void {
+  db.prepare("DELETE FROM schema_migrations WHERE id=?").run(id);
+}

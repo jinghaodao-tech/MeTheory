@@ -38,6 +38,7 @@
                     "typecheck:cli":  "tsc --project apps/cli/tsconfig.json",
                     "verify":  "npm run typecheck \u0026\u0026 npm run typecheck:cli \u0026\u0026 npm run build:cli \u0026\u0026 npm run test \u0026\u0026 npm run test:mobile \u0026\u0026 npm run test:synthetic \u0026\u0026 npm run check",
                     "test:pcs-snapshot":  "node --experimental-strip-types --test test/pcs-snapshot.test.ts",
+                    "test:pcs-live-main": "node --experimental-strip-types --test test/pcs-live-main.test.ts",
                     "test:demo-web":  "node --test test/demo-web.test.mjs",
                     "test:experiments":  "node --experimental-strip-types --test test/experiments.test.ts test/experiments-api.test.ts test/closed-loop-synthetic.test.ts"
                 },
