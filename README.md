@@ -293,3 +293,24 @@ compatible semantic merge. See
 
 From the workspace CLI, use
 `self-understanding analyze --from=2026-07-01T00:00:00.000Z --to=2026-07-28T00:00:00.000Z`.
+
+## Analysis integrity rules
+
+`analysisMergeAllowed=false` keeps a field analyzable under an isolated
+`isolated:<template>:<version>:<field>` parameter identity. Mergeable fields
+use a semantic identity only when role, usage, type, scale, range, unit,
+choice semantics, and privacy level are compatible. Numeric cohorts use
+`value < midpoint` and `value >= midpoint`; a single-choice outcome is never
+interpreted as success without `positiveValueKeys`, `orderedValueKeys`, or
+`numericMapping` metadata.
+
+Experiment observations are restricted to the draft's two groups, reject
+paused experiments, validate timestamps and payload size, and return `409`
+for an idempotency-key content conflict. A Self Model `propose_update` review
+updates an explicitly selected belief and writes an append-only revision;
+`create_new` and `keep_separate` do not mutate an existing belief.
+
+The real cross-repository check is `npm run test:pcs-live-e2e` with
+`PCS_REPO_PATH` set to a checked-out Personal Context Studio repository. The
+GitHub workflow checks out both repositories, installs each with `npm ci`,
+then runs MeTheory verification and this live snapshot test.

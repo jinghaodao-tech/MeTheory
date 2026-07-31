@@ -32,14 +32,32 @@ test("experiment repository preserves user isolation and evaluates a closed loop
       repository.addObservationForExperiment("user-a", experiment.id, { id: `obs-a-${index}`, idempotencyKey: `event-a-${index}`, observedAt: `2026-07-${10 + index}T09:00:00.000Z`, groupKey: "evening", outcome: 1, source: "checkin", eligible: true });
       repository.addObservationForExperiment("user-a", experiment.id, { id: `obs-b-${index}`, observedAt: `2026-07-${10 + index}T10:00:00.000Z`, groupKey: "morning", outcome: 0, source: "checkin", eligible: true });
     }
-    const duplicate = repository.addObservationForExperiment("user-a", experiment.id, { id: "different-id", idempotencyKey: "event-a-0", observedAt: "2026-07-10T09:00:00.000Z", groupKey: "evening", outcome: 99, source: "checkin", eligible: true });
+    const duplicate = repository.addObservationForExperiment("user-a", experiment.id, { id: "different-id", idempotencyKey: "event-a-0", observedAt: "2026-07-10T09:00:00.000Z", groupKey: "evening", outcome: 1, source: "checkin", eligible: true });
     assert.equal(duplicate.id, "obs-a-0");
+    assert.throws(() => repository.addObservationForExperiment("user-a", experiment.id, { id: "different-id", idempotencyKey: "event-a-0", observedAt: "2026-07-10T09:00:00.000Z", groupKey: "evening", outcome: 99, source: "checkin", eligible: true }), /experiment_observation_idempotency_conflict/);
+    assert.throws(() => repository.addObservationForExperiment("user-a", experiment.id, { id: "bad-group", groupKey: "unknown", observedAt: "2026-07-10T09:00:00.000Z", outcome: 1, source: "checkin", eligible: true }), /experiment_observation_group_invalid/);
     assert.equal(repository.observations("user-a", experiment.id).length, 8);
     repository.transition("user-a", experiment.id, "completed");
     const evaluation = repository.evaluate("user-a", experiment.id);
     assert.equal(evaluation.status, "supported");
     assert.equal(repository.get("user-b", experiment.id), undefined);
     assert.throws(() => repository.evaluate("user-b", experiment.id), /experiment_not_found/);
+  } finally {
+    db.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("paused experiments reject observations and a draft cannot be accepted twice", () => {
+  const { db, directory } = database();
+  try {
+    const repository = new SqliteExperimentRepository(db);
+    const draft = repository.createDraft("user-a", { id: "candidate-paused", conditionParameterId: "time_period", outcomeParameterId: "completion_status", conditionLabel: "period", outcomeLabel: "outcome", cohortAKey: "a", cohortBKey: "b", effectValue: 1, sampleCount: 8 });
+    const experiment = repository.acceptDraft("user-a", draft.id);
+    assert.throws(() => repository.acceptDraft("user-a", draft.id), /experiment_draft_not_available/);
+    repository.transition("user-a", experiment.id, "active");
+    repository.transition("user-a", experiment.id, "paused");
+    assert.throws(() => repository.addObservationForExperiment("user-a", experiment.id, { id: "paused", groupKey: "a", observedAt: "2026-07-30T00:00:00.000Z", outcome: 1, source: "manual", eligible: true }), /experiment_paused_observation_not_allowed/);
   } finally {
     db.close();
     rmSync(directory, { recursive: true, force: true });

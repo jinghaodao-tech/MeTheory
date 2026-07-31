@@ -75,6 +75,9 @@ type FieldGroup = {
   unit?: string;
   scaleFingerprint: string;
   allowedValues?: Array<{ valueKey: string; labelJa: string }>;
+  positiveValueKeys?: string[];
+  orderedValueKeys?: string[];
+  numericMapping?: Record<string, number>;
 };
 
 const supportedValueTypes = new Set(["boolean", "single_choice", "number", "integer", "scale", "duration_minutes"]);
@@ -83,8 +86,20 @@ function candidateValueType(valueType: string): CandidateParameter["valueType"] 
   return valueType === "scale" || valueType === "duration_minutes" || valueType === "integer" ? "number" : valueType;
 }
 
-function groupKey(value: PcsAnalysisSnapshotV2["records"][number]["values"][number]) {
-  return [value.templateId, value.templateVersionId, value.fieldKey, value.analysisRole, value.valueType, value.scaleFingerprint, value.unit ?? "", value.minimum ?? "", value.maximum ?? ""].join("|");
+function canonicalAllowedValues(value: PcsAnalysisSnapshotV2["records"][number]["values"][number]) {
+  return JSON.stringify((value.allowedValues ?? []).map((item) => item.key));
+}
+
+function isolatedParameterId(value: PcsAnalysisSnapshotV2["records"][number]["values"][number]) {
+  return ["isolated", value.templateId, value.templateVersionId, value.fieldKey].join(":");
+}
+
+function mergedParameterId(value: PcsAnalysisSnapshotV2["records"][number]["values"][number]) {
+  return ["merged", value.analysisRole, value.analysisUsage, value.valueType, value.scaleFingerprint, value.unit ?? "", value.minimum ?? "", value.maximum ?? "", canonicalAllowedValues(value), JSON.stringify(value.positiveValueKeys ?? []), JSON.stringify(value.orderedValueKeys ?? []), JSON.stringify(value.numericMapping ?? {}), value.provenance.privacyLevel].join(":");
+}
+
+export function pcsParameterIdentity(value: PcsAnalysisSnapshotV2["records"][number]["values"][number]) {
+  return value.analysisMergeAllowed ? mergedParameterId(value) : isolatedParameterId(value);
 }
 
 function excludedField(value: PcsAnalysisSnapshotV2["records"][number]["values"][number], reason: PcsExcludedField["reason"]): PcsExcludedField {
@@ -136,10 +151,9 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
       if (!value.analysisRoleConfirmed) { excludedFields.push(excludedField(value, "analysis_role_unconfirmed")); excludedValueCount += 1; continue; }
       if (!isSelfUnderstandingSemanticRole(value.analysisRole)) { excludedFields.push(excludedField(value, "analysis_role_unknown")); excludedValueCount += 1; continue; }
       if (value.analysisUsage === "excluded") { excludedFields.push(excludedField(value, "analysis_usage_excluded")); excludedValueCount += 1; continue; }
-      if (!value.analysisMergeAllowed) { excludedFields.push(excludedField(value, "merge_not_allowed")); excludedValueCount += 1; continue; }
       if (!supportedValueTypes.has(value.valueType)) { excludedFields.push(excludedField(value, "value_type_unsupported")); excludedValueCount += 1; continue; }
       if (value.minimum !== undefined && value.maximum !== undefined && value.minimum > value.maximum) { excludedFields.push(excludedField(value, "scale_invalid")); excludedValueCount += 1; continue; }
-      const id = groupKey(value);
+      const id = pcsParameterIdentity(value);
       if (!groups.has(id)) groups.set(id, {
         id,
         fieldKey: value.fieldKey,
@@ -153,7 +167,10 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
         maximum: value.maximum,
         unit: value.unit,
         scaleFingerprint: value.scaleFingerprint,
-        allowedValues: value.allowedValues?.map((item) => ({ valueKey: item.key, labelJa: item.label }))
+        allowedValues: value.allowedValues?.map((item) => ({ valueKey: item.key, labelJa: item.label })),
+        positiveValueKeys: value.positiveValueKeys,
+        orderedValueKeys: value.orderedValueKeys,
+        numericMapping: value.numericMapping
       });
       values.set(id, value.value);
       provenance.set(id, { source: "user_entry", labelJa: sourceLabel(value.provenance.source), observationIds: [value.provenance.sourceId], sourceId: value.provenance.sourceId, transformVersion: value.provenance.transformVersion, privacyLevel: value.provenance.privacyLevel, provenanceSource: value.provenance.source });
@@ -180,7 +197,10 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
     usableAsCondition: group.usage === "condition" || group.usage === "both",
     usableAsOutcome: group.usage === "outcome" || group.usage === "both",
     allowedConditionRoles: [],
-    allowedOutcomeRoles: []
+    allowedOutcomeRoles: [],
+    positiveValues: group.positiveValueKeys,
+    orderedValues: group.orderedValueKeys,
+    numericMapping: group.numericMapping
   }));
 
   const records = new Map<string, UnderstandingRecord>();

@@ -32,6 +32,13 @@ const selfUnderstandingRepository = new SqliteSelfUnderstandingRepository(db);
 const experimentRepository = new SqliteExperimentRepository(db);
 const pcsAnalysisRepository = new SqlitePcsAnalysisRepository(db);
 
+function normalizeSelfModelResolution(action: string): "new" | "update_existing" | "separate" {
+  if (action === "create_new" || action === "new") return "new";
+  if (action === "propose_update" || action === "update_existing") return "update_existing";
+  if (action === "keep_separate" || action === "separate") return "separate";
+  throw new Error("self_model_resolution_invalid");
+}
+
 type LegacyActivityWatchObservation = {
   id: string;
   user_id: string;
@@ -847,7 +854,8 @@ const server = createServer(async (request, response) => {
       const candidateId = optionalString(input.candidateId) ?? "";
       const statement = optionalString(input.statement)?.trim() ?? "";
       const requestedResolution = optionalString(input.resolutionAction) ?? "create_new";
-      const resolutionAction = requestedResolution === "create_new" ? "new" : requestedResolution === "keep_separate" || requestedResolution === "propose_update" ? "separate" : requestedResolution;
+      let resolutionAction: "new" | "update_existing" | "separate";
+      try { resolutionAction = normalizeSelfModelResolution(requestedResolution); } catch { return json(response, 400, { error: "self_model_resolution_invalid" }); }
       const targetSelfBeliefId = optionalString(input.targetSelfBeliefId) ?? null;
       if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
       if (!validateSelfModelStatement(statement)) return json(response, 400, { error: "self_model_statement_invalid" });
@@ -870,8 +878,8 @@ const server = createServer(async (request, response) => {
       if (!["accepted", "rejected"].includes(status)) return json(response, 400, { error: "self_model_review_invalid" });
       const requestedResolution = optionalString(input.resolutionAction);
       if (requestedResolution) {
-        const normalizedResolution = requestedResolution === "create_new" ? "new" : requestedResolution === "keep_separate" || requestedResolution === "propose_update" ? "separate" : requestedResolution;
-        if (!["new", "update_existing", "separate"].includes(normalizedResolution)) return json(response, 400, { error: "self_model_resolution_invalid" });
+        let normalizedResolution: "new" | "update_existing" | "separate";
+        try { normalizedResolution = normalizeSelfModelResolution(requestedResolution); } catch { return json(response, 400, { error: "self_model_resolution_invalid" }); }
         db.prepare("UPDATE self_model_candidates SET resolution_action=? WHERE user_id=? AND id=? AND status='proposed'").run(normalizedResolution, userId, candidateId);
       }
       const candidate = db.prepare(`SELECT statement,source_hypothesis_id,
@@ -882,12 +890,18 @@ const server = createServer(async (request, response) => {
         WHERE user_id=? AND id=? AND status='proposed'`).get(userId, candidateId) as any;
       if (!candidate) return json(response, 404, { error: "self_model_candidate_not_found" });
       if (!validateSelfModelStatement(String(candidate.statement))) return json(response, 400, { error: "self_model_statement_invalid" });
+      if (status === "accepted" && candidate.resolution_action === "update_existing") {
+        if (!candidate.target_self_belief_id || !db.prepare("SELECT id FROM self_beliefs WHERE user_id=? AND id=? AND construct_key=? AND status!='archived'").get(userId, candidate.target_self_belief_id, candidate.construct_key ?? "")) return json(response, 400, { error: "self_model_update_target_invalid" });
+      }
       const reviewedAt = now();
       db.exec("BEGIN IMMEDIATE");
       try {
         db.prepare("UPDATE self_model_candidates SET status=?,reviewed_at=?,accepted_at=?,last_reviewed_at=? WHERE user_id=? AND id=?").run(status, reviewedAt, status === "accepted" ? reviewedAt : null, reviewedAt, userId, candidateId);
         let beliefId: string | null = null;
         if (status === "accepted" && candidate.resolution_action === "update_existing" && candidate.target_self_belief_id) {
+          const previous = db.prepare("SELECT statement,construct_key FROM self_beliefs WHERE user_id=? AND id=? AND status!='archived'").get(userId, candidate.target_self_belief_id) as { statement: string; construct_key: string | null } | undefined;
+          if (!previous) throw new Error("self_model_update_target_invalid");
+          db.prepare(`INSERT INTO self_belief_revisions(id,belief_id,user_id,source_candidate_id,source_hypothesis_id,source_experiment_id,previous_statement,proposed_statement,final_statement,previous_construct_key,final_construct_key,resolution_action,user_note,approved_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id("belief_revision"), candidate.target_self_belief_id, userId, candidateId, candidate.source_hypothesis_id ?? null, null, previous.statement, candidate.statement, candidate.statement, previous.construct_key, candidate.construct_key, candidate.resolution_action, candidate.user_note, reviewedAt, reviewedAt);
           const updated = db.prepare(`UPDATE self_beliefs SET statement=?,source_hypothesis_id=?,
             user_note=?,last_reviewed_at=?,supporting_period_start=?,supporting_period_end=?,
             tendency_scope=?,source_analysis_periods_json=?,supporting_field_pairs_json=?
@@ -1079,7 +1093,7 @@ const server = createServer(async (request, response) => {
     return json(response, 404, { error: "not_found" });
   } catch (error) {
     const message = error instanceof Error ? error.message : "internal_error";
-    const status = message.endsWith("_not_found") ? 404 : message.includes('not_allowed') ? 403 : message.includes('authenticated_user') ? 401 : 400;
+    const status = message.endsWith("_not_found") ? 404 : message.includes("idempotency_conflict") ? 409 : message.includes('not_allowed') ? 403 : message.includes('authenticated_user') ? 401 : 400;
     return json(response, status, { error: message });
   }
 });

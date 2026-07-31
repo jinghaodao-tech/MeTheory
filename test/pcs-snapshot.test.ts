@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { resolve } from "node:path";
-import { validatePcsAnalysisSnapshotV2 } from "../packages/contracts/src/pcsAnalysisSnapshotV2.ts";
-import { analyzePcsAnalysisSnapshot } from "../packages/self-understanding/src/pcsSnapshotAnalysis.ts";
+import { validatePcsAnalysisSnapshotV2, type PcsAnalysisSnapshotV2 } from "../packages/contracts/src/pcsAnalysisSnapshotV2.ts";
+import { analyzePcsAnalysisSnapshot, pcsParameterIdentity } from "../packages/self-understanding/src/pcsSnapshotAnalysis.ts";
 import { migrateDatabase } from "../apps/api/src/db/migrate.ts";
 import { SqlitePcsAnalysisRepository } from "../apps/api/src/pcsAnalysisRepository.ts";
 
@@ -41,6 +41,19 @@ test("PCS V2 rejects malformed dates, duplicate ids, unconfirmed roles, and unkn
     const result = validatePcsAnalysisSnapshotV2(input);
     assert.equal(result.ok, false);
   }
+});
+
+test("PCS parameter identity isolates non-mergeable fields and merges only compatible semantics", () => {
+  const value = structuredClone(fixture.records[0].values[0]) as PcsAnalysisSnapshotV2["records"][number]["values"][number];
+  const isolated = pcsParameterIdentity({ ...value, analysisMergeAllowed: false });
+  const isolatedOtherTemplate = pcsParameterIdentity({ ...value, templateId: "other", analysisMergeAllowed: false });
+  const merged = pcsParameterIdentity({ ...value, analysisMergeAllowed: true });
+  const mergedSame = pcsParameterIdentity({ ...value, templateId: "other", templateVersionId: "other-v1", analysisMergeAllowed: true });
+  const differentScale = pcsParameterIdentity({ ...value, analysisMergeAllowed: true, scaleFingerprint: "scale-0-10" });
+  assert.notEqual(isolated, isolatedOtherTemplate);
+  assert.equal(merged, mergedSame);
+  assert.notEqual(merged, differentScale);
+  assert.notEqual(isolated, merged);
 });
 
 test("PCS V2 profile binding is isolated and analysis history is immutable by snapshot id", () => {

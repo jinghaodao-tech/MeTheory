@@ -41,6 +41,9 @@ export type PcsAnalysisSnapshotV2 = {
       minimum?: number;
       maximum?: number;
       allowedValues?: Array<{ key: string; label: string }>;
+      positiveValueKeys?: string[];
+      orderedValueKeys?: string[];
+      numericMapping?: Record<string, number>;
       provenance: {
         source: PcsAnalysisSource;
         sourceId: string;
@@ -71,7 +74,7 @@ export type PcsSnapshotValidationResult =
 const topKeys = new Set(["schemaVersion", "contractRevision", "snapshotId", "profileId", "generatedAt", "period", "records", "excluded"]);
 const periodKeys = new Set(["startAt", "endAt", "timezone"]);
 const recordKeys = new Set(["id", "recordedAt", "title", "sourceDocumentId", "values"]);
-const valueKeys = new Set(["fieldKey", "label", "valueType", "value", "templateId", "templateVersionId", "analysisRole", "analysisRoleConfirmed", "analysisUsage", "analysisMergeAllowed", "scaleFingerprint", "unit", "minimum", "maximum", "allowedValues", "provenance"]);
+const valueKeys = new Set(["fieldKey", "label", "valueType", "value", "templateId", "templateVersionId", "analysisRole", "analysisRoleConfirmed", "analysisUsage", "analysisMergeAllowed", "scaleFingerprint", "unit", "minimum", "maximum", "allowedValues", "positiveValueKeys", "orderedValueKeys", "numericMapping", "provenance"]);
 const provenanceKeys = new Set(["source", "sourceId", "userConfirmed", "recordedAt", "transformVersion", "privacyLevel"]);
 const excludedKeys = new Set(["unconfirmed", "nonShareable", "highlySensitive", "invalid"]);
 const valueTypes = new Set<PcsAnalysisValueType>(["boolean", "single_choice", "number", "integer", "scale", "duration_minutes"]);
@@ -143,6 +146,12 @@ function validateValueType(value: Record<string, unknown>, path: string, errors:
       else keys.add(String(option.key));
     }
   }
+  for (const key of ["positiveValueKeys", "orderedValueKeys"] as const) {
+    if (value[key] !== undefined && (!Array.isArray(value[key]) || value[key].some((item) => typeof item !== "string"))) errors.push({ path: `${path}.${key}`, code: "choice_semantics_invalid" });
+    if (Array.isArray(value[key]) && Array.isArray(value.allowedValues) && (value[key] as unknown[]).some((item) => !(value.allowedValues as Array<{ key: string }>).some((option) => option.key === item))) errors.push({ path: `${path}.${key}`, code: "choice_semantics_unknown_key" });
+  }
+  if (value.numericMapping !== undefined && (!isRecord(value.numericMapping) || Object.entries(value.numericMapping).some(([key, item]) => !key || !finiteNumber(item)))) errors.push({ path: `${path}.numericMapping`, code: "numeric_mapping_invalid" });
+  if (isRecord(value.numericMapping) && Array.isArray(value.allowedValues) && Object.keys(value.numericMapping).some((key) => !(value.allowedValues as Array<{ key: string }>).some((option) => option.key === key))) errors.push({ path: `${path}.numericMapping`, code: "numeric_mapping_unknown_key" });
 }
 
 export function validatePcsAnalysisSnapshotV2(input: unknown): PcsSnapshotValidationResult {

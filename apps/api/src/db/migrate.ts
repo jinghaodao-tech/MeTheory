@@ -139,6 +139,26 @@ export function migrateDatabase(db: DatabaseSync, root: string) {
         db.exec("UPDATE experiment_observations SET idempotency_key=id WHERE idempotency_key='' OR idempotency_key IS NULL");
         db.exec("CREATE UNIQUE INDEX IF NOT EXISTS experiment_observations_idempotency_idx ON experiment_observations(experiment_id,idempotency_key)");
       }
+    },
+    {
+      id: "experiment-integrity-v1",
+      apply: () => {
+        db.exec("CREATE UNIQUE INDEX IF NOT EXISTS experiments_draft_unique ON experiments(draft_id)");
+      }
+    },
+    {
+      id: "self-model-revisions-v1",
+      apply: () => {
+        db.exec(`CREATE TABLE IF NOT EXISTS self_belief_revisions (
+          id TEXT PRIMARY KEY, belief_id TEXT NOT NULL REFERENCES self_beliefs(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, source_candidate_id TEXT,
+          source_hypothesis_id TEXT, source_experiment_id TEXT, previous_statement TEXT NOT NULL,
+          proposed_statement TEXT NOT NULL, final_statement TEXT NOT NULL, previous_construct_key TEXT,
+          final_construct_key TEXT, resolution_action TEXT NOT NULL CHECK(resolution_action IN ('new','update_existing','separate')),
+          user_note TEXT NOT NULL DEFAULT '', approved_at TEXT NOT NULL, created_at TEXT NOT NULL
+        ) STRICT`);
+        db.exec("CREATE INDEX IF NOT EXISTS self_belief_revisions_lookup_idx ON self_belief_revisions(user_id,belief_id,created_at DESC)");
+      }
     }
   ];
   for (const migration of migrations) {
