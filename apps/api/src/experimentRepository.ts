@@ -20,6 +20,15 @@ const json = (value: unknown): string => JSON.stringify(value);
 const parse = <T>(value: unknown, fallback: T): T => {
   try { return JSON.parse(String(value)) as T; } catch { return fallback; }
 };
+const canonicalJson = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(",")}}`;
+  return JSON.stringify(value);
+};
+
+export class ExperimentObservationIdempotencyConflictError extends Error {
+  constructor() { super("experiment_observation_idempotency_conflict"); }
+}
 
 export class SqliteExperimentRepository {
   private readonly db: DatabaseSync;
@@ -62,7 +71,8 @@ export class SqliteExperimentRepository {
     const next: ExperimentDraft = { ...current, ...patch, status: "draft" };
     if (!next.title.trim() || !next.statement.trim() || next.durationDays < 1 || next.minimumPerGroup < 1 || next.minimumObservations < next.minimumPerGroup * 2) throw new Error("experiment_draft_invalid");
     const updatedAt = new Date().toISOString();
-    this.db.prepare("UPDATE experiment_drafts SET draft_json=?,updated_at=? WHERE user_id=? AND id=? AND status='draft'").run(json(next), updatedAt, userId, draftId);
+    const result = this.db.prepare("UPDATE experiment_drafts SET draft_json=?,updated_at=? WHERE user_id=? AND id=? AND status='draft'").run(json(next), updatedAt, userId, draftId);
+    if (Number(result.changes) !== 1) throw new Error("experiment_draft_update_conflict");
     return next;
   }
 
@@ -80,7 +90,8 @@ export class SqliteExperimentRepository {
     const experimentId = this.id("experiment");
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      this.db.prepare("UPDATE experiment_drafts SET status='accepted',updated_at=? WHERE user_id=? AND id=? AND status='draft'").run(now, userId, draftId);
+      const result = this.db.prepare("UPDATE experiment_drafts SET status='accepted',updated_at=? WHERE user_id=? AND id=? AND status='draft'").run(now, userId, draftId);
+      if (Number(result.changes) !== 1) throw new Error("experiment_draft_accept_conflict");
       this.db.prepare(`INSERT INTO experiments(id,user_id,draft_id,source_candidate_id,title,statement,kind,comparison_type,status,started_at,ended_at,duration_days,minimum_observations,minimum_per_group,schedule_json,stop_conditions_json,safety_notes_json,created_at)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
         experimentId, userId, draftId, draft.sourceCandidateId, draft.title, draft.statement, draft.kind, draft.comparisonType, "ready", null, null,
@@ -136,10 +147,22 @@ export class SqliteExperimentRepository {
   addObservationForExperiment(userId: string, experimentId: string, observation: Omit<ExperimentObservation, "experimentId">): ExperimentObservation {
     const experiment = this.get(userId, experimentId);
     if (!experiment) throw new Error("experiment_not_found");
-    if (!["active", "paused"].includes(experiment.status)) throw new Error("experiment_not_active");
+    if (experiment.status === "paused") throw new Error("experiment_paused_observation_not_allowed");
+    if (experiment.status !== "active") throw new Error("experiment_not_active");
+    if (!observation.id || observation.id.length > 160 || !observation.observedAt || Number.isNaN(Date.parse(observation.observedAt))) throw new Error("experiment_observation_invalid");
+    if (!observation.groupKey || observation.groupKey.length > 80 || ![experiment.groupAKey, experiment.groupBKey].includes(observation.groupKey)) throw new Error("experiment_observation_group_invalid");
+    if (!Number.isFinite(observation.outcome)) throw new Error("experiment_observation_invalid");
+    if (canonicalJson(observation.conditionValues ?? {}).length > 16_384 || (observation.note?.length ?? 0) > 2_000) throw new Error("experiment_observation_too_large");
     const idempotencyKey = observation.idempotencyKey ?? observation.id;
-    this.db.prepare("INSERT OR IGNORE INTO experiment_observations(id,experiment_id,episode_id,idempotency_key,observed_at,group_key,outcome,condition_values_json,source,eligible,note,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(observation.id, experimentId, observation.episodeId ?? null, idempotencyKey, observation.observedAt, observation.groupKey, observation.outcome, json(observation.conditionValues ?? {}), observation.source, observation.eligible ? 1 : 0, observation.note ?? null, new Date().toISOString());
-    const stored = this.db.prepare("SELECT * FROM experiment_observations WHERE experiment_id=? AND idempotency_key=?").get(experimentId, idempotencyKey) as Row | undefined;
+    if (!idempotencyKey || idempotencyKey.length > 160) throw new Error("experiment_observation_invalid");
+    const incomingConditionValues = canonicalJson(observation.conditionValues ?? {});
+    const existing = this.db.prepare("SELECT * FROM experiment_observations WHERE experiment_id=? AND idempotency_key=?").get(experimentId, idempotencyKey) as Row | undefined;
+    if (existing) {
+      const same = String(existing.observed_at) === observation.observedAt && String(existing.group_key) === observation.groupKey && Number(existing.outcome) === observation.outcome && canonicalJson(parse(existing.condition_values_json, {})) === incomingConditionValues && String(existing.source) === observation.source && Number(existing.eligible) === (observation.eligible ? 1 : 0) && (existing.note ?? null) === (observation.note ?? null);
+      if (!same) throw new ExperimentObservationIdempotencyConflictError();
+    }
+    if (!existing) this.db.prepare("INSERT INTO experiment_observations(id,experiment_id,episode_id,idempotency_key,observed_at,group_key,outcome,condition_values_json,source,eligible,note,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(observation.id, experimentId, observation.episodeId ?? null, idempotencyKey, observation.observedAt, observation.groupKey, observation.outcome, incomingConditionValues, observation.source, observation.eligible ? 1 : 0, observation.note ?? null, new Date().toISOString());
+    const stored = existing ?? this.db.prepare("SELECT * FROM experiment_observations WHERE experiment_id=? AND idempotency_key=?").get(experimentId, idempotencyKey) as Row | undefined;
     if (!stored) throw new Error("experiment_observation_save_failed");
     return { id: String(stored.id), experimentId, idempotencyKey, episodeId: typeof stored.episode_id === "string" ? stored.episode_id : undefined, observedAt: String(stored.observed_at), groupKey: String(stored.group_key), outcome: Number(stored.outcome), conditionValues: parse(stored.condition_values_json, {}), source: String(stored.source) as ExperimentObservation["source"], eligible: Number(stored.eligible) === 1, note: typeof stored.note === "string" ? stored.note : undefined };
   }

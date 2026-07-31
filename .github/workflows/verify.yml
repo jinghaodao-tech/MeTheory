@@ -10,16 +10,27 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: MeTheory
+      - uses: actions/checkout@v4
+        with:
+          repository: jinghaodao-tech/Personal-Context-Studio
+          path: Personal-Context-Studio
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-      - run: npm install
-      - run: npm run typecheck:root
-      - run: npm run test:pcs-snapshot
-      - run: npm run test:demo-web
-      - run: npm run check:encoding
+          cache-dependency-path: MeTheory/package-lock.json
+      - run: npm ci
+        working-directory: MeTheory
+      - run: npm ci
+        working-directory: Personal-Context-Studio
       - run: npm run verify
+        working-directory: MeTheory
+      - run: npm run test:pcs-live-e2e
+        working-directory: MeTheory
+        env:
+          PCS_REPO_PATH: ${{ github.workspace }}/Personal-Context-Studio
