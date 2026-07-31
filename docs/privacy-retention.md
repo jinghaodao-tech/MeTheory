@@ -39,3 +39,11 @@ The AI layer may structure text, propose testable hypotheses, or render a
 constrained explanation. It must not diagnose, assert a fixed personality, or
 replace deterministic evidence aggregation. Unsupported or insufficient results
 must fall back to a neutral explanation and a request for more data.
+
+## Experiment data
+
+Experiment observations follow the same local retention and consent policy as
+other structured values. A stop condition or a privacy review can pause an
+experiment, but neither AI nor a background process can grant consent or
+change Self Model. Export and deletion must retain the existing audit boundary;
+raw Markdown remains owned by the record workspace.

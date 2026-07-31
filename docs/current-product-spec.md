@@ -62,3 +62,46 @@ Medical or psychological diagnosis, fixed personality labels, cloud sync, a gene
 
 - `architecture-research.md`, `technical-architecture.md`, and `mcp-tools.md` are **future architecture research** where they describe cloud, MCP, or scale-out designs.
 - `design-spec.md`, `domain-language.md`, `hypothesis-evaluation.md`, `collection-responsibility.md`, and `implementation-roadmap.md` are **historical or domain reference** documents. They remain useful, but this document defines the current product scope.
+
+## Closed-loop experiment slice
+
+The current implementation also supports the first closed loop from a confirmed
+self-understanding candidate to a user-reviewed experiment result. A candidate
+can produce an editable draft; explicit acceptance creates a ready experiment;
+collection is linked to existing check-ins and parameter values; evaluation is
+deterministic; and the result is retained as a hypothesis timeline event.
+Self Model freshness is a review queue, not an automatic update.
+
+Experiment questions and collection plans are local and deterministic. A plan
+may contain a generic pending PCS template request. MeTheory uses the official
+localhost PCS Integration API client for the profile-scoped analysis snapshot,
+but does not activate a template, write a confirmed PCS value, or copy
+Markdown bodies into its database.
+## Portfolio primary flow
+
+The reproducible portfolio flow is:
+
+`PCS analysis snapshot V2 -> MeTheory Node API -> SQLite -> Demo Web`.
+
+The snapshot contract is strict and versioned. It carries a profile binding, period, record identifiers, field roles, scale fingerprints, provenance, privacy level, and explicit exclusions. MeTheory rejects unconfirmed roles, unsupported values, invalid scales, private values, profile mismatches, unknown properties, and periods outside the requested range. A live PCS request is allowed only to localhost and requires `profileId`, `from`, `to`, and `timezone`.
+
+`pcs_profile_bindings` binds one PCS profile to one MeTheory user. `pcs_analysis_runs` is append-only at the snapshot level: each run stores `snapshotId`, `profileId`, `generatedAt`, period, schema version, source record IDs, source fingerprint, and contract hash. Re-running the same snapshot is idempotent; a new snapshot creates a new history item and does not overwrite an older result.
+
+Candidate generation uses explicit semantic roles and the versioned `candidate-pair-v1` allowlist. It does not infer meaning from labels. Every candidate has supporting and contradicting evidence, an episode kind, and provenance. It is a non-clinical observation about conditions and recorded outcomes, not a diagnosis or causal conclusion.
+
+The Demo Web is intentionally local and fixture-first. It has loading, empty, error, and unavailable states; no Markdown body or secret is sent to a cloud service. Candidate review, experiment draft editing, experiment acceptance, check-ins, deterministic evaluation, and Self Model proposal review are explicit user actions. No candidate is automatically approved, started, notified, evaluated, or merged into the Self Model.
+
+## Implementation status
+
+- **Implemented:** PCS snapshot V2 validation, profile binding, immutable analysis history, pair allowlist, provenance-aware evidence, versioned SQLite migration runner, closed-loop experiment APIs, local deterministic fixture Demo Web, and targeted tests.
+- **Experimental:** Expo mobile client, Obsidian adapter, ActivityWatch adapter, and optional localhost AI wording.
+- **Planned:** deeper route/service split, richer desktop field-level Review UI, integration SDK contract tests, encrypted backups, and broader longitudinal stability analysis.
+- **Removed from the product path:** cloud sync, automatic merge, diagnostic inference, cloud AI dependency, and the AI review/Codex loop as a runtime requirement. Review Bridge files may remain as isolated development tooling.
+
+## Failure and decision log
+
+- PCS unavailable: use fixture mode and keep the Markdown workflow available.
+- Snapshot invalid or profile mismatch: fail the complete analysis; do not produce partial hypotheses.
+- Local AI unavailable: use deterministic wording; do not block recording or analysis.
+- SQLite migration failure: stop startup rather than apply an unversioned column change.
+- Evidence is displayed with supporting and contradicting records, data shortage, exclusions, and provenance before a user can create an experiment.

@@ -442,3 +442,211 @@ CREATE TABLE IF NOT EXISTS privacy_safe_delete_plans (
   created_at TEXT NOT NULL,
   executed_at TEXT
 ) STRICT;
+
+-- Closed-loop experiments are explicit records. Entries and PCS snapshots are
+-- never copied into these tables unless a user or an experiment check-in adds
+-- an observation deliberately.
+CREATE TABLE IF NOT EXISTS experiment_drafts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  source_candidate_id TEXT NOT NULL,
+  draft_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN('draft','accepted','rejected')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS experiment_drafts_user_idx ON experiment_drafts(user_id,status,updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS experiments (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  draft_id TEXT NOT NULL REFERENCES experiment_drafts(id) ON DELETE RESTRICT,
+  source_candidate_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  statement TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK(kind IN('condition_comparison','behavioral_intervention','observation_only')),
+  comparison_type TEXT NOT NULL CHECK(comparison_type IN('condition_difference','before_after','with_without_intervention')),
+  status TEXT NOT NULL CHECK(status IN('draft','ready','active','paused','completed','evaluated','archived','cancelled','insufficient_data','invalid')),
+  started_at TEXT,
+  ended_at TEXT,
+  duration_days INTEGER NOT NULL CHECK(duration_days > 0),
+  minimum_observations INTEGER NOT NULL CHECK(minimum_observations > 0),
+  minimum_per_group INTEGER NOT NULL CHECK(minimum_per_group > 0),
+  schedule_json TEXT NOT NULL,
+  stop_conditions_json TEXT NOT NULL,
+  safety_notes_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS experiments_user_status_idx ON experiments(user_id,status,created_at DESC);
+
+CREATE TABLE IF NOT EXISTS experiment_conditions (
+  experiment_id TEXT NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+  parameter_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK(role IN('condition','outcome','required','alternative_explanation')),
+  config_json TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY(experiment_id,parameter_id,role)
+) STRICT;
+CREATE TABLE IF NOT EXISTS experiment_required_parameters (
+  experiment_id TEXT NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+  parameter_id TEXT NOT NULL,
+  minimum_samples INTEGER NOT NULL DEFAULT 1 CHECK(minimum_samples > 0),
+  askable INTEGER NOT NULL DEFAULT 1 CHECK(askable IN(0,1)),
+  priority INTEGER NOT NULL DEFAULT 100,
+  PRIMARY KEY(experiment_id,parameter_id)
+) STRICT;
+CREATE TABLE IF NOT EXISTS experiment_schedules (
+  experiment_id TEXT PRIMARY KEY REFERENCES experiments(id) ON DELETE CASCADE,
+  schedule_json TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN(0,1)),
+  updated_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS experiment_stop_conditions (
+  id TEXT PRIMARY KEY,
+  experiment_id TEXT NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  description TEXT NOT NULL,
+  threshold REAL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS experiment_observations (
+  id TEXT PRIMARY KEY,
+  experiment_id TEXT NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+  episode_id TEXT REFERENCES observation_episodes(id) ON DELETE SET NULL,
+  idempotency_key TEXT NOT NULL DEFAULT '',
+  observed_at TEXT NOT NULL,
+  group_key TEXT NOT NULL,
+  outcome REAL NOT NULL,
+  condition_values_json TEXT NOT NULL DEFAULT '{}',
+  source TEXT NOT NULL CHECK(source IN('checkin','manual','import')),
+  eligible INTEGER NOT NULL DEFAULT 1 CHECK(eligible IN(0,1)),
+  note TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE(experiment_id,episode_id)
+) STRICT;
+CREATE INDEX IF NOT EXISTS experiment_observations_lookup_idx ON experiment_observations(experiment_id,group_key,observed_at);
+CREATE UNIQUE INDEX IF NOT EXISTS experiment_observations_idempotency_idx ON experiment_observations(experiment_id,idempotency_key);
+CREATE TABLE IF NOT EXISTS experiment_adherence (
+  id TEXT PRIMARY KEY,
+  experiment_id TEXT NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+  observation_id TEXT REFERENCES experiment_observations(id) ON DELETE SET NULL,
+  attempted INTEGER NOT NULL CHECK(attempted IN(0,1)),
+  completed INTEGER NOT NULL CHECK(completed IN(0,1)),
+  reason TEXT,
+  burden_minutes REAL,
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS experiment_evaluations (
+  id TEXT PRIMARY KEY,
+  experiment_id TEXT NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+  evaluation_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN('supported','challenged','mixed','inconclusive','insufficient_data','invalid')),
+  evaluated_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS experiment_evaluations_lookup_idx ON experiment_evaluations(experiment_id,evaluated_at DESC);
+CREATE TABLE IF NOT EXISTS experiment_hypothesis_links (
+  experiment_id TEXT NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+  hypothesis_id TEXT NOT NULL REFERENCES hypotheses(id) ON DELETE CASCADE,
+  relation TEXT NOT NULL CHECK(relation IN('source','reassessment')),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(experiment_id,hypothesis_id,relation)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS data_collection_plans (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  source_analysis_id TEXT NOT NULL,
+  target_construct TEXT NOT NULL,
+  plan_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN('proposed','accepted','completed','cancelled')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS data_collection_shortages (
+  plan_id TEXT NOT NULL REFERENCES data_collection_plans(id) ON DELETE CASCADE,
+  parameter_id TEXT NOT NULL,
+  needed INTEGER NOT NULL CHECK(needed > 0),
+  reason TEXT NOT NULL,
+  PRIMARY KEY(plan_id,parameter_id)
+) STRICT;
+CREATE INDEX IF NOT EXISTS data_collection_plans_user_idx ON data_collection_plans(user_id,status,updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS hypothesis_review_reasons (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  candidate_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  action TEXT NOT NULL,
+  created_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS hypothesis_timelines (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  hypothesis_id TEXT NOT NULL REFERENCES hypotheses(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,
+  source_id TEXT,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS hypothesis_timelines_lookup_idx ON hypothesis_timelines(user_id,hypothesis_id,created_at);
+
+CREATE TABLE IF NOT EXISTS self_model_freshness (
+  belief_id TEXT PRIMARY KEY REFERENCES self_beliefs(id) ON DELETE CASCADE,
+  evidence_scope TEXT NOT NULL CHECK(evidence_scope IN('emerging','state_dependent','relatively_stable')),
+  accepted_at TEXT NOT NULL,
+  last_reviewed_at TEXT NOT NULL,
+  evidence_period_start TEXT NOT NULL,
+  evidence_period_end TEXT NOT NULL,
+  supporting_evidence_count INTEGER NOT NULL DEFAULT 0,
+  contradicting_evidence_count INTEGER NOT NULL DEFAULT 0,
+  linked_experiment_ids_json TEXT NOT NULL DEFAULT '[]',
+  review_due_at TEXT,
+  freshness_status TEXT NOT NULL CHECK(freshness_status IN('current','review_due','possibly_changed','unsupported_recently','retracted')),
+  updated_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS self_model_reviews (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  belief_id TEXT NOT NULL REFERENCES self_beliefs(id) ON DELETE CASCADE,
+  action TEXT NOT NULL CHECK(action IN('still_applies','context_dependent','not_recently','unknown','retract','revise')),
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS self_model_reviews_lookup_idx ON self_model_reviews(user_id,belief_id,created_at DESC);
+
+-- Versioned PCS boundary and immutable analysis provenance.
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id TEXT PRIMARY KEY,
+  applied_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS pcs_profile_bindings (
+  metheory_user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  pcs_profile_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS pcs_analysis_runs (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  snapshot_id TEXT NOT NULL,
+  profile_id TEXT NOT NULL,
+  generated_at TEXT NOT NULL,
+  period_start_at TEXT NOT NULL,
+  period_end_at TEXT NOT NULL,
+  timezone TEXT NOT NULL,
+  schema_version TEXT NOT NULL,
+  source_record_ids_json TEXT NOT NULL,
+  source_fingerprint TEXT NOT NULL,
+  contract_hash TEXT NOT NULL,
+  result_summary_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(user_id, snapshot_id)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS pcs_analysis_runs_user_time_idx
+  ON pcs_analysis_runs(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS pcs_analysis_runs_profile_time_idx
+  ON pcs_analysis_runs(user_id, profile_id, period_start_at, period_end_at);

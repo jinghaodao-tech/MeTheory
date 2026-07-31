@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://metheory.local/schemas/pcs-analysis-snapshot-v2.schema.json",
+  "title": "PCS Analysis Snapshot V2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "snapshotId", "profileId", "generatedAt", "period", "records", "excluded"],
+  "properties": {
+    "schemaVersion": { "const": "pcs-analysis-snapshot-v2" },
+    "snapshotId": { "type": "string", "minLength": 1 },
+    "profileId": { "type": "string", "minLength": 1 },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "period": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startAt", "endAt", "timezone"],
+      "properties": {
+        "startAt": { "type": "string", "format": "date-time" },
+        "endAt": { "type": "string", "format": "date-time" },
+        "timezone": { "type": "string", "minLength": 1 }
+      }
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "recordedAt", "sourceDocumentId", "values"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "recordedAt": { "type": "string", "format": "date-time" },
+          "title": { "type": "string" },
+          "sourceDocumentId": { "type": ["string", "null"] },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fieldKey", "label", "valueType", "value", "templateId", "templateVersionId", "analysisRole", "analysisRoleConfirmed", "analysisUsage", "analysisMergeAllowed", "scaleFingerprint", "provenance"],
+              "properties": {
+                "fieldKey": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,127}$" },
+                "label": { "type": "string", "minLength": 1 },
+                "valueType": { "enum": ["boolean", "single_choice", "number", "integer", "scale", "duration_minutes"] },
+                "value": {},
+                "templateId": { "type": "string", "minLength": 1 },
+                "templateVersionId": { "type": "string", "minLength": 1 },
+                "analysisRole": { "type": "string", "minLength": 1 },
+                "analysisRoleConfirmed": { "const": true },
+                "analysisUsage": { "enum": ["condition", "outcome", "both", "excluded"] },
+                "analysisMergeAllowed": { "type": "boolean" },
+                "scaleFingerprint": { "type": "string", "minLength": 1 },
+                "unit": { "type": "string" },
+                "minimum": { "type": "number" },
+                "maximum": { "type": "number" },
+                "allowedValues": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["key", "label"],
+                    "properties": { "key": { "type": "string", "minLength": 1 }, "label": { "type": "string", "minLength": 1 } }
+                  }
+                },
+                "provenance": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["source", "sourceId", "userConfirmed", "recordedAt", "transformVersion", "privacyLevel"],
+                  "properties": {
+                    "source": { "enum": ["user_input", "reviewed_ai_extraction", "manual_import"] },
+                    "sourceId": { "type": "string", "minLength": 1 },
+                    "userConfirmed": { "const": true },
+                    "recordedAt": { "type": "string", "format": "date-time" },
+                    "transformVersion": { "type": "string", "minLength": 1 },
+                    "privacyLevel": { "enum": ["normal", "sensitive"] }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "excluded": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unconfirmed", "nonShareable", "highlySensitive", "invalid"],
+      "properties": {
+        "unconfirmed": { "type": "integer", "minimum": 0 },
+        "nonShareable": { "type": "integer", "minimum": 0 },
+        "highlySensitive": { "type": "integer", "minimum": 0 },
+        "invalid": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}
