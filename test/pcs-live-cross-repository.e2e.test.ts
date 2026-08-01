@@ -44,9 +44,10 @@ test("real PCS to MeTheory snapshot flow", { skip: !pcsRoot ? "set PCS_REPO_PATH
     const hypothesis = result.hypotheses[0]; const interpretation = hypothesis.interpretationInput ?? hypothesis.interpretation; if (!interpretation?.condition || !interpretation?.outcome) throw new Error(`interpretation_shape:${JSON.stringify({ keys: Object.keys(interpretation ?? {}), hypothesis })}`);
     assert.equal(interpretation.condition.semanticRole, "task_clarity");
     assert.equal(interpretation.outcome.semanticRole, "start_delay");
-    assert.ok(interpretation.statistics.groupACount >= 2);
-    assert.ok(interpretation.statistics.groupBCount >= 2);
-    assert.notEqual(interpretation.statistics.difference, 0);
+    assert.equal(interpretation.statistics.groupACount, 10);
+    assert.equal(interpretation.statistics.groupBCount, 10);
+    assert.deepEqual(new Set([interpretation.statistics.groupAValue, interpretation.statistics.groupBValue]), new Set([10, 40]));
+    assert.equal(Math.abs(interpretation.statistics.difference), 30);
     assert.ok(hypothesis.supportingEntryIds.length > 0);
     assert.ok(Array.isArray(hypothesis.supportingEvidence) && hypothesis.supportingEvidence.length > 0);
     assert.equal(result.dataQuality.excludedValueCount, 0);
