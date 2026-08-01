@@ -78,3 +78,10 @@ test("PCS V2 profile binding is isolated and analysis history is immutable by sn
   assert.throws(() => repository.saveRun("user-a", changed, analyzePcsAnalysisSnapshot(changed)), /snapshot_id_content_mismatch/);
   assert.equal(repository.listRuns("user-b").items.length, 0);
 });
+
+test("PCS applicability values are excluded from analysis until the period is resolved", () => {
+  const input = structuredClone(fixture) as any;
+  input.records[0].values[0].applicability = [{ condition: "workday", validFrom: "2026-07-01T00:00:00.000Z", validTo: "2026-07-03T00:00:00.000Z" }];
+  const result = analyzePcsAnalysisSnapshot(input as any);
+  assert.ok(result.excludedFields.some((item) => item.reason === "applicability_unresolved"));
+});

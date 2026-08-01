@@ -51,5 +51,8 @@ test("real PCS to MeTheory snapshot flow", { skip: !pcsRoot ? "set PCS_REPO_PATH
     assert.ok(hypothesis.supportingEntryIds.length > 0);
     assert.ok(Array.isArray(hypothesis.supportingEvidence) && hypothesis.supportingEvidence.length > 0);
     assert.equal(result.dataQuality.excludedValueCount, 0);
+    assert.equal(interpretation.statistics.missingRate, 0);
+    assert.equal(result.dataQuality.usableValueCount, 40);
+    assert.ok(Array.isArray(hypothesis.contradictingEvidence));
   } finally { for (const child of children) child.kill(); await new Promise((resolve) => setTimeout(resolve, 100)); rmSync(root, { recursive: true, force: true }); }
 });
