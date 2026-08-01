@@ -56,7 +56,7 @@
     },
     "dependencies": {
         "@types/pg": "^8.20.3",
-        "personal-context-studio": "git+https://github.com/jinghaodao-tech/Personal-Context-Studio.git#280ef8a",
+        "personal-context-studio": "git+https://github.com/jinghaodao-tech/Personal-Context-Studio.git#7b1224ca45b357139c0c4dc12cc1a82fa9d858a2",
         "pg": "^8.22.0"
     }
 }
