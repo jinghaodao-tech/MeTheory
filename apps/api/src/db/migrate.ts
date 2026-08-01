@@ -144,6 +144,9 @@ export function migrateDatabase(db: DatabaseSync, root: string) {
       id: "experiment-integrity-v1",
       apply: () => {
         db.exec("CREATE UNIQUE INDEX IF NOT EXISTS experiments_draft_unique ON experiments(draft_id)");
+        db.exec("PRAGMA foreign_keys = ON");
+        const violations = db.prepare("PRAGMA foreign_key_check").all();
+        if (violations.length) throw new Error(`foreign_key_check_failed:${violations.length}`);
       }
     },
     {
