@@ -185,6 +185,12 @@ The migration records its completion and uses deterministic IDs, so rerunning
 startup does not duplicate values. See `docs/parameter-eav.md` for table
 responsibilities, source adapters, AI access controls, and extension guidance.
 
+Closed-loop experiment migrations also verify `PRAGMA foreign_key_check`. Legacy
+experiment tables created before FK support are rebuilt transactionally with
+the canonical foreign keys while preserving common columns and rows; a
+violation aborts the migration instead of silently dropping data. The
+`migrations-integrity` test covers reruns and row preservation.
+
 Source Adapter implementations and the local AI read-only Snapshot boundary
 are documented in `docs/source-adapters.md`. The initial providers are
 `system_clock`, `test_fixture`, and `manual_import`; external OAuth/API

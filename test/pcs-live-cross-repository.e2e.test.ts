@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
+import { analyzePcsAnalysisSnapshot } from "../packages/self-understanding/src/pcsSnapshotAnalysis.ts";
 
 const pcsRoot = process.env.PCS_REPO_PATH;
 test("real PCS to MeTheory snapshot flow", { skip: !pcsRoot ? "set PCS_REPO_PATH to run the cross-repository E2E" : false }, async () => {
@@ -28,15 +29,26 @@ test("real PCS to MeTheory snapshot flow", { skip: !pcsRoot ? "set PCS_REPO_PATH
     ] });
     await request(pcs, `/v1/context-templates/${template.item.id}/activate`, "POST", {});
     const purpose = await request(pcs, "/v1/sharing-purposes", "POST", { name: "live_e2e" });
-    for (let index = 0; index < 12; index += 1) { const entry = await request(pcs, "/v1/context-entries", "POST", { templateId: template.item.id, values: { clarity: index < 6 ? 2 : 4, delay: index < 6 ? 40 : 10 } }); for (const fieldKey of ["clarity", "delay"]) await request(pcs, `/v1/context-entries/${entry.id}/values/${fieldKey}/purposes`, "PUT", { purposeIds: [purpose.id] }); }
+    const periodStart = "2026-07-01T00:00:00.000Z"; const periodEnd = "2026-08-15T00:00:00.000Z";
+    for (let index = 0; index < 20; index += 1) { const entry = await request(pcs, "/v1/context-entries", "POST", { templateId: template.item.id, values: { clarity: index < 10 ? 2 : 4, delay: index < 10 ? 40 : 10 } }); for (const fieldKey of ["clarity", "delay"]) await request(pcs, `/v1/context-entries/${entry.id}/values/${fieldKey}/purposes`, "PUT", { purposeIds: [purpose.id] }); }
     const profile = await request(pcs, "/v1/context-profiles", "POST", { name: "Live profile", target: "metheory", purposeId: purpose.id, includedFields: [{ templateId: template.item.id, fieldKey: "clarity" }, { templateId: template.item.id, fieldKey: "delay" }] });
     const client = await request(pcs, "/v1/integration-clients", "POST", { name: "MeTheory", permissions: ["read_snapshot"], allowedProfileIds: [profile.id] });
-    const snapshot = await request(pcs, `/v1/context/analysis-snapshot?profileId=${encodeURIComponent(profile.id)}&from=2026-07-01T00:00:00.000Z&to=2026-08-01T00:00:00.000Z`, "GET", undefined, { "x-pcs-client-id": client.id, authorization: `Bearer ${client.token}` });
-    assert.equal(snapshot.contractRevision, "pcs-analysis-snapshot-v2.1"); assert.equal(snapshot.profileId, profile.id); assert.equal(snapshot.records.length, 12);
+    const snapshot = await request(pcs, `/v1/context/analysis-snapshot?profileId=${encodeURIComponent(profile.id)}&from=${encodeURIComponent(periodStart)}&to=${encodeURIComponent(periodEnd)}`, "GET", undefined, { "x-pcs-client-id": client.id, authorization: `Bearer ${client.token}` });
+    assert.equal(snapshot.contractRevision, "pcs-analysis-snapshot-v2.1"); assert.equal(snapshot.profileId, profile.id); assert.equal(snapshot.records.length, 20);
     start(process.cwd(), { PORT: String(mtPort), METHEORY_DB: mtDb, PCS_API_URL: pcs, PCS_CLIENT_ID: client.id, PCS_CLIENT_TOKEN: client.token, PCS_PROFILE_ID: profile.id });
     await wait(`http://127.0.0.1:${mtPort}/healthz`);
     const db = new DatabaseSync(mtDb); db.prepare("INSERT INTO users(id,auth_subject,locale,timezone,created_at) VALUES(?,?,?,?,?)").run("live-user", "live-user-subject", "ja-JP", "Asia/Tokyo", "2026-07-01T00:00:00.000Z"); db.close();
-    const result = await request(`http://127.0.0.1:${mtPort}`, "/v1/self-understanding/analyze-personal-context", "POST", { userId: "live-user", profileId: profile.id, minimumEntryCount: 8, startAt: "2026-07-01T00:00:00.000Z", endAt: "2026-08-01T00:00:00.000Z" });
-    assert.ok(Array.isArray(result.hypotheses));
+    const result = await request(`http://127.0.0.1:${mtPort}`, "/v1/self-understanding/analyze-personal-context", "POST", { userId: "live-user", profileId: profile.id, minimumEntryCount: 8, startAt: periodStart, endAt: periodEnd });
+    assert.equal(result.status, "ready");
+    assert.ok(Array.isArray(result.hypotheses) && result.hypotheses.length >= 1);
+    const hypothesis = result.hypotheses[0]; const interpretation = hypothesis.interpretationInput ?? hypothesis.interpretation; if (!interpretation?.condition || !interpretation?.outcome) throw new Error(`interpretation_shape:${JSON.stringify({ keys: Object.keys(interpretation ?? {}), hypothesis })}`);
+    assert.equal(interpretation.condition.semanticRole, "task_clarity");
+    assert.equal(interpretation.outcome.semanticRole, "start_delay");
+    assert.ok(interpretation.statistics.groupACount >= 2);
+    assert.ok(interpretation.statistics.groupBCount >= 2);
+    assert.notEqual(interpretation.statistics.difference, 0);
+    assert.ok(hypothesis.supportingEntryIds.length > 0);
+    assert.ok(Array.isArray(hypothesis.supportingEvidence) && hypothesis.supportingEvidence.length > 0);
+    assert.equal(result.dataQuality.excludedValueCount, 0);
   } finally { for (const child of children) child.kill(); await new Promise((resolve) => setTimeout(resolve, 100)); rmSync(root, { recursive: true, force: true }); }
 });

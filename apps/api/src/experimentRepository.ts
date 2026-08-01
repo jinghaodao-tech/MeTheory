@@ -42,6 +42,11 @@ export class SqliteExperimentRepository {
   createDraft(userId: string, candidate: CandidateForExperiment, options: { durationDays?: number; minimumObservations?: number; timezone?: string; now?: string } = {}): ExperimentDraft {
     if (!userId || !candidate.id || !candidate.conditionParameterId || !candidate.outcomeParameterId) throw new Error("experiment_candidate_invalid");
     const draft = createExperimentDraftFromCandidate({ id: this.id("experiment_draft"), candidate, ...options });
+    const definition = this.db.prepare("SELECT value_type,minimum_value,maximum_value FROM parameter_definitions WHERE id=?").get(candidate.outcomeParameterId) as { value_type?: string; minimum_value?: number | null; maximum_value?: number | null } | undefined;
+    if (definition) {
+      const allowedValues = (this.db.prepare("SELECT value_key FROM parameter_allowed_values WHERE parameter_id=? AND is_active=1 ORDER BY value_key").all(candidate.outcomeParameterId) as Array<{ value_key: string }>).map((row) => row.value_key);
+      draft.outcomeDefinition = { parameterId: candidate.outcomeParameterId, valueType: String(definition.value_type ?? "number"), minimum: definition.minimum_value ?? undefined, maximum: definition.maximum_value ?? undefined, allowedValues: allowedValues.length ? allowedValues : undefined };
+    }
     const createdAt = options.now ?? new Date().toISOString();
     this.db.prepare("INSERT INTO experiment_drafts(id,user_id,source_candidate_id,draft_json,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)").run(draft.id, userId, candidate.id, json(draft), draft.status, createdAt, createdAt);
     return draft;
@@ -150,8 +155,16 @@ export class SqliteExperimentRepository {
     if (experiment.status === "paused") throw new Error("experiment_paused_observation_not_allowed");
     if (experiment.status !== "active") throw new Error("experiment_not_active");
     if (!observation.id || observation.id.length > 160 || !observation.observedAt || Number.isNaN(Date.parse(observation.observedAt))) throw new Error("experiment_observation_invalid");
+    if (experiment.startedAt && Date.parse(observation.observedAt) < Date.parse(experiment.startedAt)) throw new Error("experiment_observation_before_start");
+    if (experiment.startedAt && Date.parse(observation.observedAt) > Date.parse(experiment.startedAt) + experiment.durationDays * 86400000) throw new Error("experiment_observation_after_period");
     if (!observation.groupKey || observation.groupKey.length > 80 || ![experiment.groupAKey, experiment.groupBKey].includes(observation.groupKey)) throw new Error("experiment_observation_group_invalid");
     if (!Number.isFinite(observation.outcome)) throw new Error("experiment_observation_invalid");
+    const definition = this.getDraft(userId, experiment.draftId)?.outcomeDefinition;
+    if (definition) {
+      if (definition.valueType === "integer" && !Number.isInteger(observation.outcome)) throw new Error("experiment_observation_range_invalid");
+      if (definition.minimum !== undefined && observation.outcome < definition.minimum || definition.maximum !== undefined && observation.outcome > definition.maximum) throw new Error("experiment_observation_range_invalid");
+      if (definition.allowedValues?.length && !definition.allowedValues.includes(String(observation.outcome))) throw new Error("experiment_observation_choice_invalid");
+    }
     if (canonicalJson(observation.conditionValues ?? {}).length > 16_384 || (observation.note?.length ?? 0) > 2_000) throw new Error("experiment_observation_too_large");
     const idempotencyKey = observation.idempotencyKey ?? observation.id;
     if (!idempotencyKey || idempotencyKey.length > 160) throw new Error("experiment_observation_invalid");
