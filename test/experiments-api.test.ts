@@ -76,6 +76,9 @@ test("observation range and experiment period are enforced independently of grou
     assert.throws(() => repository.addObservationForExperiment("user-a", experiment.id, { id: "high", groupKey: "a", observedAt: started, outcome: 6, source: "manual", eligible: true }), /experiment_observation_range_invalid/);
     assert.doesNotThrow(() => repository.addObservationForExperiment("user-a", experiment.id, { id: "min", groupKey: "a", observedAt: started, outcome: 1, source: "manual", eligible: true }));
     assert.doesNotThrow(() => repository.addObservationForExperiment("user-a", experiment.id, { id: "max", groupKey: "b", observedAt: started, outcome: 5, source: "manual", eligible: true }));
+    const periodEnd = new Date(Date.parse(started) + repository.get("user-a", experiment.id)!.durationDays * 86400000).toISOString();
+    assert.doesNotThrow(() => repository.addObservationForExperiment("user-a", experiment.id, { id: "at-end", groupKey: "a", observedAt: periodEnd, outcome: 3, source: "manual", eligible: true }));
+    assert.throws(() => repository.addObservationForExperiment("user-a", experiment.id, { id: "after-end", groupKey: "b", observedAt: new Date(Date.parse(periodEnd) + 1).toISOString(), outcome: 3, source: "manual", eligible: true }), /experiment_observation_after_period/);
     assert.throws(() => repository.addObservationForExperiment("user-a", experiment.id, { id: "before", groupKey: "a", observedAt: new Date(Date.parse(started) - 1).toISOString(), outcome: 3, source: "manual", eligible: true }), /experiment_observation_before_start/);
   } finally { db.close(); rmSync(directory, { recursive: true, force: true }); }
 });

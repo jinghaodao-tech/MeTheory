@@ -1,4 +1,4 @@
-﻿import {
+import {
   CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION,
   validateContextAnalysisSnapshot,
   type ContextAnalysisSnapshotV2
@@ -24,7 +24,7 @@ export function validateBoundPcsSnapshot(snapshot: unknown, binding: PcsBinding)
 }
 
 export function analyzeBoundPcsSnapshot(snapshot: ContextAnalysisSnapshotV2, options: { minimumTotalSamples?: number; maximumCandidates?: number } = {}): PcsAnalysisResult {
-  return analyzePcsAnalysisSnapshot(snapshot as any, options);
+  return analyzePcsAnalysisSnapshot(snapshot, options);
 }
 
 

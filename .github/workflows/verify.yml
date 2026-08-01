@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+concurrency:
+  group: metheory-verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -34,3 +38,9 @@ jobs:
         working-directory: MeTheory
         env:
           PCS_REPO_PATH: ${{ github.workspace }}/Personal-Context-Studio
+      - name: PostgreSQL analysis smoke test
+        if: ${{ secrets.METHEORY_POSTGRES_URL != '' }}
+        run: npm run db:migrate:postgres && npm run test -- test/postgres-live.test.ts
+        working-directory: MeTheory
+        env:
+          METHEORY_POSTGRES_URL: ${{ secrets.METHEORY_POSTGRES_URL }}

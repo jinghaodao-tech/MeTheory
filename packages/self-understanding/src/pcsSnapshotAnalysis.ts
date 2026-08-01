@@ -1,8 +1,10 @@
 import {
-  assertValidPcsAnalysisSnapshotV2,
-  type PcsAnalysisSnapshotV2,
-  type PcsAnalysisUsage
-} from "../../contracts/src/pcsAnalysisSnapshotV2.ts";
+  CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION,
+  validateContextAnalysisSnapshot,
+  type ContextAnalysisSnapshotV2,
+  type ContextAnalysisValueV2
+} from "personal-context-studio/integration-contracts";
+type PcsAnalysisUsage = ContextAnalysisValueV2["analysisUsage"];
 import { isSelfUnderstandingSemanticRole, type SelfUnderstandingSemanticRole } from "./semanticRoles.ts";
 import {
   generateSelfUnderstanding,
@@ -41,11 +43,11 @@ export type PcsCandidateEvidence = EvidenceView & {
 
 export type PcsAnalysisResult = {
   status: "ready" | "insufficient";
-  schemaVersion: typeof import("../../contracts/src/pcsAnalysisSnapshotV2.ts").PCS_ANALYSIS_SNAPSHOT_V2;
+  schemaVersion: typeof CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION;
   snapshotId: string;
   profileId: string;
   generatedAt: string;
-  period: PcsAnalysisSnapshotV2["period"];
+  period: ContextAnalysisSnapshotV2["period"];
   dataQuality: {
     recordCount: number;
     usableValueCount: number;
@@ -86,23 +88,23 @@ function candidateValueType(valueType: string): CandidateParameter["valueType"] 
   return valueType === "scale" || valueType === "duration_minutes" || valueType === "integer" ? "number" : valueType;
 }
 
-function canonicalAllowedValues(value: PcsAnalysisSnapshotV2["records"][number]["values"][number]) {
+function canonicalAllowedValues(value: ContextAnalysisSnapshotV2["records"][number]["values"][number]) {
   return JSON.stringify((value.allowedValues ?? []).map((item) => item.key));
 }
 
-function isolatedParameterId(value: PcsAnalysisSnapshotV2["records"][number]["values"][number]) {
+function isolatedParameterId(value: ContextAnalysisSnapshotV2["records"][number]["values"][number]) {
   return ["isolated", value.templateId, value.templateVersionId, value.fieldKey].join(":");
 }
 
-function mergedParameterId(value: PcsAnalysisSnapshotV2["records"][number]["values"][number]) {
+function mergedParameterId(value: ContextAnalysisSnapshotV2["records"][number]["values"][number]) {
   return ["merged", value.analysisRole, value.analysisUsage, value.valueType, value.scaleFingerprint, value.unit ?? "", value.minimum ?? "", value.maximum ?? "", canonicalAllowedValues(value), JSON.stringify(value.positiveValueKeys ?? []), JSON.stringify(value.orderedValueKeys ?? []), JSON.stringify(value.numericMapping ?? {}), value.provenance.privacyLevel].join(":");
 }
 
-export function pcsParameterIdentity(value: PcsAnalysisSnapshotV2["records"][number]["values"][number]) {
-  return value.analysisMergeAllowed ? mergedParameterId(value) : isolatedParameterId(value);
+export function pcsParameterIdentity(value: unknown) {
+  const typed = value as ContextAnalysisSnapshotV2["records"][number]["values"][number];
+  return typed.analysisMergeAllowed ? mergedParameterId(typed) : isolatedParameterId(typed);
 }
-
-function excludedField(value: PcsAnalysisSnapshotV2["records"][number]["values"][number], reason: PcsExcludedField["reason"]): PcsExcludedField {
+function excludedField(value: ContextAnalysisSnapshotV2["records"][number]["values"][number], reason: PcsExcludedField["reason"]): PcsExcludedField {
   return { templateId: value.templateId, templateVersionId: value.templateVersionId, fieldKey: value.fieldKey, label: value.label, reason };
 }
 
@@ -136,7 +138,8 @@ function evidenceFor(input: {
 }
 
 export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTotalSamples?: number; maximumCandidates?: number } = {}): PcsAnalysisResult {
-  const snapshot = assertValidPcsAnalysisSnapshotV2(input);
+  const snapshot = validateContextAnalysisSnapshot(input);
+  if (snapshot.schemaVersion !== CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION) throw new Error("pcs_snapshot_version_unsupported");
   const excludedFields: PcsExcludedField[] = [];
   const groups = new Map<string, FieldGroup>();
   const valuesByRecord = new Map<string, Map<string, unknown>>();

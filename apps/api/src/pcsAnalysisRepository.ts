@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import type { PcsAnalysisSnapshotV2 } from "../../../packages/contracts/src/pcsAnalysisSnapshotV2.ts";
+import type { ContextAnalysisSnapshotV2 } from "personal-context-studio/integration-contracts";
 import type { PcsAnalysisResult } from "../../../packages/self-understanding/src/pcsSnapshotAnalysis.ts";
 
 export type PcsProfileBinding = {
@@ -36,7 +36,7 @@ export type PcsAnalysisRun = {
   snapshotId: string;
   profileId: string;
   generatedAt: string;
-  period: PcsAnalysisSnapshotV2["period"];
+  period: ContextAnalysisSnapshotV2["period"];
   schemaVersion: string;
   sourceRecordIds: string[];
   sourceFingerprint: string;
@@ -59,7 +59,7 @@ export function pcsSnapshotContractHash() {
   return hash("pcs-analysis-snapshot-v2:contract-1");
 }
 
-export function pcsSourceFingerprint(snapshot: PcsAnalysisSnapshotV2) {
+export function pcsSourceFingerprint(snapshot: ContextAnalysisSnapshotV2) {
   return hash(JSON.stringify(canonicalize(snapshot)));
 }
 
@@ -112,11 +112,12 @@ export class SqlitePcsAnalysisRepository {
     return Number(this.db.prepare("DELETE FROM pcs_profile_bindings WHERE metheory_user_id=?").run(userId).changes ?? 0) > 0;
   }
 
-  saveRun(userId: string, snapshot: PcsAnalysisSnapshotV2, result: PcsAnalysisResult): PcsAnalysisRun {
-    const existing = this.getRunBySnapshot(userId, snapshot.snapshotId);
+  saveRun(userId: string, snapshot: unknown, result: PcsAnalysisResult): PcsAnalysisRun {
+    const typedSnapshot = snapshot as ContextAnalysisSnapshotV2;
+    const existing = this.getRunBySnapshot(userId, typedSnapshot.snapshotId);
     const resultSummary = resultSummaryFrom(result);
     if (existing) {
-      if (existing.sourceFingerprint !== pcsSourceFingerprint(snapshot)) throw new PcsSnapshotContentMismatchError();
+      if (existing.sourceFingerprint !== pcsSourceFingerprint(typedSnapshot)) throw new PcsSnapshotContentMismatchError();
       if (!existing.resultSummary || !Array.isArray(existing.resultSummary.candidates)) {
         this.db.prepare("UPDATE pcs_analysis_runs SET result_summary_json=? WHERE user_id=? AND id=?").run(JSON.stringify(resultSummary), userId, existing.id);
         existing.resultSummary = resultSummary;
@@ -126,13 +127,13 @@ export class SqlitePcsAnalysisRepository {
     const run: PcsAnalysisRun = {
       id: `pcs_analysis_${randomUUID().replaceAll("-", "")}`,
       userId,
-      snapshotId: snapshot.snapshotId,
-      profileId: snapshot.profileId,
-      generatedAt: snapshot.generatedAt,
-      period: snapshot.period,
-      schemaVersion: snapshot.schemaVersion,
-      sourceRecordIds: snapshot.records.map((record) => record.id).sort(),
-      sourceFingerprint: pcsSourceFingerprint(snapshot),
+      snapshotId: typedSnapshot.snapshotId,
+      profileId: typedSnapshot.profileId,
+      generatedAt: typedSnapshot.generatedAt,
+      period: typedSnapshot.period,
+      schemaVersion: typedSnapshot.schemaVersion,
+      sourceRecordIds: typedSnapshot.records.map((record) => record.id).sort(),
+      sourceFingerprint: pcsSourceFingerprint(typedSnapshot),
       contractHash: pcsSnapshotContractHash(),
       createdAt: new Date().toISOString()
     };
@@ -152,8 +153,12 @@ export class SqlitePcsAnalysisRepository {
     return row ? this.toRun(row) : undefined;
   }
 
-  listRuns(userId: string) {
-    return (this.db.prepare("SELECT * FROM pcs_analysis_runs WHERE user_id=? ORDER BY created_at DESC").all(userId) as Record<string, unknown>[]).map((row) => this.toRun(row));
+  listRuns(userId: string, options: { limit?: number; offset?: number } = {}) {
+    const limit = Math.min(Math.max(Math.floor(options.limit ?? 50), 1), 200);
+    const offset = Math.max(Math.floor(options.offset ?? 0), 0);
+    const total = Number((this.db.prepare("SELECT COUNT(*) AS count FROM pcs_analysis_runs WHERE user_id=?").get(userId) as { count: number }).count);
+    const items = (this.db.prepare("SELECT * FROM pcs_analysis_runs WHERE user_id=? ORDER BY created_at DESC LIMIT ? OFFSET ?").all(userId, limit, offset) as Record<string, unknown>[]).map((row) => this.toRun(row));
+    return { items, total };
   }
 
   private toRun(row: Record<string, unknown>): PcsAnalysisRun {
