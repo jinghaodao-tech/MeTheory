@@ -54,6 +54,6 @@
         "typescript": "^7.0.2"
     },
     "dependencies": {
-        "personal-context-studio": "github:jinghaodao-tech/Personal-Context-Studio#main"
+        "personal-context-studio": "git+https://github.com/jinghaodao-tech/Personal-Context-Studio.git#b0cda0bedb7936235bee3ebe457a47fac04f050b"
     }
 }
