@@ -80,7 +80,9 @@ const runtimeColumns: Array<[string, string, string]> = [
   ["external_observations", "source_identity", "TEXT"]
 ];
 
-export function migrateDatabase(db: DatabaseSync, root: string) {
+export type MigrationOptions = { failAfterTable?: string };
+
+export function migrateDatabase(db: DatabaseSync, root: string, options: MigrationOptions = {}) {
   db.exec(readFileSync(resolve(root, "db", "ts_mvp_schema.sql"), "utf8"));
   db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL) STRICT");
   const migrations: Migration[] = [
@@ -139,6 +141,7 @@ export function migrateDatabase(db: DatabaseSync, root: string) {
           if (foreignKeys.length > 0) return;
           const legacy = table + "_legacy";
           db.exec("DROP TABLE IF EXISTS " + legacy + "; ALTER TABLE " + table + " RENAME TO " + legacy + "; " + createSql + " INSERT INTO " + table + " (" + columns + ") SELECT " + columns + " FROM " + legacy + "; DROP TABLE " + legacy + ";");
+          if (options.failAfterTable === table) throw new Error("migration_test_failure:" + table);
         };
         rebuild("experiment_drafts", "CREATE TABLE experiment_drafts (id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,source_candidate_id TEXT NOT NULL,draft_json TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN('draft','accepted','rejected')),created_at TEXT NOT NULL,updated_at TEXT NOT NULL) STRICT;", "id,user_id,source_candidate_id,draft_json,status,created_at,updated_at");
         rebuild("experiments", "CREATE TABLE experiments (id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,draft_id TEXT NOT NULL REFERENCES experiment_drafts(id) ON DELETE RESTRICT,source_candidate_id TEXT NOT NULL,title TEXT NOT NULL,statement TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN('condition_comparison','behavioral_intervention','observation_only')),comparison_type TEXT NOT NULL CHECK(comparison_type IN('condition_difference','before_after','with_without_intervention')),status TEXT NOT NULL CHECK(status IN('draft','ready','active','paused','completed','evaluated','archived','cancelled','insufficient_data','invalid')),started_at TEXT,ended_at TEXT,duration_days INTEGER NOT NULL,minimum_observations INTEGER NOT NULL,minimum_per_group INTEGER NOT NULL,schedule_json TEXT NOT NULL,stop_conditions_json TEXT NOT NULL,safety_notes_json TEXT NOT NULL,created_at TEXT NOT NULL) STRICT;", "id,user_id,draft_id,source_candidate_id,title,statement,kind,comparison_type,status,started_at,ended_at,duration_days,minimum_observations,minimum_per_group,schedule_json,stop_conditions_json,safety_notes_json,created_at");
