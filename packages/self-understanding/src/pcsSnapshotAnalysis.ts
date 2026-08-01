@@ -27,7 +27,8 @@ export type PcsExcludedField = {
     | "value_type_unsupported"
     | "scale_invalid"
     | "merge_not_allowed"
-    | "privacy_not_allowed";
+    | "privacy_not_allowed"
+    | "applicability_unresolved";
 };
 
 export type PcsCandidateEvidence = EvidenceView & {
@@ -151,6 +152,7 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
     const values = new Map<string, unknown>();
     const provenance = new Map<string, { source: "user_entry"; labelJa: string; observationIds: string[]; sourceId: string; transformVersion: string; privacyLevel: string; provenanceSource: "user_input" | "reviewed_ai_extraction" | "manual_import" }>();
     for (const value of record.values) {
+      if ((value as ContextAnalysisValueV2 & { applicability?: unknown[] }).applicability?.length) { excludedFields.push(excludedField(value, "applicability_unresolved")); excludedValueCount += 1; continue; }
       if (!value.analysisRoleConfirmed) { excludedFields.push(excludedField(value, "analysis_role_unconfirmed")); excludedValueCount += 1; continue; }
       if (!isSelfUnderstandingSemanticRole(value.analysisRole)) { excludedFields.push(excludedField(value, "analysis_role_unknown")); excludedValueCount += 1; continue; }
       if (value.analysisUsage === "excluded") { excludedFields.push(excludedField(value, "analysis_usage_excluded")); excludedValueCount += 1; continue; }
