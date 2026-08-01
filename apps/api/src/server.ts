@@ -19,9 +19,10 @@ import {
   IPIP_BASELINE_ITEM_SET_VERSION
 } from "../../../packages/self-understanding/src/index.ts";
 import { ActivityWatchAdapter, activityWatchObservationIdentity, summarizeActivityWatchDaily } from "../../../packages/domain/src/activitywatch.ts";
-import { PcsSnapshotContentMismatchError, SqlitePcsAnalysisRepository } from "./pcsAnalysisRepository.ts";
+import { PcsSnapshotContentMismatchError } from "./pcsAnalysisRepository.ts";
+import { createPcsAnalysisStore } from "./pcsAnalysisStore.ts";
 import { analyzePcsAnalysisSnapshot } from "../../../packages/self-understanding/src/pcsSnapshotAnalysis.ts";
-import { assertValidPcsAnalysisSnapshotV2 } from "../../../packages/contracts/src/pcsAnalysisSnapshotV2.ts";
+import { CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION, validateContextAnalysisSnapshot, type ContextAnalysisSnapshotV2 } from "personal-context-studio/integration-contracts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.METHEORY_DB ?? resolve(root, "data", "metheory.sqlite3");
@@ -30,7 +31,7 @@ migrateDatabase(db, root);
 const aiQueryService = createAiQueryService(db);
 const selfUnderstandingRepository = new SqliteSelfUnderstandingRepository(db);
 const experimentRepository = new SqliteExperimentRepository(db);
-const pcsAnalysisRepository = new SqlitePcsAnalysisRepository(db);
+const pcsAnalysisRepository = createPcsAnalysisStore(db);
 
 function normalizeSelfModelResolution(action: string): "new" | "update_existing" | "separate" {
   if (action === "create_new" || action === "new") return "new";
@@ -225,7 +226,7 @@ function personalContextCandidate(snapshot: any, reviewStatus: "fits" | "does_no
       periodStartAt: String(period.startAt ?? ""),
       periodEndAt: String(period.endAt ?? "")
     },
-    caution: ["これは診断や固定的な人格評価ではありません。", "記録数や未記録の条件により変わる可能性があります。"],
+     caution: ["This is a non-diagnostic, user-reviewed observation.", "Results may change with missing conditions and additional records."],
     createdAt
   };
 }
@@ -255,7 +256,7 @@ function experimentCandidateFromSnapshot(snapshot: Record<string, unknown>, cand
   };
 }
 function analyzeSelfUnderstanding(userId: string, input: Record<string, unknown>) { const endAt = typeof input.endAt === "string" ? input.endAt : now(); const startAt = typeof input.startAt === "string" ? input.startAt : new Date(Date.parse(endAt) - 28 * 86400000).toISOString(); const minimumEntryCount = Math.max(2, Math.min(100, Number(input.minimumEntryCount ?? 4))); const rows = db.prepare("SELECT e.id,e.recorded_at,e.title,f.field_key,f.label,f.value_type,f.options_json,ev.is_missing,ev.boolean_value,ev.integer_value,ev.number_value,ev.text_value,ev.json_value,ev.date_value,ev.datetime_value,ev.duration_seconds FROM entries e JOIN entry_field_values ev ON ev.entry_id=e.id JOIN entry_template_fields f ON f.id=ev.template_field_id WHERE e.user_id=? AND e.archived_at IS NULL AND ev.reviewed_at IS NOT NULL AND e.recorded_at>=? AND e.recorded_at<=? ORDER BY e.recorded_at").all(userId, startAt, endAt) as Array<Record<string, unknown>>; const entryCount = new Set(rows.map(row => String(row.id))).size; if (entryCount < minimumEntryCount) return { period: { startAt, endAt }, entryCount, minimumEntryCount, dataShortage: { needed: minimumEntryCount - entryCount, message: "Confirmed structured values are insufficient for a reliable hypothesis." }, hypotheses: [] }; const definitions = new Map<string, { id: string; nameJa: string; valueType: string; minimumValue?: number; maximumValue?: number; usableAsCondition: boolean; usableAsOutcome: boolean }>(); const allowedValues: Record<string, Array<{ valueKey: string; labelJa: string }>> = {}; const records = new Map<string, UnderstandingRecord>(); const observations: Array<{ episodeId: string; parameterId: string; value: unknown; isMissing: boolean; observedAt: string }> = []; for (const row of rows) { const parameterId = String(row.field_key); const valueType = row.value_type === "choice" ? "single_choice" : ["integer", "number", "scale", "duration_seconds"].includes(String(row.value_type)) ? "number" : String(row.value_type); if (!["boolean", "single_choice", "integer", "number"].includes(valueType)) continue; if (!definitions.has(parameterId)) { definitions.set(parameterId, { id: parameterId, nameJa: String(row.label ?? parameterId), valueType, minimumValue: 0, maximumValue: valueType === "boolean" || valueType === "single_choice" ? undefined : 100, usableAsCondition: true, usableAsOutcome: true }); try { const options = JSON.parse(String(row.options_json ?? "[]")) as Array<{ key?: string; label?: string }>; allowedValues[parameterId] = options.map(option => ({ valueKey: String(option.key ?? ""), labelJa: String(option.label ?? option.key ?? "") })).filter(option => option.valueKey); } catch { allowedValues[parameterId] = []; } } const value = fieldValue(row); observations.push({ episodeId: String(row.id), parameterId, value, isMissing: value === null, observedAt: String(row.recorded_at) }); const record = records.get(String(row.id)) ?? { id: String(row.id), recordedAt: String(row.recorded_at), title: String(row.title), conditionValues: {}, outcomeValues: {} }; record.conditionValues[parameterId] = value; record.outcomeValues[parameterId] = value; records.set(String(row.id), record); } const hypotheses = generateSelfUnderstanding({ parameters: [...definitions.values()], observations, records: [...records.values()], allowedValues, startAt, now: endAt, maximumCandidates: 5 } as any); return { period: { startAt, endAt }, entryCount, minimumEntryCount, hypotheses }; }
-function analyzeSelfUnderstandingPractical(userId: string, input: Record<string, unknown>) { const endAt = typeof input.endAt === "string" ? input.endAt : now(); const startAt = typeof input.startAt === "string" ? input.startAt : new Date(Date.parse(endAt) - 28 * 86400000).toISOString(); const minimumEntryCount = Math.max(8, Math.min(100, Number(input.minimumEntryCount ?? 8))); const templateId = typeof input.templateId === "string" && input.templateId ? input.templateId : undefined; const fieldKeys = Array.isArray(input.fieldKeys) ? input.fieldKeys.filter((item): item is string => typeof item === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(item)).slice(0, 30) : []; const clauses = ["e.user_id=?", "e.archived_at IS NULL", "ev.reviewed_at IS NOT NULL", "e.recorded_at>=?", "e.recorded_at<=?"]; const params: string[] = [userId, startAt, endAt]; if (templateId) { clauses.push("e.template_id=?"); params.push(templateId); } if (fieldKeys.length) { clauses.push(`f.field_key IN (${fieldKeys.map(() => "?").join(",")})`); params.push(...fieldKeys); } const rows = db.prepare(`SELECT e.id,e.recorded_at,e.title,e.template_id,ev.template_version_id,f.field_key,f.label,f.value_type,f.options_json,f.minimum,f.maximum,ev.is_missing,ev.boolean_value,ev.integer_value,ev.number_value,ev.text_value,ev.json_value,ev.date_value,ev.datetime_value,ev.duration_seconds FROM entries e JOIN entry_field_values ev ON ev.entry_id=e.id JOIN entry_template_fields f ON f.id=ev.template_field_id WHERE ${clauses.join(" AND ")} ORDER BY e.recorded_at`).all(...params) as Array<Record<string, unknown>>; const entryCount = new Set(rows.map(row => String(row.id))).size; const templateVersionIds = [...new Set(rows.map(row => typeof row.template_version_id === "string" ? row.template_version_id : "").filter(Boolean))]; const options = { templateId: templateId ?? null, templateVersionId: templateVersionIds.length === 1 ? templateVersionIds[0] : null, templateVersionIds, fieldKeys }; if (entryCount < minimumEntryCount) return { status: "insufficient", statusLabelJa: "データ不足", period: { startAt, endAt }, filters: options, entryCount, minimumEntryCount, dataShortage: { needed: minimumEntryCount - entryCount, message: "確認済みの構造化記録が不足しています。条件と結果を同じEntryで記録してください。", recommendedFields: fieldKeys }, hypotheses: [] }; const definitions = new Map<string, { id: string; nameJa: string; valueType: string; minimumValue?: number; maximumValue?: number; usableAsCondition: boolean; usableAsOutcome: boolean }>(); const allowedValues: Record<string, Array<{ valueKey: string; labelJa: string }>> = {}; const records = new Map<string, UnderstandingRecord>(); const observations: Array<{ episodeId: string; parameterId: string; value: unknown; isMissing: boolean; observedAt: string }> = []; for (const row of rows) { const parameterId = String(row.field_key); const valueType = row.value_type === "choice" ? "single_choice" : ["integer", "number", "scale", "duration_seconds"].includes(String(row.value_type)) ? "number" : String(row.value_type); if (!["boolean", "single_choice", "integer", "number"].includes(valueType)) continue; if (!definitions.has(parameterId)) { definitions.set(parameterId, { id: parameterId, nameJa: String(row.label ?? parameterId), valueType, minimumValue: typeof row.minimum === "number" ? row.minimum : 0, maximumValue: typeof row.maximum === "number" ? row.maximum : valueType === "boolean" || valueType === "single_choice" ? undefined : 100, usableAsCondition: true, usableAsOutcome: true }); try { const choices = JSON.parse(String(row.options_json ?? "[]")) as Array<{ key?: string; label?: string }>; allowedValues[parameterId] = choices.map(choice => ({ valueKey: String(choice.key ?? ""), labelJa: String(choice.label ?? choice.key ?? "") })).filter(choice => choice.valueKey); } catch { allowedValues[parameterId] = []; } } const value = fieldValue(row); observations.push({ episodeId: String(row.id), parameterId, value, isMissing: value === null, observedAt: String(row.recorded_at) }); const record = records.get(String(row.id)) ?? { id: String(row.id), recordedAt: String(row.recorded_at), title: String(row.title), conditionValues: {}, outcomeValues: {} }; record.conditionValues[parameterId] = value; record.outcomeValues[parameterId] = value; records.set(String(row.id), record); } const hypotheses = generateSelfUnderstanding({ parameters: [...definitions.values()], observations, records: [...records.values()], allowedValues, now: endAt, config: { minimumTotalSamples: minimumEntryCount, maximumCandidates: 5 } }); return { status: hypotheses.length ? "ready" : "insufficient", statusLabelJa: hypotheses.length ? "分析候補あり" : "比較可能な差が不足", period: { startAt, endAt }, filters: options, entryCount, minimumEntryCount, hypotheses, explanationMode: "deterministic_fallback" }; }
+function analyzeSelfUnderstandingPractical(userId: string, input: Record<string, unknown>) { const endAt = typeof input.endAt === "string" ? input.endAt : now(); const startAt = typeof input.startAt === "string" ? input.startAt : new Date(Date.parse(endAt) - 28 * 86400000).toISOString(); const minimumEntryCount = Math.max(8, Math.min(100, Number(input.minimumEntryCount ?? 8))); const templateId = typeof input.templateId === "string" && input.templateId ? input.templateId : undefined; const fieldKeys = Array.isArray(input.fieldKeys) ? input.fieldKeys.filter((item): item is string => typeof item === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(item)).slice(0, 30) : []; const clauses = ["e.user_id=?", "e.archived_at IS NULL", "ev.reviewed_at IS NOT NULL", "e.recorded_at>=?", "e.recorded_at<=?"]; const params: string[] = [userId, startAt, endAt]; if (templateId) { clauses.push("e.template_id=?"); params.push(templateId); } if (fieldKeys.length) { clauses.push(`f.field_key IN (${fieldKeys.map(() => "?").join(",")})`); params.push(...fieldKeys); } const rows = db.prepare(`SELECT e.id,e.recorded_at,e.title,e.template_id,ev.template_version_id,f.field_key,f.label,f.value_type,f.options_json,f.minimum,f.maximum,ev.is_missing,ev.boolean_value,ev.integer_value,ev.number_value,ev.text_value,ev.json_value,ev.date_value,ev.datetime_value,ev.duration_seconds FROM entries e JOIN entry_field_values ev ON ev.entry_id=e.id JOIN entry_template_fields f ON f.id=ev.template_field_id WHERE ${clauses.join(" AND ")} ORDER BY e.recorded_at`).all(...params) as Array<Record<string, unknown>>; const entryCount = new Set(rows.map(row => String(row.id))).size; const templateVersionIds = [...new Set(rows.map(row => typeof row.template_version_id === "string" ? row.template_version_id : "").filter(Boolean))]; const options = { templateId: templateId ?? null, templateVersionId: templateVersionIds.length === 1 ? templateVersionIds[0] : null, templateVersionIds, fieldKeys }; if (entryCount < minimumEntryCount) return { status: "insufficient", statusLabelJa: "鬩幢ｽ｢隴擾ｽｴ郢晢ｽｻ驛｢譎｢・ｽ・ｻ鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｿ鬮｣蛹・ｽｽ・ｳ髯晢｣ｰ髮懶ｽ｣繝ｻ・ｽ繝ｻ・ｶ郢晢ｽｻ繝ｻ・ｳ", period: { startAt, endAt }, filters: options, entryCount, minimumEntryCount, dataShortage: { needed: minimumEntryCount - entryCount, message: "鬯ｩ蠅捺・繝ｻ・ｽ繝ｻ・ｺ鬯ｮ・ｫ繝ｻ・ｱ鬮｢・ｧ繝ｻ・ｴ郢晢ｽｻ繝ｻ・ｸ髯具ｽｹ繝ｻ・ｻ驕ｶ謫ｾ・ｽ・ｩ鬩搾ｽｵ繝ｻ・ｺ郢晢ｽｻ繝ｻ・ｮ鬮ｫ・ｶ陜｣・､雎｢・ｸ繝ｻ縺､ﾂ郢晢ｽｻ繝ｻ・ｰ鬮ｯ蜈ｷ・ｽ・ｹ髯ｷﾂ繝ｻ・ｶ郢晢ｽｻ繝ｻ・ｨ髯区ｻゑｽｽ・ｬ鬲・私・ｽ・ｸ鬩搾ｽｵ繝ｻ・ｺ髯溷桁・ｽ・｡郢晢ｽｻ繝ｻ・ｸ髯晢｣ｰ髮懶ｽ｣繝ｻ・ｽ繝ｻ・ｶ郢晢ｽｻ繝ｻ・ｳ鬩搾ｽｵ繝ｻ・ｺ髯ｷ莨夲ｽｽ・ｱ驕ｯ・ｶ繝ｻ・ｻ鬩搾ｽｵ繝ｻ・ｺ驛｢譎｢・ｽ・ｻ驕ｶ謫ｾ・ｽ・ｪ鬩搾ｽｵ繝ｻ・ｺ髯ｷ・ｷ繝ｻ・ｶ繝ｻ縺､ﾂ驛｢・ｧ陜捺ｺｷ・･驤ｴ豼ｫ闔ｨ螟ｲ・ｽ・ｽ繝ｻ・ｶ鬩搾ｽｵ繝ｻ・ｺ郢晢ｽｻ繝ｻ・ｨ鬯ｩ謳ｾ・ｽ・ｨ髯ｷ莠･豐ｺ繝ｻ・｣繝ｻ・｡鬩幢ｽ｢繝ｻ・ｧ鬮ｮ蛹ｺ・ｨ・｣郢晢ｽｻ鬩搾ｽｵ繝ｻ・ｺ髫ｶ螢ｽ・ｸ・｡try鬩搾ｽｵ繝ｻ・ｺ郢晢ｽｻ繝ｻ・ｧ鬯ｮ・ｫ繝ｻ・ｪ髯区ｻゑｽｽ・ｬ鬲・私・ｽ・ｸ鬩搾ｽｵ繝ｻ・ｺ髯ｷ莨夲ｽｽ・ｱ驕ｯ・ｶ繝ｻ・ｻ鬩搾ｽｵ繝ｻ・ｺ髣包ｽｳ陝ｯ・ｩ陷ｻ・ｳ鬩搾ｽｵ繝ｻ・ｺ鬮ｴ驛・ｽｲ・ｻ繝ｻ・ｼ隶捺慣・ｽ・ｸ繝ｻ・ｲ驛｢譎｢・ｽ・ｻ, recommendedFields: fieldKeys }, hypotheses: [] }; const definitions = new Map<string, { id: string; nameJa: string; valueType: string; minimumValue?: number; maximumValue?: number; usableAsCondition: boolean; usableAsOutcome: boolean }>(); const allowedValues: Record<string, Array<{ valueKey: string; labelJa: string }>> = {}; const records = new Map<string, UnderstandingRecord>(); const observations: Array<{ episodeId: string; parameterId: string; value: unknown; isMissing: boolean; observedAt: string }> = []; for (const row of rows) { const parameterId = String(row.field_key); const valueType = row.value_type === "choice" ? "single_choice" : ["integer", "number", "scale", "duration_seconds"].includes(String(row.value_type)) ? "number" : String(row.value_type); if (!["boolean", "single_choice", "integer", "number"].includes(valueType)) continue; if (!definitions.has(parameterId)) { definitions.set(parameterId, { id: parameterId, nameJa: String(row.label ?? parameterId), valueType, minimumValue: typeof row.minimum === "number" ? row.minimum : 0, maximumValue: typeof row.maximum === "number" ? row.maximum : valueType === "boolean" || valueType === "single_choice" ? undefined : 100, usableAsCondition: true, usableAsOutcome: true }); try { const choices = JSON.parse(String(row.options_json ?? "[]")) as Array<{ key?: string; label?: string }>; allowedValues[parameterId] = choices.map(choice => ({ valueKey: String(choice.key ?? ""), labelJa: String(choice.label ?? choice.key ?? "") })).filter(choice => choice.valueKey); } catch { allowedValues[parameterId] = []; } } const value = fieldValue(row); observations.push({ episodeId: String(row.id), parameterId, value, isMissing: value === null, observedAt: String(row.recorded_at) }); const record = records.get(String(row.id)) ?? { id: String(row.id), recordedAt: String(row.recorded_at), title: String(row.title), conditionValues: {}, outcomeValues: {} }; record.conditionValues[parameterId] = value; record.outcomeValues[parameterId] = value; records.set(String(row.id), record); } const hypotheses = generateSelfUnderstanding({ parameters: [...definitions.values()], observations, records: [...records.values()], allowedValues, now: endAt, config: { minimumTotalSamples: minimumEntryCount, maximumCandidates: 5 } }); return { status: hypotheses.length ? "ready" : "insufficient", statusLabelJa: hypotheses.length ? "鬮ｯ蜈ｷ・ｽ・ｻ驛｢譎｢・ｽ・ｻ髫ｴ・ｴ繝ｻ・ｵ鬮ｯ蛹ｺ・ｺ・ｷ隰繝ｻ繝ｻ繝ｻ・｣髫ｲ蟶幢ｽｲ・ｩ隴鯉ｽｺ鬩幢ｽ｢繝ｻ・ｧ驛｢譎｢・ｽ・ｻ : "鬮ｮ謇九＃繝ｻ・｢隰・∞・ｽ・ｽ繝ｻ・ｼ驛｢譎｢・ｽ・ｻ髯溷ｼｱ繝ｻ陞ｯ蜷ｶ繝ｻ繝ｻ・ｽ鬩搾ｽｵ繝ｻ・ｺ郢晢ｽｻ繝ｻ・ｪ鬮ｯ譎｢・ｽ・ｾ郢晢ｽｻ繝ｻ・ｮ鬩搾ｽｵ繝ｻ・ｺ髯溷桁・ｽ・｡郢晢ｽｻ繝ｻ・ｸ髯晢｣ｰ髮懶ｽ｣繝ｻ・ｽ繝ｻ・ｶ郢晢ｽｻ繝ｻ・ｳ", period: { startAt, endAt }, filters: options, entryCount, minimumEntryCount, hypotheses, explanationMode: "deterministic_fallback" }; }
 
 async function analyzeSelfUnderstandingWithInterpretation(
   userId: string,
@@ -500,7 +501,7 @@ const server = createServer(async (request, response) => {
   const parts = pathParts(request);
   const requestUrl = new URL(request.url ?? "/", "http://localhost");
   try {
-    if (request.method === "GET" && parts.join("/") === "healthz") return json(response, 200, { status: "ok", service: "metheory-api" });
+    if (request.method === "GET" && parts.join("/") === "healthz") return json(response, 200, { status: "ok", service: "metheory-api", analysisStore: pcsAnalysisRepository.driver, analysisStoreHealthy: await pcsAnalysisRepository.health() });
     /* Retired record API. Templates, entries, record privacy, and Markdown search belong to PCS. */
     /*
     if (parts[0] === "v1" && parts[1] === "templates") {
@@ -533,25 +534,29 @@ const server = createServer(async (request, response) => {
       if (request.method === "GET") {
         const userId = requestUrl.searchParams.get("userId") ?? "";
         if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-        return json(response, 200, { binding: pcsAnalysisRepository.getBinding(userId) ?? null });
+        return json(response, 200, { binding: await pcsAnalysisRepository.getBinding(userId) ?? null });
       }
       const input = await body(request);
       const userId = optionalString(input.userId) ?? "";
       if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      if (request.method === "DELETE") return json(response, 200, { removed: pcsAnalysisRepository.remove(userId) });
+      if (request.method === "DELETE") return json(response, 200, { removed: await pcsAnalysisRepository.remove(userId) });
       const profileId = optionalString(input.profileId) ?? "";
       if (!profileId) return json(response, 400, { error: "pcs_profile_id_required" });
-      if (request.method === "POST") return json(response, 200, { binding: pcsAnalysisRepository.bind(userId, profileId) });
+      if (request.method === "POST") return json(response, 200, { binding: await pcsAnalysisRepository.bind(userId, profileId) });
     }
     if (request.method === "GET" && parts.join("/") === "v1/pcs/analysis-runs") {
       const userId = requestUrl.searchParams.get("userId") ?? "";
       if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      return json(response, 200, { items: pcsAnalysisRepository.listRuns(userId) });
+      const limit = Number(requestUrl.searchParams.get("limit") ?? 50);
+      const offset = Number(requestUrl.searchParams.get("offset") ?? 0);
+      if (!Number.isInteger(limit) || !Number.isInteger(offset) || limit < 1 || limit > 200 || offset < 0) return json(response, 400, { error: "analysis_runs_pagination_invalid" });
+      const page = await pcsAnalysisRepository.listRuns(userId, { limit, offset });
+      return json(response, 200, { ...page, nextOffset: offset + page.items.length < page.total ? offset + page.items.length : null });
     }
     if (request.method === "GET" && parts.length === 4 && parts[0] === "v1" && parts[1] === "pcs" && parts[2] === "analysis-runs") {
       const userId = requestUrl.searchParams.get("userId") ?? "";
       if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
-      const run = pcsAnalysisRepository.getRun(userId, parts[3]);
+      const run = await pcsAnalysisRepository.getRun(userId, parts[3]);
       return run ? json(response, 200, { run }) : json(response, 404, { error: "pcs_analysis_run_not_found" });
     }
     if (parts[0] === "v1" && parts[1] === "ai" && request.method === "GET") {
@@ -661,19 +666,21 @@ const server = createServer(async (request, response) => {
       const input = await body(request); const userId = optionalString(input.userId) ?? ""; if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
       const endAt = optionalString(input.endAt) ?? now(); const startAt = optionalString(input.startAt) ?? new Date(Date.parse(endAt) - 28 * 86400000).toISOString();
       if (Number.isNaN(Date.parse(startAt)) || Number.isNaN(Date.parse(endAt)) || Date.parse(startAt) >= Date.parse(endAt)) return json(response, 400, { error: "analysis_period_invalid" });
-      const profileId = optionalString(input.profileId) ?? pcsAnalysisRepository.getBinding(userId)?.pcsProfileId;
+      const profileId = optionalString(input.profileId) ?? (await pcsAnalysisRepository.getBinding(userId))?.pcsProfileId;
       if (!profileId) return json(response, 409, { error: "pcs_profile_binding_required" });
-      const binding = pcsAnalysisRepository.getBinding(userId);
+      const binding = await pcsAnalysisRepository.getBinding(userId);
       if (binding && binding.pcsProfileId !== profileId) return json(response, 409, { error: "pcs_profile_mismatch" });
-      const snapshot = assertValidPcsAnalysisSnapshotV2(await new PcsIntegrationClient({
+      const candidate = validateContextAnalysisSnapshot(await new PcsIntegrationClient({
         baseUrl: process.env.PCS_API_URL,
         clientId: process.env.PCS_CLIENT_ID,
         token: process.env.PCS_CLIENT_TOKEN,
         profileId,
       }).getAnalysisSnapshot({ profileId, from: startAt, to: endAt, timezone: optionalString(input.timezone) ?? process.env.PCS_TIMEZONE ?? "UTC" }));
+      if (candidate.schemaVersion !== CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION) return json(response, 422, { error: "pcs_snapshot_version_unsupported" });
+      const snapshot = candidate as ContextAnalysisSnapshotV2;
       const result = analyzePcsAnalysisSnapshot(snapshot, { minimumTotalSamples: Number(input.minimumEntryCount ?? 8) });
       let run;
-      try { run = pcsAnalysisRepository.saveRun(userId, snapshot, result); }
+      try { run = await pcsAnalysisRepository.saveRun(userId, snapshot, result); }
       catch (error) { if (error instanceof PcsSnapshotContentMismatchError) return json(response, 409, { error: "snapshot_id_content_mismatch" }); throw error; }
       selfUnderstandingRepository.savePcsResult(userId, result);
       return json(response, 200, { ...result, analysisRunId: run.id, snapshotId: snapshot.snapshotId });
@@ -1017,7 +1024,7 @@ const server = createServer(async (request, response) => {
           const experiment = experimentRepository.get(userId, parts[2]);
           if (!experiment) return json(response, 404, { error: "experiment_not_found" });
           const rows = db.prepare("SELECT rp.parameter_id,pd.name_ja,pd.askable,rp.minimum_samples FROM experiment_required_parameters rp JOIN parameter_definitions pd ON pd.id=rp.parameter_id WHERE rp.experiment_id=? ORDER BY rp.priority").all(parts[2]) as Array<Record<string, unknown>>;
-          return json(response, 200, { items: rows.map((row) => ({ parameterId: String(row.parameter_id), text: `現在の「${String(row.name_ja)}」を記録してください。`, askable: Number(row.askable) === 1, minimumSamples: Number(row.minimum_samples), reason: "この実験に必要な観測項目です" })) });
+           return json(response, 200, { items: rows.map((row) => ({ parameterId: String(row.parameter_id), text: `Record the current ${String(row.name_ja)}.`, askable: Number(row.askable) === 1, minimumSamples: Number(row.minimum_samples), reason: "This observation is required by the experiment." })) });
         }
         if (request.method === "GET" && parts.length === 4 && parts[3] === "evaluations") return json(response, 200, { evaluation: experimentRepository.latestEvaluation(userId, parts[2]) ?? null });
         if (request.method === "POST" && parts.length === 4 && parts[3] === "responses") {
@@ -1049,7 +1056,7 @@ const server = createServer(async (request, response) => {
       if (request.method === "POST" && parts.length === 4 && parts[3] === "pcs-template-request") {
         const plan = experimentRepository.getCollectionPlan(userId, parts[2]);
         if (!plan) return json(response, 404, { error: "collection_plan_not_found" });
-        return json(response, 200, { request: plan.pcsTemplateRequest ?? null, sent: false, note: "PCSの汎用Template Requestへ渡す前に利用者の承認が必要です" });
+        return json(response, 200, { request: plan.pcsTemplateRequest ?? null, sent: false, note: "User approval is required before sending this template request to PCS." });
       }
     }
     if (request.method === "GET" && parts.join("/") === "v1/self-model/review-due") {
@@ -1100,3 +1107,5 @@ const server = createServer(async (request, response) => {
 
 const port = Number(process.env.PORT ?? 8100);
 server.listen(port, "127.0.0.1", () => console.log(`MeTheory TypeScript API listening on http://127.0.0.1:${port}`));
+
+

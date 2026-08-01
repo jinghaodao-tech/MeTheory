@@ -45,6 +45,7 @@ export type ExperimentDraft = {
   expectedDirection: "a_greater" | "b_greater";
   minimumEffect: number;
   targetOutcomeParameter: string;
+  outcomeDefinition?: { parameterId: string; valueType: string; minimum?: number; maximum?: number; allowedValues?: string[] };
   conditionParameters: string[];
   requiredParameters: string[];
   durationDays: number;

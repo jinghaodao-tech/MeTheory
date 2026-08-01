@@ -76,5 +76,5 @@ test("PCS V2 profile binding is isolated and analysis history is immutable by sn
   const changed = structuredClone(validation.value);
   changed.records[0].values[0].value = 3;
   assert.throws(() => repository.saveRun("user-a", changed, analyzePcsAnalysisSnapshot(changed)), /snapshot_id_content_mismatch/);
-  assert.equal(repository.listRuns("user-b").length, 0);
+  assert.equal(repository.listRuns("user-b").items.length, 0);
 });
