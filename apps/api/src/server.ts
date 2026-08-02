@@ -6,7 +6,7 @@ import { evaluateEvidence, directionForObservation, RULE_VERSION, type Observati
 import { buildEpisodes } from "../../../packages/domain/src/hypothesis/episodes.ts";
 import { evaluateHypothesis } from "../../../packages/domain/src/hypothesis/evaluators.ts";
 import { validateHypothesisSpec } from "../../../packages/domain/src/hypothesis/spec.ts";
-import { buildIntegrationTemplateRequest, resolveMeasurementRequirements, type MeasurementRequirementInput } from "../../../packages/domain/src/measurementRequirements.ts";
+import { buildIntegrationTemplateRequest, deriveMeasurementRequirementsFromHypothesis, resolveMeasurementRequirements, type MeasurementRequirementInput } from "../../../packages/domain/src/measurementRequirements.ts";
 import { assessMeasurementSufficiency } from "../../../packages/domain/src/measurementSufficiency.ts";
 import { createAiQueryService } from "./aiQueryService.ts";
 import { SqliteSelfUnderstandingRepository } from "./selfUnderstandingRepository.ts";
@@ -963,7 +963,11 @@ const server = createServer(async (request, response) => {
       const userId = optionalString(input.userId) ?? "";
       if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
       if (!db.prepare("SELECT 1 FROM hypotheses WHERE id=? AND user_id=?").get(parts[2], userId)) return json(response, 404, { error: "hypothesis_not_found" });
-      const resolved = resolveMeasurementRequirements({ hypothesisId: parts[2], purpose: optionalString(input.purpose) ?? "仮説の検証", durationDays: typeof input.durationDays === "number" ? input.durationDays : undefined, minimumObservations: typeof input.minimumObservations === "number" ? input.minimumObservations : undefined, requirements: Array.isArray(input.requirements) ? input.requirements as MeasurementRequirementInput["requirements"] : [] });
+      const hypothesis = db.prepare("SELECT spec_json,statement FROM hypotheses WHERE id=? AND user_id=?").get(parts[2], userId) as { spec_json?: string; statement?: string } | undefined;
+      if (!hypothesis?.spec_json) return json(response, 409, { error: "hypothesis_spec_required", reasonCode: "hypothesis_spec_missing" });
+      const spec = validateHypothesisSpec(JSON.parse(hypothesis.spec_json));
+      const manualAllowed = request.headers["x-metheory-test-mode"] === "true";
+      const resolved = manualAllowed && Array.isArray(input.requirements) && input.requirements.length ? resolveMeasurementRequirements({ hypothesisId: parts[2], purpose: optionalString(input.purpose) ?? "仮説の検証", requirements: input.requirements as MeasurementRequirementInput["requirements"] }) : deriveMeasurementRequirementsFromHypothesis({ hypothesisId: parts[2], purpose: optionalString(input.purpose) ?? "self_understanding", spec });
       return json(response, 200, { measurementRequirements: resolved });
     }
     if (request.method === "GET" && parts[0] === "v1" && parts[1] === "hypotheses" && parts[2] && parts[3] === "data-sufficiency") {
@@ -988,7 +992,7 @@ const server = createServer(async (request, response) => {
       let snapshot: unknown;
       try { snapshot = await loadPersonalContextSnapshot({ startAt, endAt }); } catch { return json(response, 503, { error: "pcs_snapshot_unavailable", status: "collecting", requestStatus: remoteStatus }); }
       const requirements = Array.isArray(requestPayload.requestedFields) ? requestPayload.requestedFields.map((field: any) => ({ semanticRole: String(field.semanticRole ?? field.fieldKey), required: field.required !== false, minimumSamples: 1, analysisUsage: ["condition", "outcome", "both"].includes(field.analysisUsage) ? field.analysisUsage : undefined })) : [];
-      const result = assessMeasurementSufficiency({ requestStatus: remoteStatus, requirements, snapshot: snapshot as any, startAt, endAt, minimumObservations: Number(requestUrl.searchParams.get("minimumObservations") ?? (requirements.length || 1)), minimumPerGroup: Number(requestUrl.searchParams.get("minimumPerGroup") ?? 0) });
+      const result = assessMeasurementSufficiency({ requestStatus: remoteStatus, requirements, snapshot: snapshot as any, startAt, endAt, minimumObservations: Number(requestUrl.searchParams.get("minimumObservations") ?? requestPayload.minimumObservations ?? (requirements.length || 1)), minimumPerGroup: Number(requestUrl.searchParams.get("minimumPerGroup") ?? requestPayload.minimumPerGroup ?? 0) });
       return json(response, 200, { hypothesisId: parts[2], requestId: row.id, pcsRequestId: row.pcs_request_id ?? null, requestStatus: remoteStatus, period: { startAt, endAt }, pcsExcluded: (snapshot as any)?.excluded ?? {}, ...result });
     }
     if (parts[0] === "v1" && parts[1] === "hypotheses" && parts[2] && parts[3] === "pcs-template-request") {
@@ -1000,7 +1004,11 @@ const server = createServer(async (request, response) => {
         const row = db.prepare("SELECT * FROM pcs_template_requests WHERE user_id=? AND hypothesis_id=?").get(userId, parts[2]) as Record<string, unknown> | undefined;
         return row ? json(response, 200, { request: { ...row, payload: JSON.parse(String(row.payload_json)), result: row.result_json ? JSON.parse(String(row.result_json)) : null } }) : json(response, 404, { error: "pcs_template_request_not_found" });
       }
-      const requirements = resolveMeasurementRequirements({ hypothesisId: parts[2], purpose: optionalString(input.purpose) ?? "仮説の検証", durationDays: typeof input.durationDays === "number" ? input.durationDays : undefined, minimumObservations: typeof input.minimumObservations === "number" ? input.minimumObservations : undefined, requirements: Array.isArray(input.requirements) ? input.requirements as MeasurementRequirementInput["requirements"] : [] });
+      const hypothesis = db.prepare("SELECT spec_json,statement FROM hypotheses WHERE id=? AND user_id=?").get(parts[2], userId) as { spec_json?: string; statement?: string } | undefined;
+      if (!hypothesis?.spec_json) return json(response, 409, { error: "hypothesis_spec_required", reasonCode: "hypothesis_spec_missing" });
+      const spec = validateHypothesisSpec(JSON.parse(hypothesis.spec_json));
+      const manualAllowed = request.headers["x-metheory-test-mode"] === "true";
+      const requirements = manualAllowed && Array.isArray(input.requirements) && input.requirements.length ? resolveMeasurementRequirements({ hypothesisId: parts[2], purpose: optionalString(input.purpose) ?? "仮説の検証", requirements: input.requirements as MeasurementRequirementInput["requirements"] }) : deriveMeasurementRequirementsFromHypothesis({ hypothesisId: parts[2], purpose: optionalString(input.purpose) ?? "self_understanding", spec });
       const templateRequest = buildIntegrationTemplateRequest(requirements, now());
       const existing = db.prepare("SELECT id,status,pcs_request_id FROM pcs_template_requests WHERE user_id=? AND hypothesis_id=?").get(userId, parts[2]) as Record<string, unknown> | undefined;
       if (existing) return json(response, 200, { request: { id: existing.id, status: existing.status, pcsRequestId: existing.pcs_request_id }, duplicate: true });

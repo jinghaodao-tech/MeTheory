@@ -16,6 +16,7 @@ export type HypothesisMeasurementSpec = {
   purpose: string;
   recommendedDurationDays: number;
   minimumObservations: number;
+  minimumPerGroup: number;
   requirements: Array<{
     semanticRole: MeasurementSemanticRole;
     analysisUsage: MeasurementAnalysisUsage;
@@ -34,6 +35,7 @@ export type MeasurementRequirementInput = {
   purpose: string;
   durationDays?: number;
   minimumObservations?: number;
+  minimumPerGroup?: number;
   requirements: Array<{
     semanticRole: string;
     analysisUsage: string;
@@ -59,8 +61,10 @@ export function validateHypothesisMeasurementSpec(input: MeasurementRequirementI
   if (!Array.isArray(input.requirements) || input.requirements.length === 0) fail("measurement_requirements_required");
   const durationDays = input.durationDays ?? 14;
   const minimumObservations = input.minimumObservations ?? 10;
+  const minimumPerGroup = input.minimumPerGroup ?? Math.max(1, Math.ceil(minimumObservations / 2));
   if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 365) fail("measurement_duration_invalid");
   if (!Number.isInteger(minimumObservations) || minimumObservations < 2 || minimumObservations > 10_000) fail("measurement_minimum_invalid");
+  if (!Number.isInteger(minimumPerGroup) || minimumPerGroup < 1 || minimumPerGroup > 10_000) fail("measurement_group_minimum_invalid");
   const seen = new Set<string>();
   const requirements = input.requirements.map((item) => {
     if (!roleSet.has(item.semanticRole) || seen.has(item.semanticRole)) fail("measurement_semantic_role_invalid");
@@ -73,7 +77,7 @@ export function validateHypothesisMeasurementSpec(input: MeasurementRequirementI
     if (["single_choice", "multi_choice"].includes(item.valueType) && (!item.allowedValues?.length || new Set(item.allowedValues.map((value) => value.key)).size !== item.allowedValues.length)) fail("measurement_choices_required");
     return { semanticRole: item.semanticRole as MeasurementSemanticRole, analysisUsage: item.analysisUsage as MeasurementAnalysisUsage, valueType: item.valueType as MeasurementValueType, ...(minimum === undefined ? {} : { minimum }), ...(maximum === undefined ? {} : { maximum }), ...(item.unit === undefined ? {} : { unit: item.unit }), ...(item.allowedValues === undefined ? {} : { allowedValues: item.allowedValues }), required: item.required !== false, collectionTiming: item.collectionTiming as CollectionTiming };
   });
-  return { hypothesisId: input.hypothesisId, purpose: input.purpose.trim(), recommendedDurationDays: durationDays, minimumObservations, requirements };
+  return { hypothesisId: input.hypothesisId, purpose: input.purpose.trim(), recommendedDurationDays: durationDays, minimumObservations, minimumPerGroup, requirements };
 }
 
 const defaultLabel: Record<MeasurementSemanticRole, string> = {
@@ -88,6 +92,52 @@ export function resolveMeasurementRequirements(input: MeasurementRequirementInpu
   return { ...spec, requirements: [...spec.requirements].sort((left, right) => left.semanticRole.localeCompare(right.semanticRole)) };
 }
 
+const fieldAliases: Record<string, MeasurementSemanticRole> = {
+  energy_level: "energy", mood_valence: "mood", completed: "completion", completion_status: "completion",
+  activity_type: "environment", activity_category: "environment", start_delay_minutes: "start_delay",
+  task_difficulty: "initiation_difficulty", sleep_minutes: "sleep_duration"
+};
+const catalogRanges: Partial<Record<MeasurementSemanticRole, { valueType: string; minimum?: number; maximum?: number; unit?: string }>> = {
+  task_clarity: { valueType: "scale", minimum: 1, maximum: 5 }, deadline_clarity: { valueType: "scale", minimum: 1, maximum: 5 },
+  start_delay: { valueType: "duration_minutes", minimum: 0, maximum: 60, unit: "minutes" }, initiation_difficulty: { valueType: "scale", minimum: 1, maximum: 5 },
+  continuation_difficulty: { valueType: "scale", minimum: 1, maximum: 5 }, focus: { valueType: "scale", minimum: 1, maximum: 5 },
+  energy: { valueType: "scale", minimum: 1, maximum: 5 }, fatigue: { valueType: "scale", minimum: 1, maximum: 5 }, mood: { valueType: "scale", minimum: 1, maximum: 5 },
+  sleep_duration: { valueType: "duration_minutes", minimum: 0, maximum: 1440, unit: "minutes" }, sleep_quality: { valueType: "scale", minimum: 1, maximum: 5 },
+  satisfaction: { valueType: "scale", minimum: 1, maximum: 5 }, uncertainty: { valueType: "scale", minimum: 1, maximum: 5 }, avoidance: { valueType: "scale", minimum: 1, maximum: 5 }
+};
+
+function semanticRoleForField(field: string): MeasurementSemanticRole {
+  const role = fieldAliases[field] ?? field;
+  if (!roleSet.has(role)) fail(`hypothesis_spec_semantic_role_unknown:${field}`);
+  return role as MeasurementSemanticRole;
+}
+
+function optionValues(value: unknown): Array<{ key: string; label: string }> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const values = value.filter((item) => typeof item === "string" || typeof item === "number").map((item) => ({ key: String(item), label: String(item) }));
+  return values.length ? values : undefined;
+}
+
+export function deriveMeasurementRequirementsFromHypothesis(input: { hypothesisId: string; spec: { scope: Array<{ field: string; operator: string; value: unknown }>; cohorts: Array<{ conditions: Array<{ field: string; operator: string; value: unknown }> }>; outcome: { field: string; metric: string; positiveValues?: unknown[] }; evaluationPolicy: { windowDays: number; minimumSamplesPerCohort: number } }; purpose: string }): HypothesisMeasurementSpec {
+  const fields = new Map<string, { role: MeasurementSemanticRole; usage: MeasurementAnalysisUsage; operator?: string; value?: unknown }>();
+  const add = (condition: { field: string; operator: string; value: unknown }, usage: MeasurementAnalysisUsage) => {
+    const current = fields.get(condition.field);
+    fields.set(condition.field, { role: semanticRoleForField(condition.field), usage: current?.usage === "outcome" || usage === "both" ? "both" : current?.usage === "condition" ? "condition" : usage, operator: condition.operator, value: condition.value });
+  };
+  for (const condition of input.spec.scope ?? []) add(condition, "condition");
+  for (const cohort of input.spec.cohorts ?? []) for (const condition of cohort.conditions ?? []) add(condition, "condition");
+  const outcomeRole = semanticRoleForField(input.spec.outcome.field);
+  const outcome = fields.get(input.spec.outcome.field);
+  fields.set(input.spec.outcome.field, { role: outcomeRole, usage: outcome?.usage === "condition" ? "both" : "outcome", operator: outcome?.operator, value: outcome?.value });
+  const requirements = [...fields.values()].map((item) => {
+    const catalog = catalogRanges[item.role] ?? { valueType: "number" };
+    const options = item.role === outcomeRole && input.spec.outcome.metric === "binary_rate_difference" ? optionValues(input.spec.outcome.positiveValues) : optionValues(item.value);
+    const valueType = options ? "single_choice" : catalog.valueType;
+    return { semanticRole: item.role, analysisUsage: item.usage, valueType, ...(options ? { allowedValues: options } : {}), ...(catalog.minimum === undefined ? {} : { minimum: catalog.minimum }), ...(catalog.maximum === undefined ? {} : { maximum: catalog.maximum }), ...(catalog.unit ? { unit: catalog.unit } : {}), required: true, collectionTiming: "task_start" as const };
+  });
+  return validateHypothesisMeasurementSpec({ hypothesisId: input.hypothesisId, purpose: input.purpose, durationDays: input.spec.evaluationPolicy.windowDays, minimumObservations: input.spec.evaluationPolicy.minimumSamplesPerCohort * 2, minimumPerGroup: input.spec.evaluationPolicy.minimumSamplesPerCohort, requirements });
+}
+
 export function buildIntegrationTemplateRequest(spec: HypothesisMeasurementSpec, now = new Date().toISOString()): IntegrationTemplateRequestV1 {
   return {
     schemaVersion: "pcs-integration-template-request-v1",
@@ -97,6 +147,8 @@ export function buildIntegrationTemplateRequest(spec: HypothesisMeasurementSpec,
     title: `仮説検証: ${spec.purpose}`,
     purpose: spec.purpose,
     durationDays: spec.recommendedDurationDays,
+    minimumObservations: spec.minimumObservations,
+    minimumPerGroup: spec.minimumPerGroup,
     requestedFields: spec.requirements.map((item) => ({ fieldKey: item.semanticRole, label: defaultLabel[item.semanticRole], valueType: item.valueType, required: item.required, ...(item.allowedValues ? { options: item.allowedValues } : {}), reason: item.analysisUsage, ...(item.minimum === undefined ? {} : { minimum: item.minimum }), ...(item.maximum === undefined ? {} : { maximum: item.maximum }), ...(item.unit === undefined ? {} : { unit: item.unit }), semanticRole: item.semanticRole, analysisUsage: item.analysisUsage, collectionTiming: item.collectionTiming, questionText: defaultQuestion[item.semanticRole], sharingDefault: "purpose_only", sensitivity: "normal" } as IntegrationTemplateRequestV1["requestedFields"][number] & Record<string, unknown>)),
     createdAt: now
   } as IntegrationTemplateRequestV1;
