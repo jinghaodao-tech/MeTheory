@@ -24,7 +24,7 @@ test("real PCS to MeTheory snapshot flow", { skip: !pcsRoot ? "set PCS_REPO_PATH
     await wait(`http://127.0.0.1:${pcsPort}/health`);
     const pcs = `http://127.0.0.1:${pcsPort}`;
     const template = await request(pcs, "/v1/context-templates", "POST", { name: "Live", purpose: "self_understanding", fields: [
-      { fieldKey: "clarity", label: "Clarity", valueType: "number", required: true, displayOrder: 1, minimum: 1, maximum: 5, analysisRole: "task_clarity", analysisRoleConfirmed: true, analysisUsage: "condition", analysisMergeAllowed: true, sharingDefault: "purpose_only", sensitivity: "normal", reason: "condition" },
+      { fieldKey: "clarity", label: "Clarity", valueType: "scale", required: true, displayOrder: 1, minimum: 1, maximum: 5, analysisRole: "task_clarity", analysisRoleConfirmed: true, analysisUsage: "condition", analysisMergeAllowed: true, sharingDefault: "purpose_only", sensitivity: "normal", reason: "condition" },
       { fieldKey: "delay", label: "Delay", valueType: "duration_minutes", required: true, displayOrder: 2, minimum: 0, maximum: 60, analysisRole: "start_delay", analysisRoleConfirmed: true, analysisUsage: "outcome", analysisMergeAllowed: true, sharingDefault: "purpose_only", sensitivity: "normal", reason: "outcome" }
     ] });
     await request(pcs, `/v1/context-templates/${template.item.id}/activate`, "POST", {});
@@ -32,23 +32,50 @@ test("real PCS to MeTheory snapshot flow", { skip: !pcsRoot ? "set PCS_REPO_PATH
     const periodStart = "2026-07-01T00:00:00.000Z"; const periodEnd = "2026-08-15T00:00:00.000Z";
     for (let index = 0; index < 20; index += 1) { const entry = await request(pcs, "/v1/context-entries", "POST", { templateId: template.item.id, values: { clarity: index < 10 ? 2 : 4, delay: index < 10 ? 40 : 10 } }); for (const fieldKey of ["clarity", "delay"]) await request(pcs, `/v1/context-entries/${entry.id}/values/${fieldKey}/purposes`, "PUT", { purposeIds: [purpose.id] }); }
     const profile = await request(pcs, "/v1/context-profiles", "POST", { name: "Live profile", target: "metheory", purposeId: purpose.id, includedFields: [{ templateId: template.item.id, fieldKey: "clarity" }, { templateId: template.item.id, fieldKey: "delay" }] });
-    const client = await request(pcs, "/v1/integration-clients", "POST", { name: "MeTheory", permissions: ["read_snapshot"], allowedProfileIds: [profile.id] });
+    const client = await request(pcs, "/v1/integration-clients", "POST", { name: "MeTheory", permissions: ["read_snapshot", "submit_template_request"], allowedProfileIds: [profile.id] });
     const snapshot = await request(pcs, `/v1/context/analysis-snapshot?profileId=${encodeURIComponent(profile.id)}&from=${encodeURIComponent(periodStart)}&to=${encodeURIComponent(periodEnd)}`, "GET", undefined, { "x-pcs-client-id": client.id, authorization: `Bearer ${client.token}` });
     assert.equal(snapshot.contractRevision, "pcs-analysis-snapshot-v2.1"); assert.equal(snapshot.profileId, profile.id); assert.equal(snapshot.records.length, 20);
     start(process.cwd(), { PORT: String(mtPort), METHEORY_DB: mtDb, PCS_API_URL: pcs, PCS_CLIENT_ID: client.id, PCS_CLIENT_TOKEN: client.token, PCS_PROFILE_ID: profile.id });
     await wait(`http://127.0.0.1:${mtPort}/healthz`);
     const db = new DatabaseSync(mtDb); db.prepare("INSERT INTO users(id,auth_subject,locale,timezone,created_at) VALUES(?,?,?,?,?)").run("live-user", "live-user-subject", "ja-JP", "Asia/Tokyo", "2026-07-01T00:00:00.000Z"); db.close();
+    const createdHypothesis = await request(`http://127.0.0.1:${mtPort}`, "/v1/hypotheses", "POST", { userId: "live-user", statement: "明確さと開始までの時間の関係を確認する" });
+    const templateRequest = await request(`http://127.0.0.1:${mtPort}`, `/v1/hypotheses/${createdHypothesis.id}/pcs-template-request`, "POST", { userId: "live-user", purpose: "self_understanding", durationDays: 45, minimumObservations: 20, requirements: [
+      { semanticRole: "task_clarity", analysisUsage: "condition", valueType: "scale", minimum: 1, maximum: 5, required: true, collectionTiming: "task_start" },
+      { semanticRole: "start_delay", analysisUsage: "outcome", valueType: "duration_minutes", minimum: 0, maximum: 60, required: true, collectionTiming: "task_start" }
+    ], send: true });
+    assert.equal(templateRequest.request.status, "pending_user_review");
+    const requestId = templateRequest.request.pcsRequestId;
+    const reusedTemplate = await request(pcs, `/v1/integration-template-requests/${requestId}/create-template`, "POST");
+    assert.equal(reusedTemplate.reusedOnly, true); assert.equal(reusedTemplate.result.matchedFields.length, 2); assert.equal(reusedTemplate.result.createdFields.length, 0);
+    await request(pcs, `/v1/integration-template-requests/${requestId}/approve`, "POST", {});
+    const activated = await request(pcs, `/v1/integration-template-requests/${requestId}/activate`, "POST", {});
+    assert.equal(activated.status, "activated");
+    const partialPayload = { schemaVersion: "pcs-integration-template-request-v1", id: "live_partial_1", sourceSystem: "metheory", sourceReferenceId: "live_hypothesis_partial", title: "Partial request", purpose: "self_understanding", durationDays: 7, requestedFields: [{ fieldKey: "task_clarity", label: "Clarity", valueType: "scale", required: true, semanticRole: "task_clarity", analysisUsage: "condition", minimum: 1, maximum: 5, sharingDefault: "purpose_only", sensitivity: "normal", reason: "condition" }, { fieldKey: "completion", label: "Completion", valueType: "number", required: true, semanticRole: "completion", analysisUsage: "outcome", minimum: 0, maximum: 1, sharingDefault: "purpose_only", sensitivity: "normal", reason: "new outcome" }], createdAt: "2026-07-01T00:00:00.000Z" };
+    const partial = await request(pcs, "/v1/integration-template-requests", "POST", partialPayload, { "x-pcs-client-id": client.id, authorization: `Bearer ${client.token}` });
+    const partialDuplicate = await request(pcs, "/v1/integration-template-requests", "POST", partialPayload, { "x-pcs-client-id": client.id, authorization: `Bearer ${client.token}` });
+    assert.equal(partialDuplicate.duplicate, true);
+    const partialTemplate = await request(pcs, `/v1/integration-template-requests/${partial.id}/create-template`, "POST");
+    assert.equal(partialTemplate.template.status, "draft"); assert.deepEqual(partialTemplate.template.fields.map((field: any) => field.field_key), ["completion"]);
+    await request(pcs, `/v1/integration-template-requests/${partial.id}/approve_with_edits`, "POST", { edits: [{ fieldKey: "completion", questionText: "完了度を入力してください" }] });
+    assert.equal((await request(pcs, `/v1/integration-template-requests/${partial.id}/activate`, "POST", {})).status, "activated");
+    const incompatiblePayload = { ...partialPayload, id: "live_incompatible_1", sourceReferenceId: "live_hypothesis_incompatible", requestedFields: [{ ...partialPayload.requestedFields[0], valueType: "text", fieldKey: "clarity_text" }] };
+    const incompatible = await request(pcs, "/v1/integration-template-requests", "POST", incompatiblePayload, { "x-pcs-client-id": client.id, authorization: `Bearer ${client.token}` });
+    const incompatibleDecision = await request(pcs, `/v1/integration-template-requests/${incompatible.id}/create-template`, "POST");
+    assert.equal(incompatibleDecision.requiresUserDecision, true); assert.equal(incompatibleDecision.reusedOnly, false);
+    assert.equal((await request(pcs, `/v1/integration-template-requests/${incompatible.id}/reject`, "POST", { reason: "incompatible field requires review" })).status, "rejected");
+    const sufficiency = await request(`http://127.0.0.1:${mtPort}`, `/v1/hypotheses/${createdHypothesis.id}/data-sufficiency?userId=live-user&startAt=${encodeURIComponent(periodStart)}&endAt=${encodeURIComponent(periodEnd)}&minimumObservations=20`);
+    assert.equal(sufficiency.status, "ready_for_analysis"); assert.equal(sufficiency.usableObservations, 20); assert.equal(sufficiency.requestStatus, "activated");
     const result = await request(`http://127.0.0.1:${mtPort}`, "/v1/self-understanding/analyze-personal-context", "POST", { userId: "live-user", profileId: profile.id, minimumEntryCount: 8, startAt: periodStart, endAt: periodEnd });
     assert.equal(result.status, "ready");
     assert.ok(Array.isArray(result.hypotheses) && result.hypotheses.length >= 1);
-    const hypothesis = result.hypotheses[0]; const interpretation = hypothesis.interpretationInput ?? hypothesis.interpretation; if (!interpretation?.condition || !interpretation?.outcome) throw new Error(`interpretation_shape:${JSON.stringify({ keys: Object.keys(interpretation ?? {}), hypothesis })}`);
+    const analyzedHypothesis = result.hypotheses[0]; const interpretation = analyzedHypothesis.interpretationInput ?? analyzedHypothesis.interpretation; if (!interpretation?.condition || !interpretation?.outcome) throw new Error(`interpretation_shape:${JSON.stringify({ keys: Object.keys(interpretation ?? {}), hypothesis: analyzedHypothesis })}`);
     assert.equal(interpretation.condition.semanticRole, "task_clarity");
     assert.equal(interpretation.outcome.semanticRole, "start_delay");
     assert.ok(interpretation.statistics.groupACount >= 2);
     assert.ok(interpretation.statistics.groupBCount >= 2);
     assert.notEqual(interpretation.statistics.difference, 0);
-    assert.ok(hypothesis.supportingEntryIds.length > 0);
-    assert.ok(Array.isArray(hypothesis.supportingEvidence) && hypothesis.supportingEvidence.length > 0);
+    assert.ok(analyzedHypothesis.supportingEntryIds.length > 0);
+    assert.ok(Array.isArray(analyzedHypothesis.supportingEvidence) && analyzedHypothesis.supportingEvidence.length > 0);
     assert.equal(result.dataQuality.excludedValueCount, 0);
   } finally { for (const child of children) child.kill(); await new Promise((resolve) => setTimeout(resolve, 100)); rmSync(root, { recursive: true, force: true }); }
 });

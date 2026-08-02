@@ -162,6 +162,22 @@ export function migrateDatabase(db: DatabaseSync, root: string) {
         ) STRICT`);
         db.exec("CREATE INDEX IF NOT EXISTS self_belief_revisions_lookup_idx ON self_belief_revisions(user_id,belief_id,created_at DESC)");
       }
+    },
+    {
+      id: "pcs-template-request-tracking-v1",
+      apply: () => {
+        db.exec(`CREATE TABLE IF NOT EXISTS pcs_template_requests (
+          id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          hypothesis_id TEXT REFERENCES hypotheses(id) ON DELETE SET NULL,
+          payload_json TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN('draft','submitted','pending_user_review','partially_matched','approved','rejected','activated','failed')),
+          pcs_request_id TEXT, result_json TEXT, error_kind TEXT, error_message TEXT,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        ) STRICT`);
+        db.exec("CREATE UNIQUE INDEX IF NOT EXISTS pcs_template_requests_user_hypothesis_idx ON pcs_template_requests(user_id,hypothesis_id) WHERE hypothesis_id IS NOT NULL");
+        db.exec("CREATE INDEX IF NOT EXISTS pcs_template_requests_user_status_idx ON pcs_template_requests(user_id,status,updated_at DESC)");
+        const columns = db.prepare("PRAGMA table_info(pcs_template_requests)").all() as Array<{ name: string }>;
+        if (!columns.some((column) => column.name === "state_history_json")) db.exec("ALTER TABLE pcs_template_requests ADD COLUMN state_history_json TEXT NOT NULL DEFAULT '[]'");
+      }
     }
   ];
   for (const migration of migrations) {
