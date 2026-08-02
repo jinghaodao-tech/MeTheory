@@ -25,7 +25,7 @@ test("real PCS to MeTheory snapshot flow", { skip: !pcsRoot ? "set PCS_REPO_PATH
     const pcs = `http://127.0.0.1:${pcsPort}`;
     const template = await request(pcs, "/v1/context-templates", "POST", { name: "Live", purpose: "self_understanding", fields: [
       { fieldKey: "clarity", label: "Clarity", valueType: "scale", required: true, displayOrder: 1, minimum: 1, maximum: 5, analysisRole: "task_clarity", analysisRoleConfirmed: true, analysisUsage: "condition", analysisMergeAllowed: true, sharingDefault: "purpose_only", sensitivity: "normal", reason: "condition" },
-      { fieldKey: "delay", label: "Delay", valueType: "duration_minutes", required: true, displayOrder: 2, minimum: 0, maximum: 60, analysisRole: "start_delay", analysisRoleConfirmed: true, analysisUsage: "outcome", analysisMergeAllowed: true, sharingDefault: "purpose_only", sensitivity: "normal", reason: "outcome" }
+      { fieldKey: "delay", label: "Delay", valueType: "duration_minutes", required: true, displayOrder: 2, minimum: 0, maximum: 60, unit: "minutes", analysisRole: "start_delay", analysisRoleConfirmed: true, analysisUsage: "outcome", analysisMergeAllowed: true, sharingDefault: "purpose_only", sensitivity: "normal", reason: "outcome" }
     ] });
     await request(pcs, `/v1/context-templates/${template.item.id}/activate`, "POST", {});
     const purpose = await request(pcs, "/v1/sharing-purposes", "POST", { name: "live_e2e" });
@@ -38,11 +38,8 @@ test("real PCS to MeTheory snapshot flow", { skip: !pcsRoot ? "set PCS_REPO_PATH
     start(process.cwd(), { PORT: String(mtPort), METHEORY_DB: mtDb, PCS_API_URL: pcs, PCS_CLIENT_ID: client.id, PCS_CLIENT_TOKEN: client.token, PCS_PROFILE_ID: profile.id });
     await wait(`http://127.0.0.1:${mtPort}/healthz`);
     const db = new DatabaseSync(mtDb); db.prepare("INSERT INTO users(id,auth_subject,locale,timezone,created_at) VALUES(?,?,?,?,?)").run("live-user", "live-user-subject", "ja-JP", "Asia/Tokyo", "2026-07-01T00:00:00.000Z"); db.close();
-    const createdHypothesis = await request(`http://127.0.0.1:${mtPort}`, "/v1/hypotheses", "POST", { userId: "live-user", statement: "明確さと開始までの時間の関係を確認する" });
-    const templateRequest = await request(`http://127.0.0.1:${mtPort}`, `/v1/hypotheses/${createdHypothesis.id}/pcs-template-request`, "POST", { userId: "live-user", purpose: "self_understanding", durationDays: 45, minimumObservations: 20, requirements: [
-      { semanticRole: "task_clarity", analysisUsage: "condition", valueType: "scale", minimum: 1, maximum: 5, required: true, collectionTiming: "task_start" },
-      { semanticRole: "start_delay", analysisUsage: "outcome", valueType: "duration_minutes", minimum: 0, maximum: 60, required: true, collectionTiming: "task_start" }
-    ], send: true });
+    const createdHypothesis = await request(`http://127.0.0.1:${mtPort}`, "/v1/hypotheses", "POST", { userId: "live-user", statement: "明確さと開始までの時間の関係を確認する", spec: { schemaVersion: "1", unit: "response", scope: [], cohorts: [{ key: "clear", conditions: [{ field: "task_clarity", operator: "greater_than_or_equal", value: 4 }] }, { key: "unclear", conditions: [{ field: "task_clarity", operator: "less_than_or_equal", value: 2 }] }], outcome: { field: "start_delay", metric: "numeric_mean_difference" }, expectation: { relation: "cohort_a_less_than_b", minimumEffect: 5 }, evaluationPolicy: { captureModes: ["momentary_observation"], acceptedSources: ["user_confirmed"], minimumSamplesPerCohort: 10, maximumCohortRatio: 2, windowDays: 45, excludeLowCertainty: false, maximumMissingRate: 0.2 } } });
+    const templateRequest = await request(`http://127.0.0.1:${mtPort}`, `/v1/hypotheses/${createdHypothesis.id}/pcs-template-request`, "POST", { userId: "live-user", purpose: "self_understanding", send: true });
     assert.equal(templateRequest.request.status, "pending_user_review");
     const requestId = templateRequest.request.pcsRequestId;
     const reusedTemplate = await request(pcs, `/v1/integration-template-requests/${requestId}/create-template`, "POST");
@@ -56,7 +53,7 @@ test("real PCS to MeTheory snapshot flow", { skip: !pcsRoot ? "set PCS_REPO_PATH
     assert.equal(partialDuplicate.duplicate, true);
     const partialTemplate = await request(pcs, `/v1/integration-template-requests/${partial.id}/create-template`, "POST");
     assert.equal(partialTemplate.template.status, "draft"); assert.deepEqual(partialTemplate.template.fields.map((field: any) => field.field_key), ["completion"]);
-    await request(pcs, `/v1/integration-template-requests/${partial.id}/approve_with_edits`, "POST", { edits: [{ fieldKey: "completion", questionText: "完了度を入力してください" }] });
+    await request(pcs, `/v1/integration-template-requests/${partial.id}/approve_with_edits`, "POST", { edits: [{ fieldKey: "completion", questionText: "完了度を入力してください" }], confirmedAnalysisFields: [{ fieldKey: "completion", analysisRole: "completion", analysisUsage: "outcome", analysisMergeAllowed: true }] });
     assert.equal((await request(pcs, `/v1/integration-template-requests/${partial.id}/activate`, "POST", {})).status, "activated");
     const incompatiblePayload = { ...partialPayload, id: "live_incompatible_1", sourceReferenceId: "live_hypothesis_incompatible", requestedFields: [{ ...partialPayload.requestedFields[0], valueType: "text", fieldKey: "clarity_text" }] };
     const incompatible = await request(pcs, "/v1/integration-template-requests", "POST", incompatiblePayload, { "x-pcs-client-id": client.id, authorization: `Bearer ${client.token}` });
