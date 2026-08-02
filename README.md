@@ -20,6 +20,8 @@ MeTheory does not maintain an editor plugin or a second synchronized note copy.
 Older documents are retained as historical domain references or future
 architecture research and do not override the current specification.
 
+The MeTheory -> PCS template request flow is documented in [`docs/metheory-pcs-template-flow.md`](docs/metheory-pcs-template-flow.md). MeTheory resolves measurement requirements deterministically and PCS remains responsible for field matching, review, and activation.
+
 The product boundary is explicit: the user chooses the scope of collection,
 the system chooses when and what to collect, and AI may only propose bounded
 interpretations or candidates. AI never decides facts, evidence strength,

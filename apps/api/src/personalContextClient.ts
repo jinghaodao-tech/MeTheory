@@ -1,3 +1,5 @@
+import type { IntegrationTemplateRequestV1 } from "personal-context-studio/integration-contracts";
+
 type ExperimentTemplateRequest = {
   schemaVersion: "pcs-experiment-template-request-v1";
   id: string;
@@ -89,6 +91,14 @@ export class PcsIntegrationClient {
   async getAnalysisSnapshot(input: { profileId: string; from: string; to: string; timezone?: string }): Promise<unknown> {
     const query = new URLSearchParams({ profileId: input.profileId, from: input.from, to: input.to, timezone: input.timezone ?? "UTC" });
     return request(`/v1/context/analysis-snapshot?${query.toString()}`, undefined, this.config);
+  }
+
+  async submitTemplateRequest(input: IntegrationTemplateRequestV1): Promise<unknown> {
+    return request("/v1/integration-template-requests", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) }, this.config);
+  }
+
+  async getTemplateRequest(requestId: string): Promise<unknown> {
+    return request(`/v1/integration-template-requests/${encodeURIComponent(requestId)}`, undefined, this.config);
   }
 }
 

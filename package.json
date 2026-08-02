@@ -46,6 +46,7 @@
         "test:pcs-live-e2e": "node --experimental-strip-types --test test/pcs-live-cross-repository.e2e.test.ts",
         "test:demo-web": "node --test test/demo-web.test.mjs",
         "test:experiments": "node --experimental-strip-types --test test/experiments.test.ts test/experiments-api.test.ts test/closed-loop-synthetic.test.ts"
+        ,"test:measurement-requirements": "node --experimental-strip-types --test test/measurement-requirements.test.ts"
     },
     "engines": {
         "node": ">=24.0.0"
