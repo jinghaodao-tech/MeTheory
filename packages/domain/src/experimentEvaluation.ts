@@ -1,5 +1,6 @@
 import { EVIDENCE_POLICY, normalizedNumericEffect, validNumericScale } from "./evidencePolicy.ts";
 import { correctedAlpha, exactPermutationPValue } from "./significance.ts";
+import { binaryRateSensitivity } from "./sensitivity.ts";
 import type { ExperimentEvaluation, ExperimentKind, ExperimentObservation } from "./experiments.ts";
 
 function mean(values: number[]): number {
@@ -72,12 +73,25 @@ export function evaluateExperimentDeterministic(input: {
   const supportIds = status === "supported" ? eligible.map((observation) => observation.id) : [];
   const contradictionIds = status === "challenged" ? eligible.map((observation) => observation.id) : [];
   const additional = Math.max(0, minimumPerGroup - Math.min(groupA.length, groupB.length));
-  const sensitivity = {
-    conclusionChangeConditions: status === "supported" ? [`各グループに${Math.max(1, additional)}件以上の観測が追加され、平均差が${minimumEffect}未満になる場合`] : ["グループの記録数または評価条件が変わる場合"],
+  const isBinaryOutcome = [...groupA, ...groupB].every((observation) => observation.outcome === 0 || observation.outcome === 1);
+  const binarySensitivity = isBinaryOutcome ? binaryRateSensitivity({
+    groupAPositive: groupA.filter((observation) => observation.outcome === 1).length,
+    groupATotal: groupA.length,
+    groupBPositive: groupB.filter((observation) => observation.outcome === 1).length,
+    groupBTotal: groupB.length,
+    minimumEffect
+  }) : null;
+  const sensitivity: import("./sensitivity.ts").SensitivitySummary = {
+    conclusionChangeConditions: status === "supported" && binarySensitivity?.minimumChangesToCrossEffect !== null && binarySensitivity?.minimumChangesToCrossEffect !== undefined
+      ? [binarySensitivity.minimumChangesToCrossEffect + "件の二値回答が変わると効果量が閾値未満になります"]
+      : status === "supported" ? ["各グループに" + Math.max(1, additional) + "件以上の観測が追加され、平均差が" + minimumEffect + "未満になる場合"] : ["グループの記録数または評価条件が変わる場合"],
     groupImbalanceWarnings: groupImbalance < EVIDENCE_POLICY.minimumSampleBalance ? ["グループ間の記録数の差が大きいため、結論は安定していません"] : [],
     missingnessWarnings: excludedCount ? ["除外された観測によって結果が変わる可能性があります"] : [],
     overlapWarnings: [],
     minimumAdditionalObservations: additional || undefined,
+    minimumChangesToCrossEffect: binarySensitivity?.minimumChangesToCrossEffect ?? null,
+    changesByGroup: binarySensitivity?.changesByGroup,
+    method: binarySensitivity ? "binary_rate_flip" : "not_applicable",
     explanation: status === "insufficient_data" ? "必要な記録数、データ品質、または有意性の条件を満たしていないため、結論を出せません" : "現在の記録範囲、効果量、正確な置換検定に基づく決定論的な評価です"
   };
   return {

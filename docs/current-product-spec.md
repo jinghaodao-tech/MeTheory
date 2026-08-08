@@ -61,7 +61,8 @@ Medical or psychological diagnosis, fixed personality labels, cloud sync, a gene
 ## Status labels for older documents
 
 - `architecture-research.md`, `technical-architecture.md`, and `mcp-tools.md` are **future architecture research** where they describe cloud, MCP, or scale-out designs.
-- `design-spec.md`, `domain-language.md`, `hypothesis-evaluation.md`, `collection-responsibility.md`, and `implementation-roadmap.md` are **historical or domain reference** documents. They remain useful, but this document defines the current product scope.
+- docs/spec/domain-language.md, docs/spec/hypothesis-evaluation.md, and docs/spec/collection-responsibility.md are current normative domain specifications.
+- docs/archive/design-spec.md and docs/archive/implementation-roadmap.md are historical documents. docs/architecture-research.md, docs/technical-architecture.md, and docs/mcp-tools.md are future architecture research.
 
 ## Closed-loop experiment slice
 
@@ -81,7 +82,7 @@ Markdown bodies into its database.
 
 The reproducible portfolio flow is:
 
-`PCS analysis snapshot V2 -> MeTheory Node API -> SQLite -> Demo Web`.
+`PCS analysis snapshot v2 (revision v2.1) -> MeTheory Node API -> SQLite -> Demo Web`. The canonical version constants live only in the official personal-context-studio/integration-contracts package.
 
 The snapshot contract is strict and versioned. It carries a profile binding, period, record identifiers, field roles, scale fingerprints, provenance, privacy level, and explicit exclusions. MeTheory rejects unconfirmed roles, unsupported values, invalid scales, private values, profile mismatches, unknown properties, and periods outside the requested range. A live PCS request is allowed only to localhost and requires `profileId`, `from`, `to`, and `timezone`.
 
@@ -93,7 +94,7 @@ The Demo Web is intentionally local and fixture-first. It has loading, empty, er
 
 ## Implementation status
 
-- **Implemented:** PCS snapshot V2 validation, profile binding, immutable analysis history, pair allowlist, provenance-aware evidence, versioned SQLite migration runner, closed-loop experiment APIs, local deterministic fixture Demo Web, and targeted tests.
+- **Implemented:** PCS snapshot v2.1 validation, profile binding, immutable analysis history, pair allowlist, provenance-aware evidence, versioned SQLite migration runner, closed-loop experiment APIs, local deterministic fixture Demo Web, and targeted tests.
 - **Experimental:** Expo mobile client, Obsidian adapter, ActivityWatch adapter, and optional localhost AI wording.
 - **Planned:** deeper route/service split, richer desktop field-level Review UI, integration SDK contract tests, encrypted backups, and broader longitudinal stability analysis.
 - **Removed from the product path:** cloud sync, automatic merge, diagnostic inference, cloud AI dependency, and the AI review/Codex loop as a runtime requirement. Review Bridge files may remain as isolated development tooling.

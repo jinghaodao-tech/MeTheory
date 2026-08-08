@@ -1,3 +1,4 @@
+import { CONTEXT_ANALYSIS_SNAPSHOT_VERSION } from "personal-context-studio/integration-contracts";
 import type { CandidateObservation, CandidateParameter } from "../../domain/src/hypothesis/candidates.ts";
 import { generateSelfUnderstanding, type UnderstandingRecord } from "./index.ts";
 
@@ -18,7 +19,7 @@ export type PersonalContextSnapshotValue = {
 };
 
 export type PersonalContextSnapshot = {
-  schemaVersion: "pcs-analysis-snapshot-v1";
+  schemaVersion: typeof CONTEXT_ANALYSIS_SNAPSHOT_VERSION;
   generatedAt: string;
   records: Array<{ id: string; recordedAt: string; title: string; sourceDocumentId: string | null; values: PersonalContextSnapshotValue[] }>;
   excluded: { unconfirmed: number; nonShareable: number; invalid: number };
@@ -36,7 +37,7 @@ function parameterId(value: PersonalContextSnapshotValue): string {
 
 export function validatePersonalContextSnapshot(value: unknown): PersonalContextSnapshot {
   const snapshot = value as Partial<PersonalContextSnapshot>;
-  if (!snapshot || snapshot.schemaVersion !== "pcs-analysis-snapshot-v1" || typeof snapshot.generatedAt !== "string" || Number.isNaN(Date.parse(snapshot.generatedAt)) || !Array.isArray(snapshot.records) || !snapshot.excluded || typeof snapshot.excluded !== "object") {
+  if (!snapshot || snapshot.schemaVersion !== CONTEXT_ANALYSIS_SNAPSHOT_VERSION || typeof snapshot.generatedAt !== "string" || Number.isNaN(Date.parse(snapshot.generatedAt)) || !Array.isArray(snapshot.records) || !snapshot.excluded || typeof snapshot.excluded !== "object") {
     throw new Error("pcs_analysis_snapshot_invalid");
   }
   return snapshot as PersonalContextSnapshot;

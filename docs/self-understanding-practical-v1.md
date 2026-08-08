@@ -8,7 +8,7 @@ personality diagnosis feature.
 
 ## Analysis boundary
 
-- Only reviewed, shareable values in a `pcs-analysis-snapshot-v1` are analysed.
+- Only reviewed, shareable values in a the canonical PCS analysis snapshot v2.1 contract are analysed.
 - The deterministic evaluator decides cohorts, counts, missingness, effect,
   stability, supporting Entries, contradicting Entries, and candidate status.
 - The default gate requires eight PCS records and three valid values in each group.

@@ -1,1 +1,0 @@
-"""MeTheory MVP backend package."""

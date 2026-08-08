@@ -339,7 +339,7 @@ test("Personal Context Studio snapshots are analyzed without copying records int
       ]
     };
   });
-  const result = analyzePersonalContextSnapshot({ schemaVersion: "pcs-analysis-snapshot-v1", generatedAt: "2026-07-10T00:00:00.000Z", records, excluded: { unconfirmed: 2, nonShareable: 1, invalid: 0 } }, { startAt: "2026-07-01T00:00:00.000Z", endAt: "2026-07-10T00:00:00.000Z" });
+  const result = analyzePersonalContextSnapshot({ schemaVersion: "pcs-context-analysis-snapshot-v1", generatedAt: "2026-07-10T00:00:00.000Z", records, excluded: { unconfirmed: 2, nonShareable: 1, invalid: 0 } }, { startAt: "2026-07-01T00:00:00.000Z", endAt: "2026-07-10T00:00:00.000Z" });
   assert.equal(result.source, "personal_context_studio");
   assert.equal(result.entryCount, 8);
   assert.ok(result.hypotheses.length >= 1);

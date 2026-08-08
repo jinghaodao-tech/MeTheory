@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import type { ContextAnalysisSnapshotV2 } from "personal-context-studio/integration-contracts";
+import { PCS_ANALYSIS_CONTRACT_REVISION, type ContextAnalysisSnapshotV2 } from "personal-context-studio/integration-contracts";
 import type { PcsAnalysisResult } from "../../../packages/self-understanding/src/pcsSnapshotAnalysis.ts";
 
 export type PcsProfileBinding = {
@@ -56,7 +56,7 @@ function canonicalize(value: unknown): unknown {
 }
 
 export function pcsSnapshotContractHash() {
-  return hash("pcs-analysis-snapshot-v2:contract-1");
+  return hash(PCS_ANALYSIS_CONTRACT_REVISION);
 }
 
 export function pcsSourceFingerprint(snapshot: ContextAnalysisSnapshotV2) {

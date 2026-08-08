@@ -1,5 +1,8 @@
 import { EVIDENCE_POLICY } from "./evidencePolicy.ts";
 import { evaluateExperimentDeterministic } from "./experimentEvaluation.ts";
+import type { SensitivitySummary } from "./sensitivity.ts";
+
+export type { SensitivitySummary } from "./sensitivity.ts";
 
 export const EXPERIMENT_DRAFT_STATUSES = ["draft", "accepted", "rejected"] as const;
 export type ExperimentDraftStatus = (typeof EXPERIMENT_DRAFT_STATUSES)[number];
@@ -107,14 +110,6 @@ export type DataQualitySummary = {
   warnings: string[];
 };
 
-export type SensitivitySummary = {
-  conclusionChangeConditions: string[];
-  groupImbalanceWarnings: string[];
-  missingnessWarnings: string[];
-  overlapWarnings: string[];
-  minimumAdditionalObservations?: number;
-  explanation: string;
-};
 
 export type ExperimentEvaluation = {
   experimentId: string;

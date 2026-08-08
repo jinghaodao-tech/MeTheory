@@ -7,6 +7,7 @@ import {
   type CandidateParameter,
   type HypothesisCandidate
 } from "../../domain/src/hypothesis/candidates.ts";
+import { binaryRateSensitivity, type SensitivitySummary } from "../../domain/src/sensitivity.ts";
 import {
   inferSemanticRole,
   isSelfUnderstandingSemanticRole,
@@ -233,6 +234,7 @@ export type SelfUnderstandingHypothesis = {
   interpretation: SelfUnderstandingInterpretation;
   interpretationInput: SelfUnderstandingInterpretationInputV2;
   candidate: HypothesisCandidate;
+  sensitivitySummary?: SensitivitySummary;
 };
 export interface SelfUnderstandingInterpretationProvider {
   readonly id: string;
@@ -261,6 +263,7 @@ export type SelfUnderstandingHypothesisView = {
   explanations: { plain: string; supporting: string; contradicting: string; alternative: string; uncertainty: string; tendencyScope: string };
   nextExperiment: SelfUnderstandingInterpretation["nextExperiment"];
   selfModelCandidate: string;
+  sensitivitySummary?: SensitivitySummary;
   technicalDetails: { mergedCandidateIds: string[]; sourceTemplateIds: string[]; sourceFieldKeys: string[]; explanationMode: string };
 };
 export type SelfUnderstandingAnalysisResponse = {
@@ -296,6 +299,7 @@ export function toSelfUnderstandingHypothesisView(
     explanations: { plain: hypothesis.interpretation.plainExplanationJa, supporting: hypothesis.interpretation.supportingExplanationJa, contradicting: hypothesis.interpretation.contradictingExplanationJa, alternative: hypothesis.interpretation.alternativeExplanationJa, uncertainty: hypothesis.interpretation.uncertaintyJa, tendencyScope: hypothesis.interpretation.tendencyScopeExplanationJa },
     nextExperiment: hypothesis.interpretation.nextExperiment,
     selfModelCandidate: hypothesis.interpretation.selfModelCandidateJa,
+    sensitivitySummary: hypothesis.sensitivitySummary,
     technicalDetails: { mergedCandidateIds: hypothesis.mergedCandidateIds, sourceTemplateIds: hypothesis.templateIds, sourceFieldKeys: [input.condition.fieldKey, input.outcome.fieldKey], explanationMode }
   };
 }
@@ -1147,6 +1151,27 @@ export function generateSelfUnderstanding(input: {
       mergedCandidateIds: []
     };
     const interpretation = deterministicInterpretation(interpretationInput);
+    const binarySensitivity = outcomeParameter.valueType === "boolean" || outcomeParameter.valueType === "single_choice"
+      ? binaryRateSensitivity({
+        groupAPositive: Math.round(candidate.cohortA.metricValue * candidate.cohortA.validSampleCount),
+        groupATotal: candidate.cohortA.validSampleCount,
+        groupBPositive: Math.round(candidate.cohortB.metricValue * candidate.cohortB.validSampleCount),
+        groupBTotal: candidate.cohortB.validSampleCount,
+        minimumEffect: config.minimumNormalizedEffect
+      })
+      : null;
+    const sensitivitySummary: SensitivitySummary = {
+      conclusionChangeConditions: binarySensitivity?.minimumChangesToCrossEffect !== null && binarySensitivity?.minimumChangesToCrossEffect !== undefined
+        ? [binarySensitivity.minimumChangesToCrossEffect + "件の二値回答が変わると効果量が閾値未満になります"]
+        : ["新しい記録、欠損値、期間の変更で結論が変わる可能性があります"],
+      groupImbalanceWarnings: candidate.sampleBalance < config.minimumSampleBalance ? ["比較グループの記録数に偏りがあるため結論は安定していません"] : [],
+      missingnessWarnings: candidate.missingRate > 0 ? ["欠損値の扱いによって結論が変わる可能性があります"] : [],
+      overlapWarnings: [],
+      minimumChangesToCrossEffect: binarySensitivity?.minimumChangesToCrossEffect ?? null,
+      changesByGroup: binarySensitivity?.changesByGroup,
+      method: binarySensitivity ? "binary_rate_flip" : "not_applicable",
+      explanation: "現在の記録数、効果量、欠損率、期間を基にした感度情報です。因果関係や将来の結果を保証しません"
+    };
     const dataShortage: string[] = [];
     if (candidate.missingConditionCount) {
       dataShortage.push(`条件値の欠損: ${candidate.missingConditionCount}件`);
@@ -1184,7 +1209,8 @@ export function generateSelfUnderstanding(input: {
       selfModelCandidate: interpretation.selfModelCandidateJa,
       interpretation,
       interpretationInput,
-      candidate
+      candidate,
+      sensitivitySummary
     };
   });
   return deduplicateSelfUnderstandingHypotheses(

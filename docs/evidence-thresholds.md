@@ -44,3 +44,24 @@ These defaults are stricter because generated findings are shown without a user 
 ## Changing a threshold
 
 Change shared floors in `packages/domain/src/evidencePolicy.ts`, update focused regression tests, and document the reason here. A threshold change that can alter an existing result must also change the relevant rule or generation version so cached or persisted results remain auditable.
+## Specification register
+
+The following register makes every shared floor auditable. The implementation
+keys are defined in packages/domain/src/evidencePolicy.ts; the table records
+their purpose and regression coverage.
+
+| Key | Value | Meaning | Rationale | Verification |
+| --- | ---: | --- | --- | --- |
+| minimumSamplesPerCohort | 3 | Minimum usable records in each group | Prevent one or two records from deciding a direction | Domain, hypothesis, candidate, and experiment tests |
+| minimumTotalSamples | 6 | Minimum records across both groups | Keeps the two group floors consistent | Domain and hypothesis tests |
+| minimumAbsoluteEffect | 0.10 | Minimum normalized/absolute effect floor | Ignore negligible differences | Evidence and candidate floor tests |
+| falsePositiveAlpha | 0.05 | Exact one-sided significance target | Keep positive conclusions behind a five percent gate | test/false-positive-rate.test.ts |
+| maximumExactPermutations | 200000 | Exact test computation budget | Fail closed instead of silently approximating | Significance unit tests |
+| maximumMissingRate | 0.50 | Maximum excluded or missing proportion | Avoid conclusions dominated by absent data | Hypothesis and experiment tests |
+| maximumWindowDays | 365 | Maximum evaluation window | Bound stale and accidental unbounded queries | Configuration validation tests |
+
+The sample and effect floors are measurement-quality floors. The false-positive
+target is controlled separately by the exact test; increasing a sample floor
+alone does not guarantee a five percent false-positive rate. Candidate
+generation may provide comparisonCount to apply Bonferroni correction across a
+family of comparisons.
