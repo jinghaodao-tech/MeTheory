@@ -12,6 +12,24 @@ test("missing observations never become challenges", () => {
   assert.equal(result.status, "inconclusive");
 });
 
+test("directional evidence requires three observations and a two-observation lead", () => {
+  const observation = (value: boolean) => ({ field: "outcome", value, certainty: "high" as const, source: "user_confirmed" as const });
+  assert.equal(evaluateEvidence([observation(true), observation(true)]).status, "inconclusive");
+  assert.equal(evaluateEvidence([observation(true), observation(true), observation(true)]).status, "supported");
+  assert.equal(evaluateEvidence([observation(true), observation(true), observation(true), observation(false), observation(false)]).status, "inconclusive");
+  assert.equal(evaluateEvidence([observation(false), observation(false), observation(false)]).status, "challenged");
+});
+test("directional evidence rejects excessive unknown values", () => {
+  const known = { field: "outcome", value: true, certainty: "high" as const, source: "user_confirmed" as const };
+  const unknown = { field: "outcome", value: null, certainty: "low" as const, source: "user_confirmed" as const, missing: true };
+  const mostlyUnknown = [
+    ...Array.from({ length: 3 }, () => ({ ...known })),
+    ...Array.from({ length: 4 }, () => ({ ...unknown }))
+  ];
+  assert.equal(evaluateEvidence(mostlyUnknown).status, "inconclusive");
+});
+
+
 test("hypothesis transitions reject evaluation from proposed", () => {
   assert.equal(transitionHypothesis("tracking", "supported"), "supported");
   assert.throws(() => transitionHypothesis("proposed", "supported"));

@@ -1,3 +1,6 @@
+import { EVIDENCE_POLICY } from "./evidencePolicy.ts";
+export { EVIDENCE_POLICY } from "./evidencePolicy.ts";
+
 export const HYPOTHESIS_STATUSES = [
   "proposed",
   "tracking",
@@ -50,7 +53,7 @@ export interface Evaluation {
   ruleVersion: string;
 }
 
-export const RULE_VERSION = "evidence-v2";
+export const RULE_VERSION = "evidence-v3";
 
 export function transitionHypothesis(
   current: HypothesisStatus,
@@ -91,13 +94,13 @@ export function evaluateEvidence(observations: ObservationInput[], ruleVersion =
     if (direction === "challenges") challenges += 1;
     if (direction === "insufficient") insufficient += 1;
   }
-  const status = supports + challenges < 2
-    ? "inconclusive"
-    : supports > challenges
-      ? "supported"
-      : challenges > supports
-        ? "challenged"
-        : "inconclusive";
+  const missingRate = observations.length ? insufficient / observations.length : 1;
+  const qualitySufficient = missingRate <= EVIDENCE_POLICY.maximumMissingRate;
+  const status = qualitySufficient && supports >= EVIDENCE_POLICY.minimumDirectionalObservations && supports - challenges >= EVIDENCE_POLICY.minimumDirectionalLead
+    ? "supported"
+    : qualitySufficient && challenges >= EVIDENCE_POLICY.minimumDirectionalObservations && challenges - supports >= EVIDENCE_POLICY.minimumDirectionalLead
+      ? "challenged"
+      : "inconclusive";
   return { status, supports, challenges, insufficient, sampleSize: observations.length, ruleVersion };
 }
 

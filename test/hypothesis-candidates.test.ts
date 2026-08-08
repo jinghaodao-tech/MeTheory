@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCohorts, calculateOutcomeMetric, generateHypothesisCandidates } from '../packages/domain/src/hypothesis/candidates.ts';
+import { buildCohorts, calculateOutcomeMetric, generateHypothesisCandidates, normalizeCandidateGenerationConfig } from '../packages/domain/src/hypothesis/candidates.ts';
 
 const parameter = (id: string, valueType: string, condition: boolean, outcome: boolean, min = 1, max = 5) => ({ id, nameJa: id, valueType, minimumValue: min, maximumValue: max, usableAsCondition: condition, usableAsOutcome: outcome });
 test('cohorts split boolean and numeric parameters', () => { assert.deepEqual(buildCohorts(parameter('x', 'boolean', true, false)).map((item) => item.key), ['true', 'false']); assert.deepEqual(buildCohorts(parameter('x', 'number', true, false)).map((item) => item.key), ['low', 'high']); });
@@ -11,3 +11,12 @@ test('choice outcome uses its declared positive values', () => { assert.equal(ca
 test('choice outcome without semantics is not evaluable', () => { assert.equal(calculateOutcomeMetric(['started', 'completed'], parameter('x', 'single_choice', false, true)).valid, 0); assert.equal(calculateOutcomeMetric(['low', 'high'], { ...parameter('x', 'single_choice', false, true), numericMapping: { low: 0, high: 1 } }).value, 0.5); });
 test('candidate generation enforces sample and effect thresholds', () => { const observations = Array.from({ length: 12 }, (_, index) => ({ episodeId: `e${index}`, parameterId: index < 6 ? 'condition' : 'condition', value: index < 6, observedAt: '2026-07-24T00:00:00.000Z' })).flatMap((row, index) => [row, { episodeId: `e${index}`, parameterId: 'outcome', value: index < 6 ? 5 : 1, observedAt: row.observedAt }]); const candidates = generateHypothesisCandidates({ parameters: [parameter('condition', 'boolean', true, false), parameter('outcome', 'number', false, true)], observations, now: '2026-07-24T12:00:00.000Z' }); assert.equal(candidates.length, 1); assert.equal(candidates[0].relation, 'a_greater_than_b'); assert.equal(candidates[0].sampleBalance, 1); });
 test('missing outcomes do not satisfy the valid cohort minimum', () => { const observations = Array.from({ length: 12 }, (_, index) => [{ episodeId: `missing-${index}`, parameterId: 'condition', value: index < 6, observedAt: '2026-07-24T00:00:00.000Z' }, { episodeId: `missing-${index}`, parameterId: 'outcome', value: index % 3 === 0 ? null : index < 6 ? 5 : 1, isMissing: index % 3 === 0, observedAt: '2026-07-24T00:00:00.000Z' }]).flat(); const candidates = generateHypothesisCandidates({ parameters: [parameter('condition', 'boolean', true, false), parameter('outcome', 'number', false, true)], observations, now: '2026-07-24T12:00:00.000Z' }); assert.equal(candidates.length, 0); });
+test('candidate config cannot weaken the evidence floors', () => {
+  const config = normalizeCandidateGenerationConfig({ minimumSamplesPerCohort: 0, minimumTotalSamples: 1, maximumMissingRate: 1, minimumNormalizedEffect: 0, minimumSampleBalance: 0, lookbackDays: 10_000, maximumCandidates: 10_000 });
+  assert.deepEqual({ samples: config.minimumSamplesPerCohort, total: config.minimumTotalSamples, missing: config.maximumMissingRate, effect: config.minimumNormalizedEffect, balance: config.minimumSampleBalance, days: config.lookbackDays, candidates: config.maximumCandidates }, { samples: 3, total: 6, missing: 0.5, effect: 0.1, balance: 0.25, days: 365, candidates: 50 });
+  const observations = Array.from({ length: 4 }, (_, index) => [
+    { episodeId: `weak-${index}`, parameterId: 'condition', value: index < 2, observedAt: '2026-07-24T00:00:00.000Z' },
+    { episodeId: `weak-${index}`, parameterId: 'outcome', value: index < 2 ? 5 : 1, observedAt: '2026-07-24T00:00:00.000Z' }
+  ]).flat();
+  assert.equal(generateHypothesisCandidates({ parameters: [parameter('condition', 'boolean', true, false), parameter('outcome', 'number', false, true)], observations, now: '2026-07-24T12:00:00.000Z', config: { minimumSamplesPerCohort: 1, minimumTotalSamples: 2, minimumNormalizedEffect: 0 } }).length, 0);
+});

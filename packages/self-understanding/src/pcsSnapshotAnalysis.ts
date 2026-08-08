@@ -236,6 +236,8 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
     });
   }
 
+  const minimumTotalSamples = Math.max(8, Math.min(1000, Number.isFinite(options.minimumTotalSamples) ? Math.floor(options.minimumTotalSamples!) : 8));
+  const maximumCandidates = Math.max(1, Math.min(10, Number.isFinite(options.maximumCandidates) ? Math.floor(options.maximumCandidates!) : 5));
   const hypotheses = generateSelfUnderstanding({
     parameters,
     observations,
@@ -243,9 +245,9 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
     allowedValues: Object.fromEntries([...groups.values()].map((group) => [group.id, group.allowedValues ?? []])),
     now: snapshot.period.endAt,
     config: {
-      minimumTotalSamples: options.minimumTotalSamples ?? 8,
-      minimumSamplesPerCohort: Math.max(2, Math.floor((options.minimumTotalSamples ?? 8) / 2)),
-      maximumCandidates: options.maximumCandidates ?? 5,
+      minimumTotalSamples,
+      minimumSamplesPerCohort: Math.max(3, Math.floor(minimumTotalSamples / 2)),
+      maximumCandidates,
       pairAllowlistVersion: PCS_CANDIDATE_PAIR_ALLOWLIST_VERSION
     }
   });

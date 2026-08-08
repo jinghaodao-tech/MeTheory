@@ -22,6 +22,10 @@ test("duplicate, unknown, and unbounded requirements are rejected", () => {
   assert.throws(() => resolveMeasurementRequirements({ ...input, requirements: [{ ...input.requirements[0], semanticRole: "diagnosis" }] }), /semantic_role/);
   assert.throws(() => resolveMeasurementRequirements({ ...input, requirements: [{ ...input.requirements[0], minimum: undefined, maximum: undefined }] }), /numeric_range/);
 });
+test("measurement plans cannot lower the evidence sample floors", () => {
+  assert.throws(() => resolveMeasurementRequirements({ ...input, minimumObservations: 2, minimumPerGroup: 1 }), /group_minimum/);
+  assert.throws(() => resolveMeasurementRequirements({ ...input, minimumObservations: 5, minimumPerGroup: 3 }), /measurement_minimum/);
+});
 
 test("hypothesis spec deterministically produces condition and outcome requirements", () => {
   const spec = { scope: [], cohorts: [{ key: "clear", conditions: [{ field: "task_clarity", operator: "greater_than_or_equal", value: 4 }] }, { key: "unclear", conditions: [{ field: "task_clarity", operator: "less_than_or_equal", value: 2 }] }], outcome: { field: "start_delay", metric: "numeric_mean_difference" }, evaluationPolicy: { windowDays: 21, minimumSamplesPerCohort: 6 } };

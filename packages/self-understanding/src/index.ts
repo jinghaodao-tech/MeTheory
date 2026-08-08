@@ -1,5 +1,7 @@
 import {
   generateHypothesisCandidates,
+  normalizeCandidateGenerationConfig,
+  CANDIDATE_PAIR_ALLOWLIST_VERSION,
   type CandidateGenerationConfig,
   type CandidateObservation,
   type CandidateParameter,
@@ -328,6 +330,12 @@ const forbiddenBlame =
 
 export type StructuredOutputCapability = "json_schema" | "json_object" | "prompt_only";
 
+// Keep safety checks in readable UTF-8 literals. The older migration regexes
+// above are retained only for source compatibility and are not used.
+const safeForbiddenClinical = /(ADHD|autism|autistic|depression|bipolar|MBTI|診断|診断名|障害|疾患|病気|医療|確率|治療|服薬|受診)/i;
+const safeForbiddenAbsolute = /(必ず|絶対|固定的|確定|間違いなく|常に|あなたは.{0,12}(です|だ))/i;
+const safeForbiddenBlame = /(あなたのせい|怠け|意志が弱い|自業自得|能力がない|責任を果たせない)/i;
+
 export class OpenAICompatibleLocalInterpretationProvider
   implements SelfUnderstandingInterpretationProvider
 {
@@ -368,6 +376,7 @@ export class OpenAICompatibleLocalInterpretationProvider
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
+      signal: AbortSignal.timeout(10_000),
       body: JSON.stringify({
         model: this.model,
         temperature: 0,
@@ -513,7 +522,7 @@ function statusFor(
 ): Exclude<SelfUnderstandingStatus, "insufficient"> {
   if (
     contradictingCount >= config.minimumSamplesPerCohort &&
-    contradictingCount > supportingCount
+    contradictingCount - supportingCount >= 2
   ) {
     return "contradicted";
   }
@@ -721,9 +730,9 @@ function interpretationErrors(
   const text = textValues
     .filter((value): value is string => typeof value === "string")
     .join(" ");
-  if (forbiddenClinical.test(text)) errors.push("forbidden_clinical_claim");
-  if (forbiddenAbsolute.test(text)) errors.push("forbidden_absolute_claim");
-  if (forbiddenBlame.test(text)) errors.push("blaming_language");
+    if (safeForbiddenClinical.test(text)) errors.push("forbidden_clinical_claim");
+    if (safeForbiddenAbsolute.test(text)) errors.push("forbidden_absolute_claim");
+    if (safeForbiddenBlame.test(text)) errors.push("blaming_language");
   if (/心理的|精神的/.test(text)) errors.push("ambiguous_medicalized_language");
   if (!/[\u3040-\u30ff\u3400-\u9fff]/.test(text)) {
     errors.push("japanese_explanation_required");
@@ -821,9 +830,9 @@ export function validateSelfModelStatement(statement: string): boolean {
   return (
     Boolean(statement.trim()) &&
     statement.length <= 500 &&
-    !forbiddenClinical.test(statement) &&
-    !forbiddenAbsolute.test(statement) &&
-    !forbiddenBlame.test(statement)
+    !safeForbiddenClinical.test(statement) &&
+    !safeForbiddenAbsolute.test(statement) &&
+    !safeForbiddenBlame.test(statement)
   );
 }
 
@@ -1018,7 +1027,16 @@ export function generateSelfUnderstanding(input: {
   now?: string;
   config?: Partial<SelfUnderstandingConfig>;
 }): SelfUnderstandingHypothesis[] {
-  const config = { ...DEFAULT_SELF_UNDERSTANDING_CONFIG, ...input.config };
+  const candidateConfig = normalizeCandidateGenerationConfig({ ...DEFAULT_SELF_UNDERSTANDING_CONFIG, ...input.config });
+  const config: SelfUnderstandingConfig = {
+    ...candidateConfig,
+    minimumTotalSamples: Math.max(DEFAULT_SELF_UNDERSTANDING_CONFIG.minimumTotalSamples, candidateConfig.minimumTotalSamples),
+    maximumMissingRate: Math.min(DEFAULT_SELF_UNDERSTANDING_CONFIG.maximumMissingRate, candidateConfig.maximumMissingRate),
+    minimumNormalizedEffect: Math.max(DEFAULT_SELF_UNDERSTANDING_CONFIG.minimumNormalizedEffect, candidateConfig.minimumNormalizedEffect),
+    minimumSampleBalance: Math.max(DEFAULT_SELF_UNDERSTANDING_CONFIG.minimumSampleBalance, candidateConfig.minimumSampleBalance),
+    maximumCandidates: Math.min(10, candidateConfig.maximumCandidates),
+    stableMinimumSamples: Math.max(DEFAULT_SELF_UNDERSTANDING_CONFIG.stableMinimumSamples, Number.isInteger(input.config?.stableMinimumSamples) ? input.config!.stableMinimumSamples! : 0)
+  };
   const candidates = generateHypothesisCandidates({
     parameters: input.parameters,
     observations: input.observations,
@@ -1026,6 +1044,7 @@ export function generateSelfUnderstanding(input: {
     now: input.now,
     config: {
       ...config,
+      pairAllowlistVersion: config.pairAllowlistVersion ?? (input.parameters.every((parameter) => Boolean(parameter.semanticRole)) ? CANDIDATE_PAIR_ALLOWLIST_VERSION : undefined),
       maximumCandidates: Math.max(config.maximumCandidates * 4, 20),
       lookbackDays: 30
     }

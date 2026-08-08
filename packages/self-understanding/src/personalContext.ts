@@ -44,7 +44,7 @@ export function validatePersonalContextSnapshot(value: unknown): PersonalContext
 
 export function analyzePersonalContextSnapshot(snapshotInput: unknown, input: { startAt: string; endAt: string; minimumEntryCount?: number }) {
   const snapshot = validatePersonalContextSnapshot(snapshotInput);
-  const minimumEntryCount = Math.max(8, Math.min(100, input.minimumEntryCount ?? 8));
+  const minimumEntryCount = Math.max(8, Math.min(100, Number.isFinite(input.minimumEntryCount) ? Math.floor(input.minimumEntryCount!) : 8));
   const parameterValues = new Map<string, PersonalContextSnapshotValue[]>();
   const records: UnderstandingRecord[] = [];
   const observations: CandidateObservation[] = [];

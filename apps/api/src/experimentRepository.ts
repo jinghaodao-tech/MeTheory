@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { EVIDENCE_POLICY } from "../../../packages/domain/src/evidencePolicy.ts";
 import {
   buildDataCollectionPlan,
   createExperimentDraftFromCandidate,
@@ -74,7 +75,7 @@ export class SqliteExperimentRepository {
     const current = this.getDraft(userId, draftId);
     if (!current || current.status !== "draft") throw new Error("experiment_draft_not_editable");
     const next: ExperimentDraft = { ...current, ...patch, status: "draft" };
-    if (!next.title.trim() || !next.statement.trim() || next.durationDays < 1 || next.minimumPerGroup < 1 || next.minimumObservations < next.minimumPerGroup * 2) throw new Error("experiment_draft_invalid");
+    if (!next.title.trim() || !next.statement.trim() || !Number.isInteger(next.durationDays) || next.durationDays < 1 || next.durationDays > 90 || !Number.isInteger(next.minimumPerGroup) || next.minimumPerGroup < EVIDENCE_POLICY.minimumSamplesPerCohort || next.minimumPerGroup > 1000 || !Number.isInteger(next.minimumObservations) || next.minimumObservations < Math.max(EVIDENCE_POLICY.minimumTotalSamples, next.minimumPerGroup * 2) || next.minimumObservations > 5000) throw new Error("experiment_draft_invalid");
     const updatedAt = new Date().toISOString();
     const result = this.db.prepare("UPDATE experiment_drafts SET draft_json=?,updated_at=? WHERE user_id=? AND id=? AND status='draft'").run(json(next), updatedAt, userId, draftId);
     if (Number(result.changes) !== 1) throw new Error("experiment_draft_update_conflict");
@@ -192,7 +193,7 @@ export class SqliteExperimentRepository {
     if (experiment.status !== "completed") throw new Error("experiment_must_be_completed");
     const draft = this.getDraft(userId, experiment.draftId);
     if (!draft) throw new Error("experiment_draft_not_found");
-    const result = evaluateExperiment({ experimentId, observations: this.observations(userId, experimentId), groupAKey: draft.groupAKey, groupBKey: draft.groupBKey, minimumPerGroup: experiment.minimumPerGroup, minimumObservations: experiment.minimumObservations, expectedDirection: draft.expectedDirection, minimumEffect: draft.minimumEffect, kind: experiment.kind, evaluatedAt });
+    const result = evaluateExperiment({ experimentId, observations: this.observations(userId, experimentId), groupAKey: draft.groupAKey, groupBKey: draft.groupBKey, minimumPerGroup: experiment.minimumPerGroup, minimumObservations: experiment.minimumObservations, expectedDirection: draft.expectedDirection, minimumEffect: draft.minimumEffect, kind: experiment.kind, evaluatedAt, outcomeScale: draft.outcomeDefinition?.minimum !== undefined && draft.outcomeDefinition.maximum !== undefined ? { minimumValue: draft.outcomeDefinition.minimum, maximumValue: draft.outcomeDefinition.maximum } : undefined });
     const id = this.id("experiment_evaluation");
     const status: ExperimentStatus = result.status === "insufficient_data" ? "insufficient_data" : "evaluated";
     transitionExperiment(experiment.status, status);

@@ -32,6 +32,7 @@ notification timing, hypothesis status, or Self Model updates.
 - `docs/design-spec.md`: core loop and safety position.
 - `docs/domain-language.md`: canonical entities and hypothesis lifecycle.
 - `docs/hypothesis-evaluation.md`: versioned comparison evaluation and audit model.
+- `docs/evidence-thresholds.md`: shared numerical floors for evidence and analysis readiness.
 - `docs/collection-responsibility.md`: collection ownership and three-layer presentation model.
 - `docs/architecture-research.md`: target architecture and migration plan.
 - `docs/integration-architecture.md`: Personal Context Studio, experiments, and analysis boundaries.

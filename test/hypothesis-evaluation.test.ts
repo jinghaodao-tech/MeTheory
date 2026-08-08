@@ -5,7 +5,7 @@ import { evaluateHypothesis } from "../packages/domain/src/hypothesis/evaluators
 import { validateHypothesisSpec, type HypothesisSpec } from "../packages/domain/src/hypothesis/spec.ts";
 
 const evaluatedAt = "2026-01-31T00:00:00.000Z";
-const baseSpec = (minimumSamplesPerCohort = 2): HypothesisSpec => validateHypothesisSpec({
+const baseSpec = (minimumSamplesPerCohort = 3): HypothesisSpec => validateHypothesisSpec({
   schemaVersion: "1", unit: "response", scope: [{ field: "activity_context", operator: "equals", value: "free_time" }],
   cohorts: [
     { key: "low_energy", conditions: [{ field: "energy", operator: "less_than_or_equal", value: 2 }] },
@@ -82,8 +82,8 @@ test("episodes classify once, ambiguous and unmatched rows are excluded", () => 
 });
 
 test("numeric mean difference is deterministic and history payload can be compared", () => {
-  const spec = validateHypothesisSpec({ ...baseSpec(), outcome: { field: "satisfaction", metric: "numeric_mean_difference" }, expectation: { relation: "cohort_a_greater_than_b", minimumEffect: 1 } });
-  const input = episodes([{ energy: 1, activity: "passive" }, { energy: 1, activity: "passive" }, { energy: 4, activity: "active" }, { energy: 4, activity: "active" }]).flatMap((episode, index) => [{ responseId: episode.responseId, checkinId: episode.checkinId, capturedAt: episode.capturedAt, captureMode: episode.captureMode, field: "activity_context", value: "free_time", source: "system" as const, certainty: "high" as const }, { responseId: episode.responseId, checkinId: episode.checkinId, capturedAt: episode.capturedAt, captureMode: episode.captureMode, field: "energy", value: index < 2 ? 1 : 4, source: "system" as const, certainty: "high" as const }, { responseId: episode.responseId, checkinId: episode.checkinId, capturedAt: episode.capturedAt, captureMode: episode.captureMode, field: "satisfaction", value: index < 2 ? 5 : 2, source: "user_confirmed" as const, certainty: "high" as const }]);
+  const spec = validateHypothesisSpec({ ...baseSpec(), outcome: { field: "satisfaction", metric: "numeric_mean_difference", minimumValue: 0, maximumValue: 5 }, expectation: { relation: "cohort_a_greater_than_b", minimumEffect: 1 } });
+  const input = episodes([{ energy: 1, activity: "passive" }, { energy: 1, activity: "passive" }, { energy: 1, activity: "passive" }, { energy: 4, activity: "active" }, { energy: 4, activity: "active" }, { energy: 4, activity: "active" }]).flatMap((episode, index) => [{ responseId: episode.responseId, checkinId: episode.checkinId, capturedAt: episode.capturedAt, captureMode: episode.captureMode, field: "activity_context", value: "free_time", source: "system" as const, certainty: "high" as const }, { responseId: episode.responseId, checkinId: episode.checkinId, capturedAt: episode.capturedAt, captureMode: episode.captureMode, field: "energy", value: index < 3 ? 1 : 4, source: "system" as const, certainty: "high" as const }, { responseId: episode.responseId, checkinId: episode.checkinId, capturedAt: episode.capturedAt, captureMode: episode.captureMode, field: "satisfaction", value: index < 3 ? 5 : 2, source: "user_confirmed" as const, certainty: "high" as const }]);
   const first = evaluateHypothesis("h1", spec, buildEpisodes(input), evaluatedAt);
   const second = evaluateHypothesis("h1", spec, buildEpisodes(input), evaluatedAt);
   assert.equal(first.result, "supports"); assert.equal(first.observedEffect, 3); assert.deepEqual(first.cohortMetrics, second.cohortMetrics); assert.deepEqual(first.samples, second.samples);
@@ -92,5 +92,23 @@ test("numeric mean difference is deterministic and history payload can be compar
 test("invalid hypothesis specs are rejected", () => {
   assert.throws(() => validateHypothesisSpec({ ...baseSpec(), cohorts: [{ key: "same", conditions: [] }, { key: "same", conditions: [] }] }));
   assert.throws(() => validateHypothesisSpec({ ...baseSpec(), expectation: { relation: "cohort_a_greater_than_b", minimumEffect: -1 } }));
+  assert.throws(() => validateHypothesisSpec({ ...baseSpec(), expectation: { relation: "cohort_a_greater_than_b", minimumEffect: 0 } }));
+  assert.throws(() => validateHypothesisSpec({ ...baseSpec(), outcome: { field: "satisfaction", metric: "numeric_mean_difference" } }));
+  assert.throws(() => validateHypothesisSpec({ ...baseSpec(), evaluationPolicy: { ...baseSpec().evaluationPolicy, minimumSamplesPerCohort: 2 } }));
+  assert.throws(() => validateHypothesisSpec({ ...baseSpec(), evaluationPolicy: { ...baseSpec().evaluationPolicy, maximumMissingRate: 0.6 } }));
+  assert.throws(() => validateHypothesisSpec({ ...baseSpec(), evaluationPolicy: { ...baseSpec().evaluationPolicy, windowDays: 366 } }));
   assert.throws(() => validateHypothesisSpec({ ...baseSpec(), evaluationPolicy: { ...baseSpec().evaluationPolicy, maximumCohortRatio: 0.5 } }));
+});
+
+test("evaluation defensively applies floors to malformed persisted settings", () => {
+  const spec = baseSpec() as HypothesisSpec;
+  spec.evaluationPolicy.minimumSamplesPerCohort = Number.NaN;
+  spec.evaluationPolicy.maximumCohortRatio = Number.NaN;
+  spec.evaluationPolicy.maximumMissingRate = Number.NaN;
+  spec.evaluationPolicy.windowDays = Number.POSITIVE_INFINITY;
+  spec.expectation.minimumEffect = Number.NaN;
+  const result = evaluateHypothesis("h-corrupt", spec, episodes([
+    { energy: 1, activity: "passive" }, { energy: 4, activity: "active" }
+  ]), evaluatedAt);
+  assert.equal(result.result, "insufficient_data");
 });

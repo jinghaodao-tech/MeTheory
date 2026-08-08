@@ -108,17 +108,22 @@ export function pcsProfileId(): string {
   return profileId;
 }
 
-async function requestLegacy(path: string, init?: RequestInit): Promise<unknown> {
-  const response = await fetch(new URL(path, baseUrl()), init);
-  const payload = await response.json().catch(() => ({})) as { error?: string };
-  if (!response.ok) throw new Error(payload.error ?? `pcs_request_${response.status}`);
-  return payload;
-}
-
 export async function loadPersonalContextSnapshot(input: { startAt: string; endAt: string }): Promise<unknown> {
   return new PcsIntegrationClient().getAnalysisSnapshot({ profileId: pcsProfileId(), from: input.startAt, to: input.endAt, timezone: process.env.PCS_TIMEZONE ?? "UTC" });
 }
 
 export async function requestPersonalContextTemplate(input: ExperimentTemplateRequest): Promise<unknown> {
-  return request("/v1/integration-template-requests", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
+  const client = new PcsIntegrationClient();
+  const request: IntegrationTemplateRequestV1 = {
+    schemaVersion: "pcs-integration-template-request-v1",
+    id: input.id,
+    sourceSystem: input.sourceSystem,
+    sourceReferenceId: input.hypothesisId,
+    title: input.title,
+    purpose: input.purpose,
+    durationDays: input.durationDays,
+    requestedFields: input.requestedFields,
+    createdAt: input.createdAt
+  };
+  return client.submitTemplateRequest(request);
 }

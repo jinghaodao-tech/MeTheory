@@ -1,4 +1,5 @@
 import type { IntegrationTemplateRequestV1 } from "personal-context-studio/integration-contracts";
+import { EVIDENCE_POLICY } from "./evidencePolicy.ts";
 
 export const MEASUREMENT_SEMANTIC_ROLES = [
   "task_clarity", "deadline_clarity", "start_delay", "initiation_difficulty",
@@ -61,10 +62,10 @@ export function validateHypothesisMeasurementSpec(input: MeasurementRequirementI
   if (!Array.isArray(input.requirements) || input.requirements.length === 0) fail("measurement_requirements_required");
   const durationDays = input.durationDays ?? 14;
   const minimumObservations = input.minimumObservations ?? 10;
-  const minimumPerGroup = input.minimumPerGroup ?? Math.max(1, Math.ceil(minimumObservations / 2));
-  if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 365) fail("measurement_duration_invalid");
-  if (!Number.isInteger(minimumObservations) || minimumObservations < 2 || minimumObservations > 10_000) fail("measurement_minimum_invalid");
-  if (!Number.isInteger(minimumPerGroup) || minimumPerGroup < 1 || minimumPerGroup > 10_000) fail("measurement_group_minimum_invalid");
+  const minimumPerGroup = input.minimumPerGroup ?? Math.max(EVIDENCE_POLICY.minimumSamplesPerCohort, Math.ceil(minimumObservations / 2));
+  if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > EVIDENCE_POLICY.maximumWindowDays) fail("measurement_duration_invalid");
+  if (!Number.isInteger(minimumPerGroup) || minimumPerGroup < EVIDENCE_POLICY.minimumSamplesPerCohort || minimumPerGroup > 10_000) fail("measurement_group_minimum_invalid");
+  if (!Number.isInteger(minimumObservations) || minimumObservations < Math.max(EVIDENCE_POLICY.minimumTotalSamples, minimumPerGroup * 2) || minimumObservations > 10_000) fail("measurement_minimum_invalid");
   const seen = new Set<string>();
   const requirements = input.requirements.map((item) => {
     if (!roleSet.has(item.semanticRole) || seen.has(item.semanticRole)) fail("measurement_semantic_role_invalid");

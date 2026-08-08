@@ -1,10 +1,12 @@
+import { EVIDENCE_POLICY } from "./evidencePolicy.ts";
+
 export type MeasurementSufficiencyStatus = "template_required" | "waiting_for_template_review" | "ready_to_record" | "collecting" | "insufficient_paired_observations" | "insufficient_group_count" | "insufficient_group_balance" | "ready_for_analysis" | "analysis_completed";
 export type SufficiencyRequirement = { semanticRole: string; required?: boolean; minimumSamples?: number; analysisUsage?: "condition" | "outcome" | "both" };
 export type SufficiencySnapshot = { records?: Array<{ id: string; recordedAt?: string; groupKey?: string; values?: Array<{ analysisRole?: string; analysisUsage?: string; analysisRoleConfirmed?: boolean; value?: unknown; minimum?: number; maximum?: number; provenance?: { userConfirmed?: boolean } }> }> };
 
 export function assessMeasurementSufficiency(input: { requestStatus?: string; requirements: SufficiencyRequirement[]; snapshot?: SufficiencySnapshot; startAt?: string; endAt?: string; minimumObservations?: number; minimumPerGroup?: number; analysisCompleted?: boolean }) {
-  const minimumObservations = input.minimumObservations ?? 0;
-  const minimums = Object.fromEntries(input.requirements.map((item) => [item.semanticRole, item.minimumSamples ?? 1]));
+  const minimumObservations = Math.max(EVIDENCE_POLICY.minimumTotalSamples, Number.isInteger(input.minimumObservations) ? input.minimumObservations! : 0);
+  const minimums = Object.fromEntries(input.requirements.map((item) => [item.semanticRole, Math.max(EVIDENCE_POLICY.minimumSamplesPerCohort, Number.isInteger(item.minimumSamples) ? item.minimumSamples! : 0)]));
   const empty = { minimumObservations, usableObservations: 0, minimumPerRequirement: minimums, countsByRequirement: Object.fromEntries(input.requirements.map((item) => [item.semanticRole, 0])), groupCounts: {}, missingRequirements: input.requirements.map((item) => item.semanticRole), reasonCodes: ["template_not_activated"], excluded: { outOfPeriod: 0, unconfirmed: 0, invalid: 0 } };
   if (!input.requestStatus || input.requestStatus === "draft" || input.requestStatus === "rejected") return { status: "template_required" as const, ...empty };
   if (!input.requestStatus || !["approved", "activated"].includes(input.requestStatus)) return { status: "waiting_for_template_review" as const, ...empty, reasonCodes: ["template_review_pending"] };
@@ -36,8 +38,8 @@ export function assessMeasurementSufficiency(input: { requestStatus?: string; re
     const groupKey = record.groupKey ?? (conditionValue === undefined ? undefined : `${condition?.semanticRole}:${String(conditionValue)}`);
     if (groupKey) groupCounts[groupKey] = (groupCounts[groupKey] ?? 0) + 1;
   }
-  const missing = input.requirements.filter((item) => counts[item.semanticRole] < (item.minimumSamples ?? 1)).map((item) => item.semanticRole);
-  const groupMinimum = input.minimumPerGroup ?? 0;
+  const missing = input.requirements.filter((item) => counts[item.semanticRole] < minimums[item.semanticRole]).map((item) => item.semanticRole);
+  const groupMinimum = Math.max(EVIDENCE_POLICY.minimumSamplesPerCohort, Number.isInteger(input.minimumPerGroup) ? input.minimumPerGroup! : 0);
   const groups = Object.values(groupCounts);
   const groupCountInsufficient = groups.length < 2;
   const groupBalanceInsufficient = !groupCountInsufficient && groupMinimum > 0 && groups.some((count) => count < groupMinimum);

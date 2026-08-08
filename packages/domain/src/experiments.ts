@@ -1,3 +1,6 @@
+import { EVIDENCE_POLICY } from "./evidencePolicy.ts";
+import { evaluateExperimentDeterministic } from "./experimentEvaluation.ts";
+
 export const EXPERIMENT_DRAFT_STATUSES = ["draft", "accepted", "rejected"] as const;
 export type ExperimentDraftStatus = (typeof EXPERIMENT_DRAFT_STATUSES)[number];
 
@@ -187,7 +190,7 @@ export function createExperimentDraftFromCandidate(input: {
 }): ExperimentDraft {
   const now = input.now ?? new Date().toISOString();
   const candidate = input.candidate;
-  const minimumPerGroup = safePositiveInteger(candidate.minimumPerGroup, 3, 1000);
+  const minimumPerGroup = Math.max(EVIDENCE_POLICY.minimumSamplesPerCohort, safePositiveInteger(candidate.minimumPerGroup, EVIDENCE_POLICY.minimumSamplesPerCohort, 1000));
   const minimumObservations = Math.max(minimumPerGroup * 2, safePositiveInteger(input.minimumObservations, 8, 5000));
   const title = `${candidate.conditionLabel}と${candidate.outcomeLabel}を確認する`;
   const statement = candidate.statement ?? `${candidate.conditionLabel}の条件によって${candidate.outcomeLabel}の記録に違いがある可能性を追加観測で確認する`;
@@ -202,7 +205,7 @@ export function createExperimentDraftFromCandidate(input: {
     groupAKey: candidate.cohortAKey,
     groupBKey: candidate.cohortBKey,
     expectedDirection: candidate.effectValue >= 0 ? "a_greater" : "b_greater",
-    minimumEffect: Math.abs(candidate.effectValue),
+    minimumEffect: Math.max(EVIDENCE_POLICY.minimumAbsoluteEffect, Math.abs(Number.isFinite(candidate.effectValue) ? candidate.effectValue : 0)),
     targetOutcomeParameter: candidate.outcomeParameterId,
     conditionParameters: [candidate.conditionParameterId],
     requiredParameters: [candidate.conditionParameterId, candidate.outcomeParameterId],
@@ -268,7 +271,7 @@ export function buildDataCollectionPlan(input: {
 
 function mean(values: number[]): number { return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0; }
 
-export function evaluateExperiment(input: {
+function evaluateExperimentLegacy(input: {
   experimentId: string;
   observations: ExperimentObservation[];
   groupAKey: string;
@@ -280,15 +283,21 @@ export function evaluateExperiment(input: {
   kind?: ExperimentKind;
   evaluatedAt?: string;
   alternativeExplanations?: string[];
+  outcomeScale?: { minimumValue: number; maximumValue: number };
 }): ExperimentEvaluation {
   const evaluatedAt = input.evaluatedAt ?? new Date().toISOString();
+  const minimumPerGroup = Math.max(EVIDENCE_POLICY.minimumSamplesPerCohort, Number.isInteger(input.minimumPerGroup) ? input.minimumPerGroup : 0);
+  const minimumObservations = Math.max(EVIDENCE_POLICY.minimumTotalSamples, minimumPerGroup * 2, Number.isInteger(input.minimumObservations) ? input.minimumObservations : 0);
+  const minimumEffect = Math.max(EVIDENCE_POLICY.minimumAbsoluteEffect, Number.isFinite(input.minimumEffect) ? input.minimumEffect : 0);
   const eligible = input.observations.filter((observation) => observation.eligible && Number.isFinite(observation.outcome));
+  const expectedDirectionValid = input.expectedDirection === "a_greater" || input.expectedDirection === "b_greater";
   const excludedCount = input.observations.length - eligible.length;
   const groupA = eligible.filter((observation) => observation.groupKey === input.groupAKey);
   const groupB = eligible.filter((observation) => observation.groupKey === input.groupBKey);
   const meanA = mean(groupA.map((observation) => observation.outcome));
   const meanB = mean(groupB.map((observation) => observation.outcome));
   const difference = groupA.length && groupB.length ? meanA - meanB : null;
+  const exclusionRate = input.observations.length ? excludedCount / input.observations.length : 1;
   const direction = difference === null || difference === 0 ? difference === 0 ? "equal" : "unknown" : difference > 0 ? "a_greater" : "b_greater";
   const groupImbalance = Math.min(groupA.length, groupB.length) / Math.max(groupA.length, groupB.length, 1);
   const warnings: string[] = [];
@@ -298,21 +307,24 @@ export function evaluateExperiment(input: {
     ...(groupA.length < input.minimumPerGroup ? [{ groupKey: input.groupAKey, needed: input.minimumPerGroup - groupA.length, reason: "グループAの記録不足" }] : []),
     ...(groupB.length < input.minimumPerGroup ? [{ groupKey: input.groupBKey, needed: input.minimumPerGroup - groupB.length, reason: "グループBの記録不足" }] : [])
   ];
+  if (groupA.length < minimumPerGroup && !missingData.some((item) => item.groupKey === input.groupAKey)) missingData.push({ groupKey: input.groupAKey, needed: minimumPerGroup - groupA.length, reason: "group_a_samples_insufficient" });
+  if (groupB.length < minimumPerGroup && !missingData.some((item) => item.groupKey === input.groupBKey)) missingData.push({ groupKey: input.groupBKey, needed: minimumPerGroup - groupB.length, reason: "group_b_samples_insufficient" });
   let status: EvaluationStatus;
-  if (!groupA.length || !groupB.length || eligible.length < input.minimumObservations || missingData.length) status = "insufficient_data";
+  if (!expectedDirectionValid) status = "invalid";
+  else if (!groupA.length || !groupB.length || eligible.length < minimumObservations || groupA.length < minimumPerGroup || groupB.length < minimumPerGroup || groupImbalance < EVIDENCE_POLICY.minimumSampleBalance || exclusionRate > EVIDENCE_POLICY.maximumMissingRate) status = "insufficient_data";
   else if (input.kind === "behavioral_intervention") {
-    const attempted = input.observations.filter((observation) => observation.conditionValues?.interventionAttempted !== undefined);
+    const attempted = eligible.filter((observation) => observation.conditionValues?.interventionAttempted !== undefined);
     const completed = attempted.filter((observation) => observation.conditionValues?.interventionAttempted === true);
-    if (attempted.length && completed.length / attempted.length < 0.5) status = "insufficient_data";
-    else status = direction === input.expectedDirection && Math.abs(difference ?? 0) >= input.minimumEffect ? "supported" : direction !== input.expectedDirection && Math.abs(difference ?? 0) >= input.minimumEffect ? "challenged" : "inconclusive";
-  } else if (direction === input.expectedDirection && Math.abs(difference ?? 0) >= input.minimumEffect) status = "supported";
-  else if (direction !== "unknown" && direction !== "equal" && Math.abs(difference ?? 0) >= input.minimumEffect) status = "challenged";
+    if (attempted.length < minimumObservations || completed.length / attempted.length < 0.5) status = "insufficient_data";
+    else status = direction === input.expectedDirection && Math.abs(difference ?? 0) >= minimumEffect ? "supported" : direction !== input.expectedDirection && Math.abs(difference ?? 0) >= minimumEffect ? "challenged" : "inconclusive";
+  } else if (direction === input.expectedDirection && Math.abs(difference ?? 0) >= minimumEffect) status = "supported";
+  else if (direction !== "unknown" && direction !== "equal" && Math.abs(difference ?? 0) >= minimumEffect) status = "challenged";
   else status = "inconclusive";
   const supportIds = status === "supported" ? eligible.map((observation) => observation.id) : [];
   const contradictionIds = status === "challenged" ? eligible.map((observation) => observation.id) : [];
-  const additional = Math.max(0, input.minimumPerGroup - Math.min(groupA.length, groupB.length));
+  const additional = Math.max(0, minimumPerGroup - Math.min(groupA.length, groupB.length));
   const sensitivity: SensitivitySummary = {
-    conclusionChangeConditions: status === "supported" ? [`反対側のグループに${Math.max(1, additional)}件以上の記録が追加され、平均との差が${input.minimumEffect}未満になる場合`] : ["各グループの記録数と条件の偏りが変わる場合"],
+    conclusionChangeConditions: status === "supported" ? [`反対側のグループに${Math.max(1, additional)}件以上の記録が追加され、平均との差が${minimumEffect}未満になる場合`] : ["各グループの記録数と条件の偏りが変わる場合"],
     groupImbalanceWarnings: groupImbalance < 0.5 ? ["比較グループの件数差が大きいため結論は暫定的です"] : [],
     missingnessWarnings: excludedCount ? ["除外された観測の理由が偏っている場合、結果が変わる可能性があります"] : [],
     overlapWarnings: [],
@@ -335,6 +347,10 @@ export function evaluateExperiment(input: {
     nextOptions: status === "insufficient_data" ? ["collect_more", "pause_and_reduce_burden"] : status === "supported" || status === "challenged" ? ["review_hypothesis", "repeat_in_another_period", "archive_experiment"] : ["collect_more", "repeat_in_another_period"],
     evaluatedAt
   };
+}
+
+export function evaluateExperiment(input: Parameters<typeof evaluateExperimentLegacy>[0]): ExperimentEvaluation {
+  return evaluateExperimentDeterministic(input);
 }
 
 export type HypothesisReviewReason = "already_knew" | "partly_fits" | "depends_on_context" | "interpretation_is_wrong" | "evidence_is_weak" | "not_useful" | "not_ready_to_test" | "too_burdensome" | "privacy_concern" | "other";
