@@ -2,8 +2,9 @@ import { matchesAll } from "./conditions.ts";
 import type { ObservationEpisode } from "./episodes.ts";
 import type { EvaluationResult, HypothesisSpec } from "./spec.ts";
 import { EVIDENCE_POLICY, effectiveMinimumEffect } from "../evidencePolicy.ts";
+import { correctedAlpha, exactPermutationPValue } from "../significance.ts";
 
-export const HYPOTHESIS_EVALUATOR_VERSION = "comparison-v2";
+export const HYPOTHESIS_EVALUATOR_VERSION = "comparison-v3";
 
 export interface EvaluationSample {
   responseId: string;
@@ -33,6 +34,9 @@ export interface HypothesisEvaluation {
   requiredEffect: number;
   dataQualityFlags: string[];
   samples: EvaluationSample[];
+  pValue: number | null;
+  significanceAlpha: number;
+  significanceMethod: "exact_permutation" | "not_evaluable";
 }
 
 export function evaluateHypothesis(hypothesisId: string, spec: HypothesisSpec, episodes: ObservationEpisode[], evaluatedAt: string): HypothesisEvaluation {
@@ -67,9 +71,7 @@ export function evaluateHypothesis(hypothesisId: string, spec: HypothesisSpec, e
     return { cohortKey: cohort.key, eligibleSamples: values.length, metricValue: values.length ? metricValue : null, missingSamples: missing.get(cohort.key)! };
   });
   const flags: string[] = [];
-  const numericScale = spec.outcome.metric === "numeric_mean_difference"
-    ? { minimumValue: Number(spec.outcome.minimumValue), maximumValue: Number(spec.outcome.maximumValue) }
-    : undefined;
+  const numericScale = spec.outcome.metric === "numeric_mean_difference" ? { minimumValue: Number(spec.outcome.minimumValue), maximumValue: Number(spec.outcome.maximumValue) } : undefined;
   if (spec.outcome.metric === "numeric_mean_difference" && (!Number.isFinite(numericScale?.minimumValue) || !Number.isFinite(numericScale?.maximumValue) || numericScale!.maximumValue <= numericScale!.minimumValue)) flags.push("numeric_scale_missing");
   const minSamples = Math.max(EVIDENCE_POLICY.minimumSamplesPerCohort, Number.isFinite(spec.evaluationPolicy.minimumSamplesPerCohort) ? Math.floor(spec.evaluationPolicy.minimumSamplesPerCohort) : EVIDENCE_POLICY.minimumSamplesPerCohort);
   if (metrics.some((metric) => metric.eligibleSamples < minSamples)) flags.push("minimum_samples_per_cohort");
@@ -82,12 +84,18 @@ export function evaluateHypothesis(hypothesisId: string, spec: HypothesisSpec, e
   if (totalSamples < EVIDENCE_POLICY.minimumTotalSamples) flags.push("minimum_total_samples");
   const maximumMissingRate = Math.max(0, Math.min(EVIDENCE_POLICY.maximumMissingRate, Number.isFinite(spec.evaluationPolicy.maximumMissingRate) ? spec.evaluationPolicy.maximumMissingRate : EVIDENCE_POLICY.maximumMissingRate));
   if (totalSamples === 0 || totalMissing / totalSamples > maximumMissingRate) flags.push("maximum_missing_rate");
+  const numericValues = spec.cohorts.map((cohort) => cohortValues.get(cohort.key)!.flatMap((value) => spec.outcome.metric === "binary_rate_difference" ? [spec.outcome.positiveValues!.some((positive) => positive === value) ? 1 : 0] : typeof value === "number" ? [value] : []));
   const observedEffect = metrics[0].metricValue === null || metrics[1].metricValue === null ? null : metrics[0].metricValue - metrics[1].metricValue;
-  let result: EvaluationResult = "insufficient_data";
+  const observedDirection = observedEffect !== null && observedEffect < 0 ? "b_greater" : "a_greater";
+  const significance = exactPermutationPValue(numericValues[0], numericValues[1], observedDirection);
+  const significanceAlpha = correctedAlpha(spec.evaluationPolicy.comparisonCount ?? 1);
+  if (!significance) flags.push("significance_not_evaluable");
   const requiredEffect = effectiveMinimumEffect(spec.outcome.metric, spec.expectation.minimumEffect, numericScale);
+  let result: EvaluationResult = "insufficient_data";
   if (flags.length === 0 && observedEffect !== null) {
     const direction = spec.expectation.relation === "cohort_a_greater_than_b" ? observedEffect : -observedEffect;
-    result = direction >= requiredEffect ? "supports" : direction <= -requiredEffect ? "challenges" : "inconclusive";
+    const significant = significance !== null && significance.pValue <= significanceAlpha + 1e-12;
+    result = significant && direction >= requiredEffect ? "supports" : significant && direction <= -requiredEffect ? "challenges" : "inconclusive";
   }
-  return { hypothesisId, hypothesisSpecVersion: spec.schemaVersion, evaluatorVersion: HYPOTHESIS_EVALUATOR_VERSION, evaluatedAt, windowStart: windowStart.toISOString(), windowEnd: windowEnd.toISOString(), result, cohortMetrics: metrics, observedEffect, requiredEffect, dataQualityFlags: flags, samples };
+  return { hypothesisId, hypothesisSpecVersion: spec.schemaVersion, evaluatorVersion: HYPOTHESIS_EVALUATOR_VERSION, evaluatedAt, windowStart: windowStart.toISOString(), windowEnd: windowEnd.toISOString(), result, cohortMetrics: metrics, observedEffect, requiredEffect, dataQualityFlags: flags, samples, pValue: significance?.pValue ?? null, significanceAlpha, significanceMethod: significance ? "exact_permutation" : "not_evaluable" };
 }

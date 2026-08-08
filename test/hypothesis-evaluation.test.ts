@@ -28,16 +28,16 @@ function episodes(values: Array<{ energy: number; activity: string; mode?: "mome
 
 test("binary rate difference supports the expected direction", () => {
   const result = evaluateHypothesis("h1", baseSpec(), episodes([
-    { energy: 1, activity: "passive" }, { energy: 1, activity: "passive" }, { energy: 1, activity: "active" }, { energy: 1, activity: "passive" },
-    { energy: 4, activity: "active" }, { energy: 4, activity: "active" }, { energy: 4, activity: "passive" }, { energy: 4, activity: "active" },
+    { energy: 1, activity: "passive" }, { energy: 1, activity: "passive" }, { energy: 1, activity: "passive" }, { energy: 1, activity: "passive" },
+    { energy: 4, activity: "active" }, { energy: 4, activity: "active" }, { energy: 4, activity: "active" }, { energy: 4, activity: "active" },
   ]), evaluatedAt);
-  assert.equal(result.result, "supports"); assert.equal(result.observedEffect, 0.5);
+  assert.equal(result.result, "supports"); assert.equal(result.observedEffect, 1); assert.ok(result.pValue !== null && result.pValue <= result.significanceAlpha);
 });
 
 test("binary rate difference challenges the expected direction", () => {
   const result = evaluateHypothesis("h1", baseSpec(), episodes([
-    { energy: 1, activity: "active" }, { energy: 1, activity: "active" }, { energy: 1, activity: "passive" }, { energy: 1, activity: "active" },
-    { energy: 4, activity: "passive" }, { energy: 4, activity: "passive" }, { energy: 4, activity: "active" }, { energy: 4, activity: "passive" },
+    { energy: 1, activity: "active" }, { energy: 1, activity: "active" }, { energy: 1, activity: "active" }, { energy: 1, activity: "active" },
+    { energy: 4, activity: "passive" }, { energy: 4, activity: "passive" }, { energy: 4, activity: "passive" }, { energy: 4, activity: "passive" },
   ]), evaluatedAt);
   assert.equal(result.result, "challenges");
 });

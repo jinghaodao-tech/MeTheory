@@ -1,4 +1,5 @@
 import { EVIDENCE_POLICY, normalizedNumericEffect, validNumericScale } from "./evidencePolicy.ts";
+import { correctedAlpha, exactPermutationPValue } from "./significance.ts";
 import type { ExperimentEvaluation, ExperimentKind, ExperimentObservation } from "./experiments.ts";
 
 function mean(values: number[]): number {
@@ -18,6 +19,7 @@ export function evaluateExperimentDeterministic(input: {
   evaluatedAt?: string;
   alternativeExplanations?: string[];
   outcomeScale?: { minimumValue: number; maximumValue: number };
+  comparisonCount?: number;
 }): ExperimentEvaluation {
   const evaluatedAt = input.evaluatedAt ?? new Date().toISOString();
   const minimumPerGroup = Math.max(EVIDENCE_POLICY.minimumSamplesPerCohort, Number.isInteger(input.minimumPerGroup) ? input.minimumPerGroup : 0);
@@ -33,12 +35,17 @@ export function evaluateExperimentDeterministic(input: {
   const meanB = mean(groupB.map((observation) => observation.outcome));
   const difference = groupA.length && groupB.length ? meanA - meanB : null;
   const direction = difference === null ? "unknown" : difference === 0 ? "equal" : difference > 0 ? "a_greater" : "b_greater";
+  const observedDirection = difference !== null && difference < 0 ? "b_greater" : "a_greater";
+  const significance = difference === null ? null : exactPermutationPValue(groupA.map((observation) => observation.outcome), groupB.map((observation) => observation.outcome), observedDirection);
+  const significanceAlpha = correctedAlpha(input.comparisonCount ?? 1);
   const groupImbalance = Math.min(groupA.length, groupB.length) / Math.max(groupA.length, groupB.length, 1);
   const exclusionRate = input.observations.length ? excludedCount / input.observations.length : 1;
   const warnings: string[] = [];
   if (groupImbalance < EVIDENCE_POLICY.minimumSampleBalance) warnings.push("グループ間の記録数に偏りがあります");
   if (excludedCount > 0) warnings.push("一部の観測は評価条件を満たさないため除外されました");
   if (!scale) warnings.push("数値の範囲が未設定のため、効果量は絶対値で判定されます");
+  if (!significance) warnings.push("正確な有意性を計算できないため、陽性判定を保留します");
+  if (significance && significance.pValue > significanceAlpha + 1e-12) warnings.push("補正後の有意水準5%を満たしていません");
   const missingData: Array<{ groupKey: string; needed: number; reason: string }> = [];
   if (groupA.length < minimumPerGroup) missingData.push({ groupKey: input.groupAKey, needed: minimumPerGroup - groupA.length, reason: "group_a_samples_insufficient" });
   if (groupB.length < minimumPerGroup) missingData.push({ groupKey: input.groupBKey, needed: minimumPerGroup - groupB.length, reason: "group_b_samples_insufficient" });
@@ -59,7 +66,8 @@ export function evaluateExperimentDeterministic(input: {
       ? (normalizedNumericEffect(signedDifference, scale) ?? 0) >= EVIDENCE_POLICY.minimumAbsoluteEffect && Math.abs(signedDifference) >= minimumEffect
       : Math.abs(signedDifference) >= minimumEffect;
     const directionMatches = input.expectedDirection === "a_greater" ? difference > 0 : difference < 0;
-    status = effectEnough ? (directionMatches ? "supported" : "challenged") : "inconclusive";
+    const significant = significance !== null && significance.pValue <= significanceAlpha + 1e-12;
+    status = significant && effectEnough ? (directionMatches ? "supported" : "challenged") : "inconclusive";
   }
   const supportIds = status === "supported" ? eligible.map((observation) => observation.id) : [];
   const contradictionIds = status === "challenged" ? eligible.map((observation) => observation.id) : [];
@@ -70,7 +78,7 @@ export function evaluateExperimentDeterministic(input: {
     missingnessWarnings: excludedCount ? ["除外された観測によって結果が変わる可能性があります"] : [],
     overlapWarnings: [],
     minimumAdditionalObservations: additional || undefined,
-    explanation: status === "insufficient_data" ? "必要な記録数またはデータ品質の条件を満たしていないため、結論を出せません" : "現在の記録範囲と判定条件に基づく決定論的な評価です"
+    explanation: status === "insufficient_data" ? "必要な記録数、データ品質、または有意性の条件を満たしていないため、結論を出せません" : "現在の記録範囲、効果量、正確な置換検定に基づく決定論的な評価です"
   };
   return {
     experimentId: input.experimentId,
@@ -87,6 +95,9 @@ export function evaluateExperimentDeterministic(input: {
     alternativeExplanations: input.alternativeExplanations ?? ["記録されていない条件や別の要因が結果に影響している可能性があります"],
     sensitivitySummary: sensitivity,
     nextOptions: status === "insufficient_data" ? ["collect_more", "pause_and_reduce_burden"] : status === "supported" || status === "challenged" ? ["review_hypothesis", "repeat_in_another_period", "archive_experiment"] : ["collect_more", "repeat_in_another_period"],
-    evaluatedAt
+    evaluatedAt,
+    pValue: significance?.pValue ?? null,
+    significanceAlpha,
+    significanceMethod: significance ? "exact_permutation" : "not_evaluable"
   };
 }

@@ -133,6 +133,9 @@ export type ExperimentEvaluation = {
   sensitivitySummary: SensitivitySummary;
   nextOptions: Array<"collect_more" | "repeat_in_another_period" | "review_hypothesis" | "archive_experiment" | "pause_and_reduce_burden">;
   evaluatedAt: string;
+  pValue: number | null;
+  significanceAlpha: number;
+  significanceMethod: "exact_permutation" | "not_evaluable";
 };
 
 export type CandidateForExperiment = {
@@ -345,7 +348,10 @@ function evaluateExperimentLegacy(input: {
     alternativeExplanations: input.alternativeExplanations ?? ["記録された条件以外の要因が影響している可能性があります"],
     sensitivitySummary: sensitivity,
     nextOptions: status === "insufficient_data" ? ["collect_more", "pause_and_reduce_burden"] : status === "supported" || status === "challenged" ? ["review_hypothesis", "repeat_in_another_period", "archive_experiment"] : ["collect_more", "repeat_in_another_period"],
-    evaluatedAt
+    evaluatedAt,
+    pValue: null,
+    significanceAlpha: EVIDENCE_POLICY.falsePositiveAlpha,
+    significanceMethod: "not_evaluable"
   };
 }
 

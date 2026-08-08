@@ -13,6 +13,8 @@ export const EVIDENCE_POLICY = Object.freeze({
   minimumTemporalSamplesPerCohort: 3,
   minimumTemporalNormalizedEffect: 0.1,
   minimumInterventionAdherence: 0.5,
+  falsePositiveAlpha: 0.05,
+  maximumExactPermutations: 200000,
 });
 
 export type NumericScale = { minimumValue: number; maximumValue: number };

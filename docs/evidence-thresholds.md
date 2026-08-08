@@ -18,6 +18,7 @@ MeTheory uses deterministic minimums before it emits `supports`, `challenges`, `
 | Replication normalized effect | 0.10 per period | Each period must contain a meaningful directional effect. |
 | Temporal stability samples | 3 per cohort per half-period | A single record in each half cannot establish stability. |
 | Intervention adherence | 0.50 | An intervention is not evaluated when fewer than half of attempts were completed. |
+| False-positive alpha | 0.05 | A statistical result must pass an exact one-sided test. Multiple comparisons use Bonferroni correction. |
 
 Callers may request stricter values. Runtime normalization prevents API input, old persisted records, mobile clients, or test-only paths from weakening these floors.
 
@@ -36,6 +37,8 @@ These defaults are stricter because generated findings are shown without a user 
 - Numeric outcomes require an explicit minimum and maximum scale. The minimum practical effect is at least 10% of that scale, even if a caller supplies a smaller raw threshold.
 - Automatic self-understanding comparisons use the versioned semantic pair allowlist when parameter roles are available. Generic domain utilities remain available for explicit technical comparisons.
 - A configuration value below a floor is raised to the floor at execution time.
+- `supports`, `challenges`, `supported`, and `challenged` require an exact one-sided binomial or permutation p-value at or below the corrected alpha. A p-value above the threshold is reported as inconclusive.
+- The 5% value is a per-analysis error-control target under the test's exchangeability assumptions. It is not a guarantee that every future dataset has a measured false-positive rate below 5%.
 - Stored specifications are validated on creation and defensively normalized during evaluation.
 
 ## Changing a threshold

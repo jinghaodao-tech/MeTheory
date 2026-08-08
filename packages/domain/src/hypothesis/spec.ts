@@ -35,6 +35,7 @@ export interface HypothesisSpec {
     windowDays: number;
     excludeLowCertainty: boolean;
     maximumMissingRate: number;
+    comparisonCount?: number;
   };
 }
 
@@ -67,5 +68,6 @@ export function validateHypothesisSpec(input: unknown): HypothesisSpec {
   if (typeof policy.maximumCohortRatio !== "number" || policy.maximumCohortRatio < 1 || policy.maximumCohortRatio > EVIDENCE_POLICY.maximumCohortRatio) throw new Error(`maximumCohortRatio must be between 1 and ${EVIDENCE_POLICY.maximumCohortRatio}`);
   if (typeof policy.maximumMissingRate !== "number" || policy.maximumMissingRate < 0 || policy.maximumMissingRate > EVIDENCE_POLICY.maximumMissingRate) throw new Error(`maximumMissingRate must be between 0 and ${EVIDENCE_POLICY.maximumMissingRate}`);
   if (!Number.isInteger(policy.windowDays) || policy.windowDays <= 0 || policy.windowDays > EVIDENCE_POLICY.maximumWindowDays) throw new Error(`windowDays must be between 1 and ${EVIDENCE_POLICY.maximumWindowDays}`);
+  if (policy.comparisonCount !== undefined && (!Number.isInteger(policy.comparisonCount) || policy.comparisonCount < 1 || policy.comparisonCount > 10000)) throw new Error("comparisonCount must be between 1 and 10000");
   return value as HypothesisSpec;
 }

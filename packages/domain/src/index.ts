@@ -1,5 +1,7 @@
 import { EVIDENCE_POLICY } from "./evidencePolicy.ts";
+import { exactBinomialPValue } from "./significance.ts";
 export { EVIDENCE_POLICY } from "./evidencePolicy.ts";
+export * from "./significance.ts";
 
 export const HYPOTHESIS_STATUSES = [
   "proposed",
@@ -96,9 +98,13 @@ export function evaluateEvidence(observations: ObservationInput[], ruleVersion =
   }
   const missingRate = observations.length ? insufficient / observations.length : 1;
   const qualitySufficient = missingRate <= EVIDENCE_POLICY.maximumMissingRate;
-  const status = qualitySufficient && supports >= EVIDENCE_POLICY.minimumDirectionalObservations && supports - challenges >= EVIDENCE_POLICY.minimumDirectionalLead
+  const supportPValue = exactBinomialPValue(supports, challenges);
+  const challengePValue = exactBinomialPValue(challenges, supports);
+  const significantSupport = supportPValue !== null && supportPValue.pValue <= EVIDENCE_POLICY.falsePositiveAlpha + 1e-12;
+  const significantChallenge = challengePValue !== null && challengePValue.pValue <= EVIDENCE_POLICY.falsePositiveAlpha + 1e-12;
+  const status = qualitySufficient && significantSupport && supports >= EVIDENCE_POLICY.minimumDirectionalObservations && supports - challenges >= EVIDENCE_POLICY.minimumDirectionalLead
     ? "supported"
-    : qualitySufficient && challenges >= EVIDENCE_POLICY.minimumDirectionalObservations && challenges - supports >= EVIDENCE_POLICY.minimumDirectionalLead
+    : qualitySufficient && significantChallenge && challenges >= EVIDENCE_POLICY.minimumDirectionalObservations && challenges - supports >= EVIDENCE_POLICY.minimumDirectionalLead
       ? "challenged"
       : "inconclusive";
   return { status, supports, challenges, insufficient, sampleSize: observations.length, ruleVersion };
