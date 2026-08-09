@@ -37,6 +37,16 @@ test("exact significance uses a five percent family-wise floor", () => {
   assert.equal(correctedAlpha(2), 0.025);
 });
 
+test("large numeric permutations use a deterministic Monte Carlo fallback", () => {
+  const groupA = Array.from({ length: 20 }, (_, index) => index + 1);
+  const groupB = Array.from({ length: 20 }, (_, index) => index + 21);
+  const first = exactPermutationPValue(groupA, groupB, "a_greater");
+  const second = exactPermutationPValue(groupA, groupB, "a_greater");
+  assert.equal(first?.method, "monte_carlo_permutation");
+  assert.deepEqual(first, second);
+  assert.ok(first !== null && first.pValue >= 0 && first.pValue <= 1);
+});
+
 
 test("hypothesis transitions reject evaluation from proposed", () => {
   assert.equal(transitionHypothesis("tracking", "supported"), "supported");

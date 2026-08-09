@@ -1,7 +1,9 @@
 export const EVIDENCE_POLICY = Object.freeze({
   minimumSamplesPerCohort: 3,
+  minimumConclusionSamplesPerCohort: 21,
   minimumTotalSamples: 6,
   minimumAbsoluteEffect: 0.1,
+  minimumConclusionNormalizedEffect: 0.25,
   minimumDirectionalObservations: 3,
   minimumDirectionalLead: 2,
   minimumSampleBalance: 0.25,
@@ -15,6 +17,7 @@ export const EVIDENCE_POLICY = Object.freeze({
   minimumInterventionAdherence: 0.5,
   falsePositiveAlpha: 0.05,
   maximumExactPermutations: 200000,
+  monteCarloPermutationSamples: 10000,
 });
 
 export type NumericScale = { minimumValue: number; maximumValue: number };
@@ -33,6 +36,12 @@ export function normalizedNumericEffect(effect: number, scale: NumericScale | un
   return Math.abs(effect) / (scale.maximumValue - scale.minimumValue);
 }
 
+export function effectiveConclusionMinimumEffect(metric: "binary_rate_difference" | "numeric_mean_difference", configured: number, scale?: NumericScale): number {
+  const exploratory = effectiveMinimumEffect(metric, configured, scale);
+  if (metric === "binary_rate_difference") return Math.max(exploratory, EVIDENCE_POLICY.minimumConclusionNormalizedEffect);
+  if (!validNumericScale(scale)) return Number.POSITIVE_INFINITY;
+  return Math.max(exploratory, EVIDENCE_POLICY.minimumConclusionNormalizedEffect * (scale.maximumValue - scale.minimumValue));
+}
 export function effectiveMinimumEffect(metric: "binary_rate_difference" | "numeric_mean_difference", configured: number, scale?: NumericScale): number {
   const finite = Number.isFinite(configured) ? configured : 0;
   const minimum = Math.max(EVIDENCE_POLICY.minimumAbsoluteEffect, finite);

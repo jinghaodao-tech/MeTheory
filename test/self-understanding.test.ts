@@ -100,9 +100,26 @@ test("eight paired records generate evidence while unknown temporal stability st
   assert.equal(result.length, 1);
   assert.equal(result[0].status, "emerging");
   assert.equal(result[0].candidate.temporalStabilityStatus, "unknown");
+  assert.equal(result[0].candidate.temporalStability, 0.5);
   assert.ok(result[0].supportingEntryIds.length > 0);
   assert.equal(result[0].userReview, "pending");
   assert.ok(result[0].nextAction.length > 0);
+});
+
+test("temporal stability status changes only after each half has three records per cohort", () => {
+  const statuses = new Map<number, string>();
+  for (const count of [8, 12, 100]) {
+    const input = pairedInput(
+      count,
+      (condition) => (condition ? 80 : 30),
+      count > 8
+        ? (index) => new Date(Date.parse("2026-07-27T12:00:00.000Z") - (29 - index * (29 / (count - 1))) * 86400000).toISOString()
+        : undefined
+    );
+    const result = generateSelfUnderstanding({ now: "2026-07-27T12:00:00.000Z", parameters, ...input });
+    statuses.set(count, result[0]?.candidate.temporalStabilityStatus ?? "no_candidate");
+  }
+  assert.deepEqual(Object.fromEntries(statuses), { 8: "unknown", 12: "stable", 100: "stable" });
 });
 
 test("fewer than eight paired records or fewer than three in a cohort are rejected", () => {

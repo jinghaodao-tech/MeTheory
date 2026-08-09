@@ -1,5 +1,6 @@
 import {
   generateHypothesisCandidates,
+  generateHypothesisCandidatesWithAudit,
   normalizeCandidateGenerationConfig,
   CANDIDATE_PAIR_ALLOWLIST_VERSION,
   type CandidateGenerationConfig,
@@ -94,6 +95,7 @@ export type SelfUnderstandingConfig = Pick<
   | "minimumNormalizedEffect"
   | "minimumSampleBalance"
   | "maximumCandidates"
+  | "comparisonCount"
   | "pairAllowlistVersion"
 > & { stableMinimumSamples: number };
 export const DEFAULT_SELF_UNDERSTANDING_CONFIG: SelfUnderstandingConfig = {
@@ -794,7 +796,7 @@ function interpretationErrors(
   );
   if (otherConstruct) errors.push("construct_changed");
   const roleKeys = text.match(
-    /\b(?:mood|energy|fatigue|recovery|sleep_duration|sleep_quality|time_of_day|day_type|social_context|social_intensity|environment|noise_level|task_clarity|deadline_clarity|start_delay|initiation_difficulty|continuation_difficulty|focus|completion|satisfaction|uncertainty|decision_count|avoidance|self_rating|observed_behavior|other)\b/g
+    /\b(?:mood|energy|fatigue|recovery|sleep_duration|sleep_quality|time_of_day|day_type|social_context|social_intensity|environment|noise_level|task_clarity|deadline_clarity|start_delay|initiation_difficulty|continuation_difficulty|focus|ai_conversation_intensity|switching_frequency|active_duration|completion|satisfaction|uncertainty|decision_count|avoidance|self_rating|observed_behavior|other)\b/g
   ) ?? [];
   if (
     roleKeys.some(
@@ -1041,7 +1043,7 @@ export function generateSelfUnderstanding(input: {
     maximumCandidates: Math.min(10, candidateConfig.maximumCandidates),
     stableMinimumSamples: Math.max(DEFAULT_SELF_UNDERSTANDING_CONFIG.stableMinimumSamples, Number.isInteger(input.config?.stableMinimumSamples) ? input.config!.stableMinimumSamples! : 0)
   };
-  const candidates = generateHypothesisCandidates({
+  const candidateGeneration = generateHypothesisCandidatesWithAudit({
     parameters: input.parameters,
     observations: input.observations,
     allowedValues: input.allowedValues,
@@ -1053,6 +1055,7 @@ export function generateSelfUnderstanding(input: {
       lookbackDays: 30
     }
   });
+  const candidates = candidateGeneration.candidates;
   const hypotheses = candidates.map((candidate) => {
     const conditionParameter = input.parameters.find(
       (item) => item.id === candidate.conditionParameterId
@@ -1151,7 +1154,7 @@ export function generateSelfUnderstanding(input: {
       mergedCandidateIds: []
     };
     const interpretation = deterministicInterpretation(interpretationInput);
-    const binarySensitivity = outcomeParameter.valueType === "boolean" || outcomeParameter.valueType === "single_choice"
+    const binarySensitivity = outcomeParameter.valueType === "boolean" || (outcomeParameter.valueType === "single_choice" && Boolean(outcomeParameter.positiveValues?.length) && !outcomeParameter.numericMapping && !outcomeParameter.orderedValues?.length)
       ? binaryRateSensitivity({
         groupAPositive: Math.round(candidate.cohortA.metricValue * candidate.cohortA.validSampleCount),
         groupATotal: candidate.cohortA.validSampleCount,
@@ -1213,8 +1216,10 @@ export function generateSelfUnderstanding(input: {
       sensitivitySummary
     };
   });
-  return deduplicateSelfUnderstandingHypotheses(
+  const deduplicated = deduplicateSelfUnderstandingHypotheses(
     hypotheses,
     config.maximumCandidates
   );
+  Object.defineProperty(deduplicated, "candidateAudit", { value: candidateGeneration.audit, enumerable: false });
+  return deduplicated;
 }

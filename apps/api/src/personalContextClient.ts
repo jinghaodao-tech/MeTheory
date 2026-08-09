@@ -93,6 +93,11 @@ export class PcsIntegrationClient {
     return request(`/v1/context/analysis-snapshot?${query.toString()}`, undefined, this.config);
   }
 
+  async getAnalysisSnapshotV3(input: { profileId: string; from: string; to: string; timezone?: string }): Promise<unknown> {
+    const query = new URLSearchParams({ profileId: input.profileId, from: input.from, to: input.to, timezone: input.timezone ?? "UTC" });
+    return request(`/v1/context/analysis-snapshot-v3?${query.toString()}`, undefined, this.config);
+  }
+
   async submitTemplateRequest(input: IntegrationTemplateRequestV1): Promise<unknown> {
     return request("/v1/integration-template-requests", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) }, this.config);
   }
@@ -109,7 +114,7 @@ export function pcsProfileId(): string {
 }
 
 export async function loadPersonalContextSnapshot(input: { startAt: string; endAt: string }): Promise<unknown> {
-  return new PcsIntegrationClient().getAnalysisSnapshot({ profileId: pcsProfileId(), from: input.startAt, to: input.endAt, timezone: process.env.PCS_TIMEZONE ?? "UTC" });
+  return new PcsIntegrationClient().getAnalysisSnapshotV3({ profileId: pcsProfileId(), from: input.startAt, to: input.endAt, timezone: process.env.PCS_TIMEZONE ?? "UTC" });
 }
 
 export async function requestPersonalContextTemplate(input: ExperimentTemplateRequest): Promise<unknown> {

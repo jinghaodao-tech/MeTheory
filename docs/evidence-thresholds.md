@@ -53,15 +53,34 @@ their purpose and regression coverage.
 | Key | Value | Meaning | Rationale | Verification |
 | --- | ---: | --- | --- | --- |
 | minimumSamplesPerCohort | 3 | Minimum usable records in each group | Prevent one or two records from deciding a direction | Domain, hypothesis, candidate, and experiment tests |
+| minimumConclusionSamplesPerCohort | 21 | Minimum usable records per group for supports/challenges | Keep final conclusions away from small-sample extremes | Hypothesis and experiment conclusion tests |
 | minimumTotalSamples | 6 | Minimum records across both groups | Keeps the two group floors consistent | Domain and hypothesis tests |
 | minimumAbsoluteEffect | 0.10 | Minimum normalized/absolute effect floor | Ignore negligible differences | Evidence and candidate floor tests |
+| minimumConclusionNormalizedEffect | 0.25 | Minimum normalized effect for supports/challenges | Separate exploratory candidates from final conclusions | Hypothesis and experiment conclusion tests |
 | falsePositiveAlpha | 0.05 | Exact one-sided significance target | Keep positive conclusions behind a five percent gate | test/false-positive-rate.test.ts |
-| maximumExactPermutations | 200000 | Exact test computation budget | Fail closed instead of silently approximating | Significance unit tests |
+| maximumExactPermutations | 200000 | Exact test computation budget | Switch to deterministic Monte Carlo instead of dropping large datasets | Significance and candidate fallback tests |
+| monteCarloPermutationSamples | 10000 | Approximate test sample count after the exact budget | Keep large comparisons evaluable with a conservative plus-one estimate | Significance fallback test |
 | maximumMissingRate | 0.50 | Maximum excluded or missing proportion | Avoid conclusions dominated by absent data | Hypothesis and experiment tests |
 | maximumWindowDays | 365 | Maximum evaluation window | Bound stale and accidental unbounded queries | Configuration validation tests |
 
-The sample and effect floors are measurement-quality floors. The false-positive
+The 3-observation and 0.10 floors are exploratory measurement-quality floors. Final `supports` and `challenges` additionally require 21 usable observations per cohort and a normalized effect of at least 0.25. The false-positive
 target is controlled separately by the exact test; increasing a sample floor
-alone does not guarantee a five percent false-positive rate. Candidate
-generation may provide comparisonCount to apply Bonferroni correction across a
-family of comparisons.
+alone does not guarantee a five percent false-positive rate. Candidate generation automatically counts the allowed condition/outcome comparisons and applies Bonferroni correction. Callers may provide comparisonCount to use a stricter explicit family size.
+
+Temporal stability splits the observed timestamp range inside the configured
+window, not the full unused lookback window. This prevents recent observations
+from making the earlier half empty. The per-half, per-cohort minimum still
+applies; insufficiently distributed observations remain `unknown`.
+
+When the exact permutation count exceeds `maximumExactPermutations`, numeric
+comparisons use a deterministic Monte Carlo permutation test with
+`monteCarloPermutationSamples` draws and a plus-one p-value estimate. The
+result records `monte_carlo_permutation` so consumers can distinguish an exact
+result from an approximation. Binary and two-level outcomes continue to use
+their exact calculation.
+
+The candidate audit path records the number of comparisons that passed sample,
+effect, balance, and missingness gates before significance testing, the number
+rejected by significance, and the number accepted before the display limit.
+This makes threshold changes reviewable instead of silently changing the
+candidate list.

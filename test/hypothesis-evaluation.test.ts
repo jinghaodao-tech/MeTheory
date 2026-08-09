@@ -16,6 +16,8 @@ const baseSpec = (minimumSamplesPerCohort = 3): HypothesisSpec => validateHypoth
   evaluationPolicy: { captureModes: ["momentary_observation"], acceptedSources: ["user_confirmed", "system"], minimumSamplesPerCohort, maximumCohortRatio: 3, windowDays: 30, excludeLowCertainty: true, maximumMissingRate: 0.4 },
 });
 
+function repeated(energy: number, activity: string) { return Array.from({ length: 21 }, () => ({ energy, activity })); }
+
 function episodes(values: Array<{ energy: number; activity: string; mode?: "momentary_observation" | "retrospective_entry"; source?: "user_confirmed" | "system" | "ai_inferred"; certainty?: "high" | "medium" | "low" }>) {
   const observations = values.flatMap<EpisodeObservation>((value, index) => {
     const context: EpisodeObservation = {
@@ -28,24 +30,26 @@ function episodes(values: Array<{ energy: number; activity: string; mode?: "mome
 
 test("binary rate difference supports the expected direction", () => {
   const result = evaluateHypothesis("h1", baseSpec(), episodes([
-    { energy: 1, activity: "passive" }, { energy: 1, activity: "passive" }, { energy: 1, activity: "passive" }, { energy: 1, activity: "passive" },
-    { energy: 4, activity: "active" }, { energy: 4, activity: "active" }, { energy: 4, activity: "active" }, { energy: 4, activity: "active" },
+    ...repeated(1, "passive"),
+    ...repeated(4, "active"),
   ]), evaluatedAt);
-  assert.equal(result.result, "supports"); assert.equal(result.observedEffect, 1); assert.ok(result.pValue !== null && result.pValue <= result.significanceAlpha);
+  assert.equal(result.result, "supports"); assert.equal(result.observedEffect, 1); assert.ok(result.pValue !== null && result.pValue <= result.significanceAlpha); assert.equal(result.sensitivitySummary.method, "binary_rate_flip"); assert.ok(result.sensitivitySummary.minimumChangesToCrossEffect !== null);
 });
 
 test("binary rate difference challenges the expected direction", () => {
   const result = evaluateHypothesis("h1", baseSpec(), episodes([
-    { energy: 1, activity: "active" }, { energy: 1, activity: "active" }, { energy: 1, activity: "active" }, { energy: 1, activity: "active" },
-    { energy: 4, activity: "passive" }, { energy: 4, activity: "passive" }, { energy: 4, activity: "passive" }, { energy: 4, activity: "passive" },
+    ...repeated(1, "active"),
+    ...repeated(4, "passive"),
   ]), evaluatedAt);
   assert.equal(result.result, "challenges");
 });
 
 test("small effect is inconclusive", () => {
   const result = evaluateHypothesis("h1", baseSpec(), episodes([
-    { energy: 1, activity: "passive" }, { energy: 1, activity: "active" }, { energy: 1, activity: "active" }, { energy: 1, activity: "active" },
-    { energy: 4, activity: "active" }, { energy: 4, activity: "active" }, { energy: 4, activity: "passive" }, { energy: 4, activity: "active" },
+    ...Array.from({ length: 11 }, () => ({ energy: 1, activity: "passive" })),
+    ...Array.from({ length: 10 }, () => ({ energy: 1, activity: "active" })),
+    ...Array.from({ length: 10 }, () => ({ energy: 4, activity: "passive" })),
+    ...Array.from({ length: 11 }, () => ({ energy: 4, activity: "active" })),
   ]), evaluatedAt);
   assert.equal(result.result, "inconclusive");
 });
@@ -83,7 +87,14 @@ test("episodes classify once, ambiguous and unmatched rows are excluded", () => 
 
 test("numeric mean difference is deterministic and history payload can be compared", () => {
   const spec = validateHypothesisSpec({ ...baseSpec(), outcome: { field: "satisfaction", metric: "numeric_mean_difference", minimumValue: 0, maximumValue: 5 }, expectation: { relation: "cohort_a_greater_than_b", minimumEffect: 1 } });
-  const input = episodes([{ energy: 1, activity: "passive" }, { energy: 1, activity: "passive" }, { energy: 1, activity: "passive" }, { energy: 4, activity: "active" }, { energy: 4, activity: "active" }, { energy: 4, activity: "active" }]).flatMap((episode, index) => [{ responseId: episode.responseId, checkinId: episode.checkinId, capturedAt: episode.capturedAt, captureMode: episode.captureMode, field: "activity_context", value: "free_time", source: "system" as const, certainty: "high" as const }, { responseId: episode.responseId, checkinId: episode.checkinId, capturedAt: episode.capturedAt, captureMode: episode.captureMode, field: "energy", value: index < 3 ? 1 : 4, source: "system" as const, certainty: "high" as const }, { responseId: episode.responseId, checkinId: episode.checkinId, capturedAt: episode.capturedAt, captureMode: episode.captureMode, field: "satisfaction", value: index < 3 ? 5 : 2, source: "user_confirmed" as const, certainty: "high" as const }]);
+  const input = episodes([
+    ...Array.from({ length: 21 }, () => ({ energy: 1, activity: "passive" })),
+    ...Array.from({ length: 21 }, () => ({ energy: 4, activity: "active" })),
+  ]).flatMap((episode, index) => [
+    { responseId: episode.responseId, checkinId: episode.checkinId, capturedAt: episode.capturedAt, captureMode: episode.captureMode, field: "activity_context", value: "free_time", source: "system" as const, certainty: "high" as const },
+    { responseId: episode.responseId, checkinId: episode.checkinId, capturedAt: episode.capturedAt, captureMode: episode.captureMode, field: "energy", value: index < 21 ? 1 : 4, source: "system" as const, certainty: "high" as const },
+    { responseId: episode.responseId, checkinId: episode.checkinId, capturedAt: episode.capturedAt, captureMode: episode.captureMode, field: "satisfaction", value: index < 21 ? 5 : 2, source: "user_confirmed" as const, certainty: "high" as const },
+  ]);
   const first = evaluateHypothesis("h1", spec, buildEpisodes(input), evaluatedAt);
   const second = evaluateHypothesis("h1", spec, buildEpisodes(input), evaluatedAt);
   assert.equal(first.result, "supports"); assert.equal(first.observedEffect, 3); assert.deepEqual(first.cohortMetrics, second.cohortMetrics); assert.deepEqual(first.samples, second.samples);
@@ -111,4 +122,13 @@ test("evaluation defensively applies floors to malformed persisted settings", ()
     { energy: 1, activity: "passive" }, { energy: 4, activity: "active" }
   ]), evaluatedAt);
   assert.equal(result.result, "insufficient_data");
+});
+test("source priority keeps a confirmed value over system and inferred values", () => {
+  const result = buildEpisodes([
+    { responseId: "priority", checkinId: "checkin", capturedAt: "2026-01-01T00:00:00.000Z", captureMode: "momentary_observation", field: "energy", value: 1, source: "user_confirmed", certainty: "high" },
+    { responseId: "priority", checkinId: "checkin", capturedAt: "2026-01-02T00:00:00.000Z", captureMode: "momentary_observation", field: "energy", value: 2, source: "system", certainty: "high" },
+    { responseId: "priority", checkinId: "checkin", capturedAt: "2026-01-03T00:00:00.000Z", captureMode: "momentary_observation", field: "energy", value: 3, source: "ai_inferred", certainty: "high" }
+  ]);
+  assert.equal(result[0]?.values.energy, 1);
+  assert.equal(result[0]?.sources.energy, "user_confirmed");
 });

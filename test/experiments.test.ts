@@ -39,13 +39,13 @@ test("experiment lifecycle rejects invalid transitions", () => {
 
 test("evaluation separates supported outcome from insufficient adherence", () => {
   const observations = [
-    ...Array.from({ length: 4 }, (_, index) => ({ id: `a${index}`, experimentId: "exp-1", observedAt: `2026-07-${10 + index}T09:00:00.000Z`, groupKey: "evening", outcome: 1, source: "checkin" as const, eligible: true })),
-    ...Array.from({ length: 4 }, (_, index) => ({ id: `b${index}`, experimentId: "exp-1", observedAt: `2026-07-${10 + index}T10:00:00.000Z`, groupKey: "morning", outcome: 0, source: "checkin" as const, eligible: true }))
+    ...Array.from({ length: 21 }, (_, index) => ({ id: `a${index}`, experimentId: "exp-1", observedAt: `2026-07-${10 + index}T09:00:00.000Z`, groupKey: "evening", outcome: 1, source: "checkin" as const, eligible: true })),
+    ...Array.from({ length: 21 }, (_, index) => ({ id: `b${index}`, experimentId: "exp-1", observedAt: `2026-07-${10 + index}T10:00:00.000Z`, groupKey: "morning", outcome: 0, source: "checkin" as const, eligible: true }))
   ];
-  const result = evaluateExperiment({ experimentId: "exp-1", observations, groupAKey: "evening", groupBKey: "morning", minimumPerGroup: 3, minimumObservations: 8, expectedDirection: "a_greater", minimumEffect: 0.2 });
+  const result = evaluateExperiment({ experimentId: "exp-1", observations, groupAKey: "evening", groupBKey: "morning", minimumPerGroup: 3, minimumObservations: 42, expectedDirection: "a_greater", minimumEffect: 0.2 });
   assert.equal(result.status, "supported");
   assert.equal(result.effectSummary.difference, 1);
-  assert.equal(result.supportingObservationIds.length, 8);
+  assert.equal(result.supportingObservationIds.length, 42);
 
   const intervention = observations.map((item) => ({ ...item, conditionValues: { interventionAttempted: false } }));
   const insufficient = evaluateExperiment({ experimentId: "exp-2", observations: intervention, groupAKey: "evening", groupBKey: "morning", minimumPerGroup: 3, minimumObservations: 8, expectedDirection: "a_greater", minimumEffect: 0.2, kind: "behavioral_intervention" });

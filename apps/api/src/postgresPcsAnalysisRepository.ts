@@ -1,11 +1,12 @@
 import { Pool, type PoolClient } from "pg";
 import type { ContextAnalysisSnapshotV2 } from "personal-context-studio/integration-contracts";
+import type { PcsAnalysisSnapshotV3 } from "../../../packages/contracts/src/pcsAnalysisSnapshotV3.ts";
 import type { PcsAnalysisResult } from "../../../packages/self-understanding/src/pcsSnapshotAnalysis.ts";
 import { pcsSnapshotContractHash, pcsSourceFingerprint, type PcsAnalysisRun, type PcsProfileBinding, type PcsAnalysisResultSummary, PcsSnapshotContentMismatchError } from "./pcsAnalysisRepository.ts";
 
 function resultSummaryFrom(result: PcsAnalysisResult): PcsAnalysisResultSummary {
   const evidence = new Map(result.candidateEvidence.map((item) => [item.candidateId, item]));
-  return { status: result.status, dataQuality: result.dataQuality, excludedFields: result.excludedFields, candidateIds: result.hypotheses.map((item) => item.id), candidates: result.hypotheses.map((item) => { const itemEvidence = evidence.get(item.id); return { id: item.id, statement: item.statement, construct: item.construct, tendencyScope: item.tendencyScope, period: item.period, candidate: item.candidate, interpretationInput: item.interpretationInput, supportingEvidenceCount: itemEvidence?.supporting.length ?? 0, contradictingEvidenceCount: itemEvidence?.contradicting.length ?? 0 }; }) };
+  return { status: result.status, dataQuality: result.dataQuality, excludedFields: result.excludedFields, candidateAudit: result.candidateAudit, candidateIds: result.hypotheses.map((item) => item.id), candidates: result.hypotheses.map((item) => { const itemEvidence = evidence.get(item.id); return { id: item.id, statement: item.statement, construct: item.construct, tendencyScope: item.tendencyScope, period: item.period, candidate: item.candidate, interpretationInput: item.interpretationInput, supportingEvidenceCount: itemEvidence?.supporting.length ?? 0, contradictingEvidenceCount: itemEvidence?.contradicting.length ?? 0 }; }) };
 }
 
 export type PostgresPcsAnalysisRepositoryConfig = { connectionString: string; max?: number };
@@ -19,7 +20,7 @@ export class PostgresPcsAnalysisRepository {
   async bind(userId: string, profileId: string): Promise<PcsProfileBinding> { const timestamp = new Date().toISOString(); await this.pool.query("INSERT INTO pcs_profile_bindings(metheory_user_id,pcs_profile_id,created_at,updated_at) VALUES($1,$2,$3,$3) ON CONFLICT(metheory_user_id) DO UPDATE SET pcs_profile_id=EXCLUDED.pcs_profile_id,updated_at=EXCLUDED.updated_at", [userId, profileId, timestamp]); return (await this.getBinding(userId))!; }
   async getBinding(userId: string): Promise<PcsProfileBinding | undefined> { const row = (await this.pool.query("SELECT metheory_user_id,pcs_profile_id,created_at,updated_at FROM pcs_profile_bindings WHERE metheory_user_id=$1", [userId])).rows[0]; return row ? { metheoryUserId: row.metheory_user_id, pcsProfileId: row.pcs_profile_id, createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString() } : undefined; }
   async remove(userId: string) { return (await this.pool.query("DELETE FROM pcs_profile_bindings WHERE metheory_user_id=$1", [userId])).rowCount === 1; }
-  async saveRun(userId: string, snapshot: ContextAnalysisSnapshotV2, result: PcsAnalysisResult): Promise<PcsAnalysisRun> {
+  async saveRun(userId: string, snapshot: ContextAnalysisSnapshotV2 | PcsAnalysisSnapshotV3, result: PcsAnalysisResult): Promise<PcsAnalysisRun> {
     const fingerprint = pcsSourceFingerprint(snapshot); const existing = await this.getRunBySnapshot(userId, snapshot.snapshotId); const summary = resultSummaryFrom(result);
     if (existing) { if (existing.sourceFingerprint !== fingerprint) throw new PcsSnapshotContentMismatchError(); await this.pool.query("UPDATE pcs_analysis_runs SET result_summary=$1::jsonb WHERE user_id=$2 AND id=$3", [JSON.stringify(summary), userId, existing.id]); return { ...existing, resultSummary: summary }; }
     const run: PcsAnalysisRun = { id: `pcs_analysis_${crypto.randomUUID().replaceAll("-", "")}`, userId, snapshotId: snapshot.snapshotId, profileId: snapshot.profileId, generatedAt: snapshot.generatedAt, period: snapshot.period, schemaVersion: snapshot.schemaVersion, sourceRecordIds: snapshot.records.map((record) => record.id).sort(), sourceFingerprint: fingerprint, contractHash: pcsSnapshotContractHash(), resultSummary: summary, createdAt: new Date().toISOString() };

@@ -28,7 +28,7 @@ test("experiment repository preserves user isolation and evaluates a closed loop
     const experiment = repository.acceptDraft("user-a", draft.id);
     assert.equal(experiment.status, "ready");
     const activeExperiment = repository.transition("user-a", experiment.id, "active");
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < 21; index += 1) {
       const observedAt = new Date(Date.parse(activeExperiment.startedAt!) + (index + 1) * 3600000).toISOString();
       repository.addObservationForExperiment("user-a", experiment.id, { id: `obs-a-${index}`, idempotencyKey: `event-a-${index}`, observedAt, groupKey: "evening", outcome: 1, source: "checkin", eligible: true });
       repository.addObservationForExperiment("user-a", experiment.id, { id: `obs-b-${index}`, observedAt: new Date(Date.parse(observedAt) + 60000).toISOString(), groupKey: "morning", outcome: 0, source: "checkin", eligible: true });
@@ -37,7 +37,7 @@ test("experiment repository preserves user isolation and evaluates a closed loop
     assert.equal(duplicate.id, "obs-a-0");
     assert.throws(() => repository.addObservationForExperiment("user-a", experiment.id, { id: "different-id", idempotencyKey: "event-a-0", observedAt: new Date(Date.parse(activeExperiment.startedAt!) + 3600000).toISOString(), groupKey: "evening", outcome: 99, source: "checkin", eligible: true }), /experiment_observation_idempotency_conflict/);
     assert.throws(() => repository.addObservationForExperiment("user-a", experiment.id, { id: "bad-group", groupKey: "unknown", observedAt: new Date(Date.parse(activeExperiment.startedAt!) + 3600000).toISOString(), outcome: 1, source: "checkin", eligible: true }), /experiment_observation_group_invalid/);
-    assert.equal(repository.observations("user-a", experiment.id).length, 8);
+    assert.equal(repository.observations("user-a", experiment.id).length, 42);
     repository.transition("user-a", experiment.id, "completed");
     const evaluation = repository.evaluate("user-a", experiment.id);
     assert.equal(evaluation.status, "supported");

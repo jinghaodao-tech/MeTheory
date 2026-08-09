@@ -25,6 +25,7 @@ import { PcsSnapshotContentMismatchError } from "./pcsAnalysisRepository.ts";
 import { createPcsAnalysisStore } from "./pcsAnalysisStore.ts";
 import { analyzePcsAnalysisSnapshot } from "../../../packages/self-understanding/src/pcsSnapshotAnalysis.ts";
 import { CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION, validateContextAnalysisSnapshot, type ContextAnalysisSnapshotV2 } from "personal-context-studio/integration-contracts";
+import { validateBoundPcsSnapshot } from "./services/pcsAnalysisService.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.METHEORY_DB ?? resolve(root, "data", "metheory.sqlite3");
@@ -672,14 +673,14 @@ const server = createServer(async (request, response) => {
       if (!profileId) return json(response, 409, { error: "pcs_profile_binding_required" });
       const binding = await pcsAnalysisRepository.getBinding(userId);
       if (binding && binding.pcsProfileId !== profileId) return json(response, 409, { error: "pcs_profile_mismatch" });
-      const candidate = validateContextAnalysisSnapshot(await new PcsIntegrationClient({
+      const candidate = validateBoundPcsSnapshot(await new PcsIntegrationClient({
         baseUrl: process.env.PCS_API_URL,
         clientId: process.env.PCS_CLIENT_ID,
         token: process.env.PCS_CLIENT_TOKEN,
         profileId,
-      }).getAnalysisSnapshot({ profileId, from: startAt, to: endAt, timezone: optionalString(input.timezone) ?? process.env.PCS_TIMEZONE ?? "UTC" }));
-      if (candidate.schemaVersion !== CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION) return json(response, 422, { error: "pcs_snapshot_version_unsupported" });
-      const snapshot = candidate as ContextAnalysisSnapshotV2;
+      }).getAnalysisSnapshotV3({ profileId, from: startAt, to: endAt, timezone: optionalString(input.timezone) ?? process.env.PCS_TIMEZONE ?? "UTC" }), binding);
+      if (!candidate.ok) return json(response, candidate.status, { error: candidate.error, details: candidate.details });
+      const snapshot = candidate.value;
       const result = analyzePcsAnalysisSnapshot(snapshot, { minimumTotalSamples: Number(input.minimumEntryCount ?? 8) });
       let run;
       try { run = await pcsAnalysisRepository.saveRun(userId, snapshot, result); }
@@ -1178,5 +1179,4 @@ const server = createServer(async (request, response) => {
 
 const port = Number(process.env.PORT ?? 8100);
 server.listen(port, "127.0.0.1", () => console.log(`MeTheory TypeScript API listening on http://127.0.0.1:${port}`));
-
 

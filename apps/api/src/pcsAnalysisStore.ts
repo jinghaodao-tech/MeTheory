@@ -3,13 +3,14 @@ import { PostgresPcsAnalysisRepository } from "./postgresPcsAnalysisRepository.t
 import { SqlitePcsAnalysisRepository, type PcsAnalysisRun, type PcsProfileBinding } from "./pcsAnalysisRepository.ts";
 import type { ContextAnalysisSnapshotV2 } from "personal-context-studio/integration-contracts";
 import type { PcsAnalysisResult } from "../../../packages/self-understanding/src/pcsSnapshotAnalysis.ts";
+import type { PcsAnalysisSnapshotV3 } from "../../../packages/contracts/src/pcsAnalysisSnapshotV3.ts";
 
 export interface PcsAnalysisStore {
   readonly driver: "sqlite" | "postgres";
   bind(userId: string, profileId: string): Promise<PcsProfileBinding>;
   getBinding(userId: string): Promise<PcsProfileBinding | undefined>;
   remove(userId: string): Promise<boolean>;
-  saveRun(userId: string, snapshot: ContextAnalysisSnapshotV2, result: PcsAnalysisResult): Promise<PcsAnalysisRun>;
+  saveRun(userId: string, snapshot: ContextAnalysisSnapshotV2 | PcsAnalysisSnapshotV3, result: PcsAnalysisResult): Promise<PcsAnalysisRun>;
   listRuns(userId: string, options?: { limit?: number; offset?: number }): Promise<{ items: PcsAnalysisRun[]; total: number }>;
   getRun(userId: string, runId: string): Promise<PcsAnalysisRun | undefined>;
   health(): Promise<boolean>;
@@ -22,7 +23,7 @@ class SqlitePcsAnalysisStore implements PcsAnalysisStore {
   async bind(userId: string, profileId: string) { return this.repository.bind(userId, profileId); }
   async getBinding(userId: string) { return this.repository.getBinding(userId); }
   async remove(userId: string) { return this.repository.remove(userId); }
-  async saveRun(userId: string, snapshot: ContextAnalysisSnapshotV2, result: PcsAnalysisResult) { return this.repository.saveRun(userId, snapshot, result); }
+  async saveRun(userId: string, snapshot: ContextAnalysisSnapshotV2 | PcsAnalysisSnapshotV3, result: PcsAnalysisResult) { return this.repository.saveRun(userId, snapshot, result); }
   async listRuns(userId: string, options?: { limit?: number; offset?: number }) { return this.repository.listRuns(userId, options); }
   async getRun(userId: string, runId: string) { return this.repository.getRun(userId, runId); }
   async health() { return true; }

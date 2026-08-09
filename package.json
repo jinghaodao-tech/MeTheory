@@ -30,7 +30,7 @@
         "seed:synthetic": "node --experimental-strip-types tools/synthetic-scenarios.ts seed",
         "test:synthetic": "npm run seed:synthetic && node --experimental-strip-types tools/synthetic-scenarios.ts test",
         "reset:synthetic": "node --experimental-strip-types tools/synthetic-scenarios.ts reset",
-        "test": "npm run test:domain && npm run test:hypothesis && npm run test:candidates && npm run test:false-positive && npm run test:source-adapters && npm run test:completion && npm run test:benchmark && npm run test:ai-service && npm run test:api && npm run test:self-understanding && npm run test:pcs-client && npm run test:pcs-cross-repository && npm run test:pcs-snapshot && npm run test:demo-web && npm run test:experiments && npm run test:external-assets && npm run test:measurement",
+        "test": "npm run test:domain && npm run test:hypothesis && npm run test:candidates && npm run test:false-positive && npm run test:source-adapters && npm run test:completion && npm run test:benchmark && npm run test:ai-service && npm run test:api && npm run test:self-understanding && npm run test:pcs-client && npm run test:pcs-cross-repository && npm run test:pcs-snapshot && npm run test:pcs-cli-output && npm run test:demo-web && npm run test:experiments && npm run test:external-assets && npm run test:measurement",
         "test:mobile": "npm --workspace apps/mobile run test",
         "typecheck:root": "tsc --project tsconfig.json",
         "typecheck:mobile": "npm --workspace apps/mobile run typecheck",
@@ -43,12 +43,14 @@
         "test:pcs-client": "node --experimental-strip-types --test test/pcs-client.test.ts",
         "test:pcs-cross-repository": "node --experimental-strip-types --test test/pcs-cross-repository.test.ts",
         "test:pcs-snapshot": "node --experimental-strip-types --test test/pcs-snapshot.test.ts",
+        "test:pcs-cli-output": "node --experimental-strip-types --test test/pcs-cli-output.test.ts",
         "test:e2e:closed-loop": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/closed-loop-e2e.ps1",
         "test:pcs-live-e2e": "node --experimental-strip-types --test test/pcs-live-cross-repository.e2e.test.ts",
         "test:demo-web": "node --test test/demo-web.test.mjs",
         "test:experiments": "node --experimental-strip-types --test test/experiments.test.ts test/experiments-api.test.ts test/closed-loop-synthetic.test.ts"
         ,"test:measurement": "node --experimental-strip-types --test test/measurement-requirements.test.ts test/measurement-sufficiency.test.ts"
         ,"test:measurement-requirements": "npm run test:measurement"
+        ,"analyze:pcs": "node --experimental-strip-types apps/cli/src/main.ts personal-context analyze"
     },
     "engines": {
         "node": ">=24.0.0"

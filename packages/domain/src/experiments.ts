@@ -1,6 +1,7 @@
 import { EVIDENCE_POLICY } from "./evidencePolicy.ts";
 import { evaluateExperimentDeterministic } from "./experimentEvaluation.ts";
 import type { SensitivitySummary } from "./sensitivity.ts";
+import type { SignificanceMethod } from "./significance.ts";
 
 export type { SensitivitySummary } from "./sensitivity.ts";
 
@@ -130,7 +131,7 @@ export type ExperimentEvaluation = {
   evaluatedAt: string;
   pValue: number | null;
   significanceAlpha: number;
-  significanceMethod: "exact_permutation" | "not_evaluable";
+  significanceMethod: SignificanceMethod | "not_evaluable";
 };
 
 export type CandidateForExperiment = {

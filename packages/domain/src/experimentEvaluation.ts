@@ -27,7 +27,8 @@ export function evaluateExperimentDeterministic(input: {
   const minimumObservations = Math.max(EVIDENCE_POLICY.minimumTotalSamples, minimumPerGroup * 2, Number.isInteger(input.minimumObservations) ? input.minimumObservations : 0);
   const configuredEffect = Number.isFinite(input.minimumEffect) ? Math.abs(input.minimumEffect) : 0;
   const scale = validNumericScale(input.outcomeScale) ? input.outcomeScale : undefined;
-  const minimumEffect = scale ? Math.max(EVIDENCE_POLICY.minimumAbsoluteEffect * (scale.maximumValue - scale.minimumValue), configuredEffect) : Math.max(EVIDENCE_POLICY.minimumAbsoluteEffect, configuredEffect);
+  const exploratoryMinimumEffect = scale ? Math.max(EVIDENCE_POLICY.minimumAbsoluteEffect * (scale.maximumValue - scale.minimumValue), configuredEffect) : Math.max(EVIDENCE_POLICY.minimumAbsoluteEffect, configuredEffect);
+  const conclusionMinimumEffect = scale ? Math.max(exploratoryMinimumEffect, EVIDENCE_POLICY.minimumConclusionNormalizedEffect * (scale.maximumValue - scale.minimumValue)) : Math.max(exploratoryMinimumEffect, EVIDENCE_POLICY.minimumConclusionNormalizedEffect);
   const eligible = input.observations.filter((observation) => observation.eligible && Number.isFinite(observation.outcome));
   const excludedCount = input.observations.length - eligible.length;
   const groupA = eligible.filter((observation) => observation.groupKey === input.groupAKey);
@@ -51,6 +52,8 @@ export function evaluateExperimentDeterministic(input: {
   if (groupA.length < minimumPerGroup) missingData.push({ groupKey: input.groupAKey, needed: minimumPerGroup - groupA.length, reason: "group_a_samples_insufficient" });
   if (groupB.length < minimumPerGroup) missingData.push({ groupKey: input.groupBKey, needed: minimumPerGroup - groupB.length, reason: "group_b_samples_insufficient" });
   const expectedDirectionValid = input.expectedDirection === "a_greater" || input.expectedDirection === "b_greater";
+  const conclusionSampleFloorMet = groupA.length >= EVIDENCE_POLICY.minimumConclusionSamplesPerCohort && groupB.length >= EVIDENCE_POLICY.minimumConclusionSamplesPerCohort;
+  if (!conclusionSampleFloorMet) warnings.push("conclusion_sample_floor");
   const qualityInsufficient = !groupA.length || !groupB.length || eligible.length < minimumObservations || groupA.length < minimumPerGroup || groupB.length < minimumPerGroup || groupImbalance < EVIDENCE_POLICY.minimumSampleBalance || exclusionRate > EVIDENCE_POLICY.maximumMissingRate;
   let status: ExperimentEvaluation["status"] = !expectedDirectionValid ? "invalid" : qualityInsufficient ? "insufficient_data" : "inconclusive";
   let adherence: ExperimentEvaluation["adherence"];
@@ -63,28 +66,28 @@ export function evaluateExperimentDeterministic(input: {
   }
   if (status !== "insufficient_data" && status !== "invalid" && difference !== null) {
     const signedDifference = input.expectedDirection === "a_greater" ? difference : -difference;
-    const effectEnough = scale
-      ? (normalizedNumericEffect(signedDifference, scale) ?? 0) >= EVIDENCE_POLICY.minimumAbsoluteEffect && Math.abs(signedDifference) >= minimumEffect
-      : Math.abs(signedDifference) >= minimumEffect;
+    const effectEnough = conclusionSampleFloorMet && scale
+      ? (normalizedNumericEffect(signedDifference, scale) ?? 0) >= EVIDENCE_POLICY.minimumConclusionNormalizedEffect && Math.abs(signedDifference) >= conclusionMinimumEffect
+      : conclusionSampleFloorMet && Math.abs(signedDifference) >= conclusionMinimumEffect;
     const directionMatches = input.expectedDirection === "a_greater" ? difference > 0 : difference < 0;
     const significant = significance !== null && significance.pValue <= significanceAlpha + 1e-12;
     status = significant && effectEnough ? (directionMatches ? "supported" : "challenged") : "inconclusive";
   }
   const supportIds = status === "supported" ? eligible.map((observation) => observation.id) : [];
   const contradictionIds = status === "challenged" ? eligible.map((observation) => observation.id) : [];
-  const additional = Math.max(0, minimumPerGroup - Math.min(groupA.length, groupB.length));
+  const additional = Math.max(0, EVIDENCE_POLICY.minimumConclusionSamplesPerCohort - Math.min(groupA.length, groupB.length));
   const isBinaryOutcome = [...groupA, ...groupB].every((observation) => observation.outcome === 0 || observation.outcome === 1);
   const binarySensitivity = isBinaryOutcome ? binaryRateSensitivity({
     groupAPositive: groupA.filter((observation) => observation.outcome === 1).length,
     groupATotal: groupA.length,
     groupBPositive: groupB.filter((observation) => observation.outcome === 1).length,
     groupBTotal: groupB.length,
-    minimumEffect
+    minimumEffect: conclusionMinimumEffect
   }) : null;
   const sensitivity: import("./sensitivity.ts").SensitivitySummary = {
     conclusionChangeConditions: status === "supported" && binarySensitivity?.minimumChangesToCrossEffect !== null && binarySensitivity?.minimumChangesToCrossEffect !== undefined
       ? [binarySensitivity.minimumChangesToCrossEffect + "件の二値回答が変わると効果量が閾値未満になります"]
-      : status === "supported" ? ["各グループに" + Math.max(1, additional) + "件以上の観測が追加され、平均差が" + minimumEffect + "未満になる場合"] : ["グループの記録数または評価条件が変わる場合"],
+      : status === "supported" ? ["各グループに" + Math.max(1, additional) + "件以上の観測が追加され、平均差が" + exploratoryMinimumEffect + "未満になる場合"] : ["グループの記録数または評価条件が変わる場合"],
     groupImbalanceWarnings: groupImbalance < EVIDENCE_POLICY.minimumSampleBalance ? ["グループ間の記録数の差が大きいため、結論は安定していません"] : [],
     missingnessWarnings: excludedCount ? ["除外された観測によって結果が変わる可能性があります"] : [],
     overlapWarnings: [],
@@ -112,6 +115,6 @@ export function evaluateExperimentDeterministic(input: {
     evaluatedAt,
     pValue: significance?.pValue ?? null,
     significanceAlpha,
-    significanceMethod: significance ? "exact_permutation" : "not_evaluable"
+    significanceMethod: significance?.method ?? "not_evaluable"
   };
 }
