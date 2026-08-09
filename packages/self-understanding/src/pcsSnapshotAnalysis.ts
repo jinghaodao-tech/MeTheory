@@ -287,7 +287,7 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
     period: snapshot.period,
     dataQuality: { recordCount: snapshot.records.length, usableValueCount, excludedFieldCount: excludedFields.length, excludedValueCount },
     excludedFields,
-    candidateAudit: (hypotheses as typeof hypotheses & { candidateAudit?: CandidateGenerationAudit }).candidateAudit ?? { comparisonCount: 0, preSignificanceCandidates: 0, significanceRejectedCandidates: 0, acceptedCandidatesBeforeLimit: 0 },
+    candidateAudit: (hypotheses as typeof hypotheses & { candidateAudit?: CandidateGenerationAudit }).candidateAudit ?? { comparisonCount: 0, preSignificanceCandidates: 0, significanceRejectedCandidates: 0, acceptedCandidatesBeforeLimit: 0, rejectedBySampleSize: 0, rejectedByEffect: 0, rejectedByBalance: 0, rejectedByMissingRate: 0 },
     hypotheses,
     candidateEvidence
   };
