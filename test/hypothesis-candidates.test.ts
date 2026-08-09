@@ -52,6 +52,28 @@ test('large numeric cohorts keep candidates through the Monte Carlo significance
   assert.equal(candidates.length, 1);
   assert.equal(candidates[0].significanceMethod, 'monte_carlo_permutation');
 });
+test('continuous effects use pooled standard deviation instead of the declared value range', () => {
+  const build = (scale: number) => {
+    const observations = Array.from({ length: 20 }, (_, index) => {
+      const condition = index < 10;
+      const base = condition ? 100 + (index % 5) * 2 : 80 + (index % 5) * 2;
+      return [
+        { episodeId: `scale-${scale}-${index}`, parameterId: 'condition', value: condition, observedAt: '2026-07-24T00:00:00.000Z' },
+        { episodeId: `scale-${scale}-${index}`, parameterId: 'outcome', value: base * scale, observedAt: '2026-07-24T00:00:00.000Z' }
+      ];
+    }).flat();
+    return generateHypothesisCandidates({
+      parameters: [parameter('condition', 'boolean', true, false), parameter('outcome', 'number', false, true, 0, 1440 * scale)],
+      observations,
+      now: '2026-07-24T12:00:00.000Z'
+    })[0];
+  };
+  const base = build(1);
+  const scaled = build(10);
+  assert.ok(base);
+  assert.ok(scaled);
+  assert.ok(Math.abs(base.normalizedEffect - scaled.normalizedEffect) < 1e-9);
+});
 
 test('candidate audit records the effect-qualified candidates removed by significance testing', () => {
   const valuesA = [2, 3, 5, 4, 2, 5];

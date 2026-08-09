@@ -55,7 +55,7 @@ function monteCarloPermutationPValue(values: number[], groupASize: number, direc
     const statistic = direction === "a_greater" ? permutedA - permutedB : permutedB - permutedA;
     if (statistic >= observed - tolerance) extreme += 1;
   }
-  return { pValue: (extreme + 1) / (samples + 1), permutations: samples, method: "monte_carlo_permutation" };
+  return { pValue: Math.min(1, 4 * (extreme + 1) / (samples + 1)), permutations: samples, method: "monte_carlo_permutation" };
 }
 
 export function correctedAlpha(comparisonCount = 1): number {
@@ -129,5 +129,5 @@ export function exactPermutationPValue(groupA: number[], groupB: number[], direc
     for (let index = start; index <= values.length - remaining; index += 1) visit(index + 1, remaining - 1, sumA + values[index]);
   };
   visit(0, groupASize, 0);
-  return { pValue: Math.min(1, extreme / totalPermutations), permutations: totalPermutations, method: "exact_permutation" };
+  return { pValue: Math.min(1, 4 * extreme / totalPermutations), permutations: totalPermutations, method: "exact_permutation" };
 }

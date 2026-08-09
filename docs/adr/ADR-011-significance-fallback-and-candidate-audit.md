@@ -28,6 +28,19 @@ Expose a read-only candidate generation audit containing:
 The normal candidate API always keeps the significance gate enabled. The audit
 does not provide a way to disable it.
 
+For continuous numeric outcomes, the effect gate uses a Cohen's d-style
+standardized mean difference: the absolute difference of cohort means divided
+by their pooled sample standard deviation. It does not use the declared
+minimum/maximum value range, because a broad administrative range such as
+0-1440 minutes would make the same observed difference appear artificially
+small. Boolean and categorical outcomes retain their existing rate-based
+effect treatment. If both cohorts have zero within-group variance, a non-zero
+separation is treated as maximally standardized; a zero separation remains
+zero. Numeric permutation p-values are conservatively multiplied by four to
+account for the two-sided direction choice and exploratory temporal-window
+selection; the value is capped at one. Binary and categorical p-values retain
+their original one-sided behavior.
+
 ## Controlled evidence
 
 The regression fixture with one effect-qualified but weakly significant numeric
