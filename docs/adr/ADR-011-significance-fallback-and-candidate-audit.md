@@ -80,3 +80,14 @@ The vector uses `Asia/Tokyo` calendar boundaries by default. MeTheory expands
 its 24 elements into derived `time_of_day` observations for exploratory
 analysis, while retaining the raw vector provenance and keeping the vector
 itself out of direct numeric candidate scoring.
+
+## Cohort split strategy
+
+Cohort boundaries are configurable per parameter: `range_midpoint` preserves
+the declared-scale midpoint for bounded ratings, `observed_median` uses the
+median of observations in the analysis window for continuous measurements,
+and `fixed_threshold` supports a documented domain threshold. PCS continuous
+machine measurements use `observed_median`; this prevents a 0-1440 minute
+administrative range from placing nearly every day in the same cohort. The
+selected strategy and observed values remain part of the candidate parameter
+definition so the boundary can be reproduced for the same snapshot.

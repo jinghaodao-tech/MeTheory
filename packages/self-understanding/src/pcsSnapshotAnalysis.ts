@@ -224,7 +224,9 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
     allowedOutcomeRoles: [],
     positiveValues: group.positiveValueKeys,
     orderedValues: group.orderedValueKeys,
-    numericMapping: group.numericMapping
+    numericMapping: group.numericMapping,
+    cohortStrategy: group.scaleFingerprint.startsWith("scale-") ? "range_midpoint" : "observed_median",
+    observedValues: snapshot.records.flatMap((record) => { const value = valuesByRecord.get(record.id)?.get(group.id); return typeof value === "number" && Number.isFinite(value) ? [value] : []; })
   }));
 
   const records = new Map<string, UnderstandingRecord>();
