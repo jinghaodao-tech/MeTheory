@@ -1,5 +1,4 @@
 import { EVIDENCE_POLICY } from "./evidencePolicy.ts";
-
 export type MeasurementSufficiencyStatus = "template_required" | "waiting_for_template_review" | "ready_to_record" | "collecting" | "insufficient_paired_observations" | "insufficient_group_count" | "insufficient_group_balance" | "ready_for_analysis" | "analysis_completed";
 export type SufficiencyRequirement = { semanticRole: string; required?: boolean; minimumSamples?: number; analysisUsage?: "condition" | "outcome" | "both" };
 export type SufficiencySnapshot = { records?: Array<{ id: string; recordedAt?: string; groupKey?: string; values?: Array<{ analysisRole?: string; analysisUsage?: string; analysisRoleConfirmed?: boolean; value?: unknown; minimum?: number; maximum?: number; provenance?: { userConfirmed?: boolean } }> }> };
