@@ -1,5 +1,8 @@
 # Self-understanding construct catalog
 
+`uncategorized` is a valid v1 result. A candidate does not need a catalogued
+construct to be generated or reviewed; classification can remain pending.
+
 This catalog is the allowlist for MeTheory self-understanding analysis. A
 construct is an observable, non-clinical comparison lens, never a diagnosis,
 trait label, or medical inference.

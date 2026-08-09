@@ -1,5 +1,11 @@
 # Self Understanding Practical v1
 
+## v1 declaration
+
+MeTheory v1 may retain a candidate with `construct: uncategorized`. Construct
+classification is optional metadata for explanation and organization; it is
+not required for candidate generation, review, or evidence tracking.
+
 ## Purpose
 
 Self Understanding turns confirmed, shareable Personal Context Studio values into small,
