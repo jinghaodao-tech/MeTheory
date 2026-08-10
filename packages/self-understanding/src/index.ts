@@ -65,6 +65,7 @@ export type UnderstandingRecord = {
       privacyLevel?: string;
       provenanceSource?: "user_input" | "reviewed_ai_extraction" | "manual_import" | "system";
       sourceTool?: string;
+      measurementDefinitionVersion?: string;
     }
   >;
   conditionValues: Record<string, unknown>;

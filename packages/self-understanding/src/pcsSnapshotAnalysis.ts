@@ -40,6 +40,8 @@ export type PcsCandidateEvidence = EvidenceView & {
     sourceId: string;
     transformVersion: string;
     privacyLevel: string;
+    sourceTool?: string;
+    measurementDefinitionVersion?: string;
   }>;
 };
 
@@ -136,7 +138,9 @@ function evidenceFor(input: {
       source: item.provenanceSource ?? item.source,
       sourceId: item.sourceId ?? item.observationIds?.[0] ?? record.id,
       transformVersion: item.transformVersion ?? "pcs-analysis-snapshot-v2",
-      privacyLevel: item.privacyLevel ?? "normal"
+      privacyLevel: item.privacyLevel ?? "normal",
+      ...(item.sourceTool ? { sourceTool: item.sourceTool } : {}),
+      ...(item.measurementDefinitionVersion ? { measurementDefinitionVersion: item.measurementDefinitionVersion } : {})
     })) : [];
   return { ...input.evidence, conditionValue, outcomeValue, provenance };
 }
@@ -149,13 +153,13 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
   const excludedFields: PcsExcludedField[] = [];
   const groups = new Map<string, FieldGroup>();
   const valuesByRecord = new Map<string, Map<string, unknown>>();
-  const provenanceByRecord = new Map<string, Map<string, { source: "user_entry"; labelJa: string; observationIds: string[]; sourceId: string; transformVersion: string; privacyLevel: string; provenanceSource: string; sourceTool?: string }>>();
+  const provenanceByRecord = new Map<string, Map<string, { source: "user_entry"; labelJa: string; observationIds: string[]; sourceId: string; transformVersion: string; privacyLevel: string; provenanceSource: string; sourceTool?: string; measurementDefinitionVersion?: string }>>();
   let usableValueCount = 0;
   let excludedValueCount = snapshot.excluded.unconfirmed + snapshot.excluded.nonShareable + snapshot.excluded.highlySensitive + snapshot.excluded.invalid;
 
   for (const record of snapshot.records) {
     const values = new Map<string, unknown>();
-    const provenance = new Map<string, { source: "user_entry"; labelJa: string; observationIds: string[]; sourceId: string; transformVersion: string; privacyLevel: string; provenanceSource: string; sourceTool?: string }>();
+    const provenance = new Map<string, { source: "user_entry"; labelJa: string; observationIds: string[]; sourceId: string; transformVersion: string; privacyLevel: string; provenanceSource: string; sourceTool?: string; measurementDefinitionVersion?: string }>();
     for (const value of record.values) {
       if ((value as ContextAnalysisValueV2 & { applicability?: unknown[] }).applicability?.length) { excludedFields.push(excludedField(value, "applicability_unresolved")); excludedValueCount += 1; continue; }
       if (!value.analysisRoleConfirmed) { excludedFields.push(excludedField(value, "analysis_role_unconfirmed")); excludedValueCount += 1; continue; }
@@ -183,7 +187,7 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
         numericMapping: value.numericMapping
       });
       values.set(id, value.value);
-      provenance.set(id, { source: "user_entry", labelJa: sourceLabel(value.provenance.source), observationIds: [value.provenance.sourceId], sourceId: value.provenance.sourceId, transformVersion: value.provenance.transformVersion, privacyLevel: value.provenance.privacyLevel, provenanceSource: value.provenance.source, sourceTool: (value as any).measurement?.sourceTool });
+      provenance.set(id, { source: "user_entry", labelJa: sourceLabel(value.provenance.source), observationIds: [value.provenance.sourceId], sourceId: value.provenance.sourceId, transformVersion: value.provenance.transformVersion, privacyLevel: value.provenance.privacyLevel, provenanceSource: value.provenance.source, sourceTool: (value as any).measurement?.sourceTool, measurementDefinitionVersion: (value as any).measurement?.definitionVersion });
       usableValueCount += 1;
     }
     const hourly = record.values.find((item) => item.fieldKey === "hourly_active_minutes");
@@ -195,7 +199,7 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
             const id = `hourly:${hour}`;
             if (!groups.has(id)) groups.set(id, { id, fieldKey: `hourly_active_minutes_${String(hour).padStart(2, "0")}`, label: `${String(hour).padStart(2, "0")}時の活動時間`, templateId: hourly.templateId, templateVersionId: hourly.templateVersionId, role: "time_of_day", usage: "condition", valueType: "number", minimum: 0, maximum: 1440, unit: "minutes", scaleFingerprint: "derived-hourly|0|1440|minutes", });
             values.set(id, item);
-            provenance.set(id, { source: "user_entry", labelJa: "PCS machine measurement", observationIds: [String(hourly.provenance.sourceId)], sourceId: String(hourly.provenance.sourceId), transformVersion: "pcs-hourly-v1", privacyLevel: hourly.provenance.privacyLevel, provenanceSource: hourly.provenance.source, sourceTool: (hourly as any).measurement?.sourceTool });
+            provenance.set(id, { source: "user_entry", labelJa: "PCS machine measurement", observationIds: [String(hourly.provenance.sourceId)], sourceId: String(hourly.provenance.sourceId), transformVersion: "pcs-hourly-v1", privacyLevel: hourly.provenance.privacyLevel, provenanceSource: hourly.provenance.source, sourceTool: (hourly as any).measurement?.sourceTool, measurementDefinitionVersion: (hourly as any).measurement?.definitionVersion });
           }
         }
       } catch { /* malformed hourly vectors remain excluded */ }

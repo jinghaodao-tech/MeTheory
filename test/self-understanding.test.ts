@@ -398,6 +398,8 @@ test("semantic role pairs map only through deterministic non-clinical construct 
   assert.equal(mapConstruct("task_clarity", "start_delay").key, "task_initiation");
   assert.equal(mapConstruct("social_intensity", "fatigue").key, "social_load");
   assert.equal(mapConstruct("environment", "focus").key, "environment_fit");
+  assert.equal(mapConstruct("active_duration", "focus").key, "attention_conditions");
+  assert.equal(mapConstruct("switching_frequency", "focus").key, "attention_conditions");
   assert.equal(mapConstruct("self_rating", "observed_behavior").key, "self_perception_gap");
   assert.equal(mapConstruct("other", "other").key, "uncategorized");
 });

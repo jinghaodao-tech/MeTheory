@@ -93,6 +93,7 @@ export const CONSTRUCT_MAPPING_RULES: ReadonlyArray<ConstructMappingRule> = [
   { conditionRoles: ["uncertainty"], outcomeRoles: ["fatigue", "start_delay", "initiation_difficulty", "avoidance"], construct: "uncertainty_load", priority: 88 },
   { conditionRoles: ["task_clarity", "deadline_clarity", "uncertainty", "fatigue"], outcomeRoles: ["avoidance"], construct: "avoidance_pattern", priority: 86 },
   { conditionRoles: ["energy", "fatigue", "environment", "noise_level"], outcomeRoles: ["continuation_difficulty"], construct: "task_continuation", priority: 84 },
+  { conditionRoles: ["ai_conversation_intensity", "switching_frequency", "active_duration"], outcomeRoles: ["focus"], construct: "attention_conditions", priority: 83 },
   { conditionRoles: ["time_of_day", "environment", "noise_level", "sleep_duration", "sleep_quality", "social_context"], outcomeRoles: ["focus"], construct: "attention_conditions", priority: 82 },
   { conditionRoles: ["sleep_duration", "sleep_quality", "environment", "social_context"], outcomeRoles: ["recovery"], construct: "recovery_conditions", priority: 81 },
   { conditionRoles: ["sleep_duration", "sleep_quality", "time_of_day", "day_type", "social_context"], outcomeRoles: ["energy", "fatigue"], construct: "energy_level", priority: 80 },
