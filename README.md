@@ -3,7 +3,7 @@
 
 ## Portfolio Summary
 
-MeTheory is the analysis and hypothesis-validation layer. It consumes only user-confirmed, purpose-scoped Personal Context Studio snapshots, evaluates non-clinical hypotheses deterministically, preserves supporting and contradicting evidence, and lets the user approve Self Model changes. Short experiments can be created in MeTheory; longer recording flows are requested from PCS and return through the same reviewed snapshot boundary.
+MeTheory is a local-first engine for testing non-clinical self-understanding hypotheses from reviewed Personal Context Studio snapshots, preserving supporting and contradicting evidence for user review.
 
 The current implementation includes hypothesis lifecycle management, experiment and observation data, deterministic evaluation, migration integrity checks, privacy and aggregate-only AI boundaries, the PCS cross-repository contract, and automated verification. It does not diagnose medical or psychological conditions, decide facts or evidence strength automatically, or receive Markdown bodies from PCS.
 MeTheory is a local-first self-understanding and experiment engine. It receives
