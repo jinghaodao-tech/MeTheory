@@ -6,6 +6,8 @@ import { evaluateEvidence, directionForObservation, RULE_VERSION, type Observati
 import { buildEpisodes } from "../../../packages/domain/src/hypothesis/episodes.ts";
 import { evaluateHypothesis } from "../../../packages/domain/src/hypothesis/evaluators.ts";
 import { validateHypothesisSpec } from "../../../packages/domain/src/hypothesis/spec.ts";
+import { buildIntegrationTemplateRequest, deriveMeasurementRequirementsFromHypothesis, resolveMeasurementRequirements, type MeasurementRequirementInput } from "../../../packages/domain/src/measurementRequirements.ts";
+import { assessMeasurementSufficiency } from "../../../packages/domain/src/measurementSufficiency.ts";
 import { createAiQueryService } from "./aiQueryService.ts";
 import { SqliteSelfUnderstandingRepository } from "./selfUnderstandingRepository.ts";
 import { loadPersonalContextSnapshot, requestPersonalContextTemplate, PcsIntegrationClient } from "./personalContextClient.ts";
@@ -23,6 +25,7 @@ import { PcsSnapshotContentMismatchError } from "./pcsAnalysisRepository.ts";
 import { createPcsAnalysisStore } from "./pcsAnalysisStore.ts";
 import { analyzePcsAnalysisSnapshot } from "../../../packages/self-understanding/src/pcsSnapshotAnalysis.ts";
 import { CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION, validateContextAnalysisSnapshot, type ContextAnalysisSnapshotV2 } from "personal-context-studio/integration-contracts";
+import { validateBoundPcsSnapshot } from "./services/pcsAnalysisService.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.METHEORY_DB ?? resolve(root, "data", "metheory.sqlite3");
@@ -670,14 +673,14 @@ const server = createServer(async (request, response) => {
       if (!profileId) return json(response, 409, { error: "pcs_profile_binding_required" });
       const binding = await pcsAnalysisRepository.getBinding(userId);
       if (binding && binding.pcsProfileId !== profileId) return json(response, 409, { error: "pcs_profile_mismatch" });
-      const candidate = validateContextAnalysisSnapshot(await new PcsIntegrationClient({
+      const candidate = validateBoundPcsSnapshot(await new PcsIntegrationClient({
         baseUrl: process.env.PCS_API_URL,
         clientId: process.env.PCS_CLIENT_ID,
         token: process.env.PCS_CLIENT_TOKEN,
         profileId,
-      }).getAnalysisSnapshot({ profileId, from: startAt, to: endAt, timezone: optionalString(input.timezone) ?? process.env.PCS_TIMEZONE ?? "UTC" }));
-      if (candidate.schemaVersion !== CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION) return json(response, 422, { error: "pcs_snapshot_version_unsupported" });
-      const snapshot = candidate as ContextAnalysisSnapshotV2;
+      }).getAnalysisSnapshotV3({ profileId, from: startAt, to: endAt, timezone: optionalString(input.timezone) ?? process.env.PCS_TIMEZONE ?? "UTC" }), binding);
+      if (!candidate.ok) return json(response, candidate.status, { error: candidate.error, details: candidate.details });
+      const snapshot = candidate.value;
       const result = analyzePcsAnalysisSnapshot(snapshot, { minimumTotalSamples: Number(input.minimumEntryCount ?? 8) });
       let run;
       try { run = await pcsAnalysisRepository.saveRun(userId, snapshot, result); }
@@ -956,6 +959,75 @@ const server = createServer(async (request, response) => {
       const hypothesisId = id("hyp"); db.prepare("INSERT INTO hypotheses(id, user_id, self_belief_id, template_key, statement, state, status, spec_json, spec_version, rule_version, created_at) VALUES (?, ?, ?, ?, ?, 'tracking', 'tracking', ?, ?, ?, ?)").run(hypothesisId, userId, optionalString(input.selfBeliefId) ?? null, optionalString(input.templateKey) ?? "belief_vs_observation", optionalString(input.statement) ?? "", spec ? JSON.stringify(spec) : null, spec?.schemaVersion ?? null, RULE_VERSION, now());
       return json(response, 201, { id: hypothesisId, state: "tracking", specVersion: spec?.schemaVersion ?? null });
     }
+    if (parts[0] === "v1" && parts[1] === "hypotheses" && parts[2] && parts[3] === "measurement-requirements") {
+      const input = await body(request);
+      const userId = optionalString(input.userId) ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (!db.prepare("SELECT 1 FROM hypotheses WHERE id=? AND user_id=?").get(parts[2], userId)) return json(response, 404, { error: "hypothesis_not_found" });
+      const hypothesis = db.prepare("SELECT spec_json,statement FROM hypotheses WHERE id=? AND user_id=?").get(parts[2], userId) as { spec_json?: string; statement?: string } | undefined;
+      if (!hypothesis?.spec_json) return json(response, 409, { error: "hypothesis_spec_required", reasonCode: "hypothesis_spec_missing" });
+      const spec = validateHypothesisSpec(JSON.parse(hypothesis.spec_json));
+      const manualAllowed = request.headers["x-metheory-test-mode"] === "true";
+      const resolved = manualAllowed && Array.isArray(input.requirements) && input.requirements.length ? resolveMeasurementRequirements({ hypothesisId: parts[2], purpose: optionalString(input.purpose) ?? "仮説の検証", requirements: input.requirements as MeasurementRequirementInput["requirements"] }) : deriveMeasurementRequirementsFromHypothesis({ hypothesisId: parts[2], purpose: optionalString(input.purpose) ?? "self_understanding", spec });
+      return json(response, 200, { measurementRequirements: resolved });
+    }
+    if (request.method === "GET" && parts[0] === "v1" && parts[1] === "hypotheses" && parts[2] && parts[3] === "data-sufficiency") {
+      const userId = requestUrl.searchParams.get("userId") ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (!db.prepare("SELECT 1 FROM hypotheses WHERE id=? AND user_id=?").get(parts[2], userId)) return json(response, 404, { error: "hypothesis_not_found" });
+      const row = db.prepare("SELECT * FROM pcs_template_requests WHERE user_id=? AND hypothesis_id=?").get(userId, parts[2]) as Record<string, unknown> | undefined;
+      if (!row) return json(response, 200, { status: "template_required", missingRequirements: [], countsByRequirement: {}, excluded: { outOfPeriod: 0, unconfirmed: 0, invalid: 0 } });
+      let requestPayload: any = {};
+      try { requestPayload = JSON.parse(String(row.payload_json)); } catch { return json(response, 500, { error: "pcs_template_request_corrupt" }); }
+      let remoteStatus = String(row.status);
+      if (typeof row.pcs_request_id === "string" && row.pcs_request_id) {
+        try {
+          const remote = await new PcsIntegrationClient().getTemplateRequest(String(row.pcs_request_id)) as any;
+          const nextStatus = typeof remote?.request?.status === "string" ? remote.request.status : remoteStatus;
+          const allowed = new Set(["draft", "submitted", "pending_user_review", "partially_matched", "approved", "rejected", "activated", "failed"]);
+          if (allowed.has(nextStatus) && nextStatus !== remoteStatus) { const changedAt = now(); let history: unknown[] = []; try { history = JSON.parse(String(row.state_history_json ?? "[]")); } catch { history = []; } history.push({ status: nextStatus, at: changedAt, reason: nextStatus === "rejected" ? (remote.request.rejected_reason ?? "pcs_rejected") : undefined }); remoteStatus = nextStatus; db.prepare("UPDATE pcs_template_requests SET status=?,result_json=?,state_history_json=?,updated_at=? WHERE id=? AND user_id=?").run(nextStatus, JSON.stringify(remote.request.result ?? remote), JSON.stringify(history), changedAt, String(row.id), userId); }
+        } catch { /* Keep the last locally known state when PCS is unavailable. */ }
+      }
+      const endAt = requestUrl.searchParams.get("endAt") ?? now();
+      const startAt = requestUrl.searchParams.get("startAt") ?? new Date(Date.parse(endAt) - 28 * 86400000).toISOString();
+      let snapshot: unknown;
+      try { snapshot = await loadPersonalContextSnapshot({ startAt, endAt }); } catch { return json(response, 503, { error: "pcs_snapshot_unavailable", status: "collecting", requestStatus: remoteStatus }); }
+      const requirements = Array.isArray(requestPayload.requestedFields) ? requestPayload.requestedFields.map((field: any) => ({ semanticRole: String(field.semanticRole ?? field.fieldKey), required: field.required !== false, minimumSamples: 1, analysisUsage: ["condition", "outcome", "both"].includes(field.analysisUsage) ? field.analysisUsage : undefined })) : [];
+      const result = assessMeasurementSufficiency({ requestStatus: remoteStatus, requirements, snapshot: snapshot as any, startAt, endAt, minimumObservations: Number(requestUrl.searchParams.get("minimumObservations") ?? requestPayload.minimumObservations ?? (requirements.length || 1)), minimumPerGroup: Number(requestUrl.searchParams.get("minimumPerGroup") ?? requestPayload.minimumPerGroup ?? 0) });
+      return json(response, 200, { hypothesisId: parts[2], requestId: row.id, pcsRequestId: row.pcs_request_id ?? null, requestStatus: remoteStatus, period: { startAt, endAt }, pcsExcluded: (snapshot as any)?.excluded ?? {}, ...result });
+    }
+    if (parts[0] === "v1" && parts[1] === "hypotheses" && parts[2] && parts[3] === "pcs-template-request") {
+      const input = request.method === "POST" ? await body(request) : {};
+      const userId = request.method === "GET" ? requestUrl.searchParams.get("userId") ?? "" : optionalString(input.userId) ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      if (!db.prepare("SELECT 1 FROM hypotheses WHERE id=? AND user_id=?").get(parts[2], userId)) return json(response, 404, { error: "hypothesis_not_found" });
+      if (request.method === "GET") {
+        const row = db.prepare("SELECT * FROM pcs_template_requests WHERE user_id=? AND hypothesis_id=?").get(userId, parts[2]) as Record<string, unknown> | undefined;
+        return row ? json(response, 200, { request: { ...row, payload: JSON.parse(String(row.payload_json)), result: row.result_json ? JSON.parse(String(row.result_json)) : null } }) : json(response, 404, { error: "pcs_template_request_not_found" });
+      }
+      const hypothesis = db.prepare("SELECT spec_json,statement FROM hypotheses WHERE id=? AND user_id=?").get(parts[2], userId) as { spec_json?: string; statement?: string } | undefined;
+      if (!hypothesis?.spec_json) return json(response, 409, { error: "hypothesis_spec_required", reasonCode: "hypothesis_spec_missing" });
+      const spec = validateHypothesisSpec(JSON.parse(hypothesis.spec_json));
+      const manualAllowed = request.headers["x-metheory-test-mode"] === "true";
+      const requirements = manualAllowed && Array.isArray(input.requirements) && input.requirements.length ? resolveMeasurementRequirements({ hypothesisId: parts[2], purpose: optionalString(input.purpose) ?? "仮説の検証", requirements: input.requirements as MeasurementRequirementInput["requirements"] }) : deriveMeasurementRequirementsFromHypothesis({ hypothesisId: parts[2], purpose: optionalString(input.purpose) ?? "self_understanding", spec });
+      const templateRequest = buildIntegrationTemplateRequest(requirements, now());
+      const existing = db.prepare("SELECT id,status,pcs_request_id FROM pcs_template_requests WHERE user_id=? AND hypothesis_id=?").get(userId, parts[2]) as Record<string, unknown> | undefined;
+      if (existing) return json(response, 200, { request: { id: existing.id, status: existing.status, pcsRequestId: existing.pcs_request_id }, duplicate: true });
+      const requestId = id("pcs_request");
+      const createdAt = now();
+      db.prepare("INSERT INTO pcs_template_requests(id,user_id,hypothesis_id,payload_json,status,state_history_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)").run(requestId, userId, parts[2], JSON.stringify(templateRequest), "draft", JSON.stringify([{ status: "draft", at: createdAt }]), createdAt, createdAt);
+      if (input.send !== true) return json(response, 201, { request: { id: requestId, status: "draft", payload: templateRequest }, sent: false });
+      try {
+        const result = await new PcsIntegrationClient().submitTemplateRequest(templateRequest);
+        const remoteId = typeof result === "object" && result && "id" in result ? String((result as Record<string, unknown>).id) : null;
+        db.prepare("UPDATE pcs_template_requests SET status='pending_user_review',pcs_request_id=?,result_json=?,state_history_json=?,updated_at=? WHERE id=? AND user_id=?").run(remoteId, JSON.stringify(result), JSON.stringify([{ status: "draft", at: createdAt }, { status: "pending_user_review", at: now() }]), now(), requestId, userId);
+        return json(response, 201, { request: { id: requestId, status: "pending_user_review", pcsRequestId: remoteId }, result });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "pcs_request_failed";
+        db.prepare("UPDATE pcs_template_requests SET status='failed',error_kind='transport',error_message=?,state_history_json=?,updated_at=? WHERE id=? AND user_id=?").run(message, JSON.stringify([{ status: "draft", at: createdAt }, { status: "failed", at: now(), reason: "transport" }]), now(), requestId, userId);
+        return json(response, 502, { error: "pcs_template_request_failed", requestId, failureKind: "transport" });
+      }
+    }
     if (request.method === "POST" && parts.length === 4 && parts[0] === "v1" && parts[1] === "self-understanding" && parts[3] === "experiment-draft") {
       const input = await body(request);
       const userId = optionalString(input.userId) ?? "";
@@ -1107,5 +1179,4 @@ const server = createServer(async (request, response) => {
 
 const port = Number(process.env.PORT ?? 8100);
 server.listen(port, "127.0.0.1", () => console.log(`MeTheory TypeScript API listening on http://127.0.0.1:${port}`));
-
 

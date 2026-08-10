@@ -1,5 +1,11 @@
 # Self Understanding Practical v1
 
+## v1 declaration
+
+MeTheory v1 may retain a candidate with `construct: uncategorized`. Construct
+classification is optional metadata for explanation and organization; it is
+not required for candidate generation, review, or evidence tracking.
+
 ## Purpose
 
 Self Understanding turns confirmed, shareable Personal Context Studio values into small,
@@ -8,7 +14,7 @@ personality diagnosis feature.
 
 ## Analysis boundary
 
-- Only reviewed, shareable values in a `pcs-analysis-snapshot-v1` are analysed.
+- Only reviewed, shareable values in a the canonical PCS analysis snapshot v2.1 contract are analysed.
 - The deterministic evaluator decides cohorts, counts, missingness, effect,
   stability, supporting Entries, contradicting Entries, and candidate status.
 - The default gate requires eight PCS records and three valid values in each group.

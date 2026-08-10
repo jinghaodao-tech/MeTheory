@@ -25,7 +25,7 @@ The following gaps are material:
 | Finding | Risk | Decision |
 | --- | --- | --- |
 | Python stdlib server is not the documented FastAPI stack | Medium | Keep as temporary reference; migrate the core to TypeScript first |
-| JSON/SQLite/Python use different hypothesis names | High | Use the canonical lifecycle in `docs/domain-language.md` |
+| JSON/SQLite/Python use different hypothesis names | High | Use the canonical lifecycle in `docs/spec/domain-language.md` |
 | Response stores arbitrary `payload_json` | High | Retain raw payload, add normalized Observation and EvidenceLink tables |
 | Evidence and evaluation are computed in one Store method | High | Extract deterministic evidence and evaluation modules |
 | No auth, ownership checks, pagination, or request limits | High | Required before any shared or public deployment |

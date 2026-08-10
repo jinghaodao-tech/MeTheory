@@ -2,6 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
+import { formatPcsAnalysis, summarizePcsAnalysis } from "./personalContextOutput.ts";
 
 const root = process.cwd();
 const api = process.env.METHEORY_API_URL ?? "http://127.0.0.1:8100";
@@ -27,6 +28,36 @@ function serviceStart() {
 function serviceStop() { if (!existsSync(pidPath())) return print({ stopped: false, reason: "not_running" }); try { process.kill(Number(readFileSync(pidPath(), "utf8"))); } catch { /* already stopped */ } rmSync(pidPath(), { force: true }); print({ stopped: true }); }
 function serviceStatus() { let running = false; let pid: number | null = null; if (existsSync(pidPath())) { pid = Number(readFileSync(pidPath(), "utf8")); try { process.kill(pid, 0); running = true; } catch { pid = null; } } print({ running, pid, api, databasePath }); }
 
+function flag(args: string[], name: string): string | undefined {
+  return args.find((item) => item.startsWith(`${name}=`))?.slice(name.length + 1);
+}
+
+function analysisPeriod(args: string[]) {
+  const endAt = flag(args, "--to") ?? new Date().toISOString();
+  const startAt = flag(args, "--from") ?? new Date(Date.parse(endAt) - 365 * 86400000).toISOString();
+  if (Number.isNaN(Date.parse(startAt)) || Number.isNaN(Date.parse(endAt)) || Date.parse(startAt) >= Date.parse(endAt)) throw new Error("analysis_period_invalid");
+  return { startAt, endAt };
+}
+
+async function personalContext(command: string, args: string[]) {
+  if (command !== "analyze") throw new Error("personal_context_command_invalid");
+  const period = analysisPeriod(args);
+  const result = await request("/v1/self-understanding/analyze-personal-context", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      userId,
+      profileId: flag(args, "--profile") ?? process.env.PCS_PROFILE_ID,
+      ...period,
+      timezone: flag(args, "--timezone") ?? process.env.PCS_TIMEZONE ?? "UTC",
+      minimumEntryCount: Number(flag(args, "--minimum") ?? "8")
+    })
+  });
+  const summary = summarizePcsAnalysis(result);
+  if (args.includes("--json")) return print(summary);
+  console.log(formatPcsAnalysis(summary));
+}
+
 async function selfUnderstanding(command: string, args: string[]) {
   if (command === "analyze") { const startAt = args.find((item) => item.startsWith("--from="))?.slice(7); const endAt = args.find((item) => item.startsWith("--to="))?.slice(5); return print(await request("/v1/self-understanding/analyze", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, startAt, endAt, minimumEntryCount: 8 }) })); }
   if (command === "review" && args[0] && args[1]) return print(await request("/v1/self-understanding/reviews", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, candidateId: args[0], rating: args[1], statement: args.slice(2).join(" ") }) }));
@@ -51,6 +82,7 @@ async function main() {
   if (command === "service" && sub === "stop") return serviceStop();
   if (command === "service" && sub === "status") return serviceStatus();
   if (command === "personal-context" && sub === "export-migration") return print(await request(`/v1/self-understanding/context-export?userId=${encodeURIComponent(userId)}`));
+  if (command === "personal-context") return personalContext(sub ?? "", args);
   if (command === "self-understanding" && sub === "context-candidate" && args[0] === "export") return print(await request("/v1/self-understanding/context-candidates", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, candidateId: args[1], rating: args[2] ?? "fits" }) }));
   if (command === "self-understanding") return selfUnderstanding(sub ?? "", args);
   if (command === "activitywatch") return activityWatch(sub ?? "", args);

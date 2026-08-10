@@ -27,6 +27,13 @@ available for filtering and audit.
 - `challenges`: the observed difference reaches the opposite direction and minimum effect.
 - `inconclusive`: data is sufficient, but the effect is smaller than the threshold.
 
+Statistical guardrails also apply. A directional result must pass an exact
+one-sided permutation test for cohort comparisons (or an exact binomial test
+for the legacy directional evidence path) at alpha `0.05`. When a caller
+provides `comparisonCount`, Bonferroni correction uses `0.05 / comparisonCount`.
+If the exact calculation exceeds the configured computation budget, the result
+is kept non-positive rather than approximated.
+
 The management state (`proposed`, `tracking`, `paused`, `archived`) is separate
 from the evaluation result. Every evaluation stores the spec version, evaluator
 version, time window, cohort metrics, quality flags, and included/excluded

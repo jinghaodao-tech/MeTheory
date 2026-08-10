@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import type { ContextAnalysisSnapshotV2 } from "personal-context-studio/integration-contracts";
+import { PCS_ANALYSIS_CONTRACT_REVISION, type ContextAnalysisSnapshotV2 } from "personal-context-studio/integration-contracts";
 import type { PcsAnalysisResult } from "../../../packages/self-understanding/src/pcsSnapshotAnalysis.ts";
+import type { PcsAnalysisSnapshotV3 } from "../../../packages/contracts/src/pcsAnalysisSnapshotV3.ts";
 
 export type PcsProfileBinding = {
   metheoryUserId: string;
@@ -26,6 +27,7 @@ export type PcsAnalysisResultSummary = {
   status: PcsAnalysisResult["status"];
   dataQuality: PcsAnalysisResult["dataQuality"];
   excludedFields: PcsAnalysisResult["excludedFields"];
+  candidateAudit: PcsAnalysisResult["candidateAudit"];
   candidateIds: string[];
   candidates: PcsAnalysisCandidateSummary[];
 };
@@ -56,10 +58,10 @@ function canonicalize(value: unknown): unknown {
 }
 
 export function pcsSnapshotContractHash() {
-  return hash("pcs-analysis-snapshot-v2:contract-1");
+  return hash(PCS_ANALYSIS_CONTRACT_REVISION);
 }
 
-export function pcsSourceFingerprint(snapshot: ContextAnalysisSnapshotV2) {
+export function pcsSourceFingerprint(snapshot: ContextAnalysisSnapshotV2 | PcsAnalysisSnapshotV3) {
   return hash(JSON.stringify(canonicalize(snapshot)));
 }
 
@@ -76,6 +78,7 @@ function resultSummaryFrom(result: PcsAnalysisResult): PcsAnalysisResultSummary 
     status: result.status,
     dataQuality: result.dataQuality,
     excludedFields: result.excludedFields,
+    candidateAudit: result.candidateAudit,
     candidateIds: result.hypotheses.map((item) => item.id),
     candidates: result.hypotheses.map((item) => {
       const evidence = candidateEvidence.get(item.id);
@@ -112,8 +115,8 @@ export class SqlitePcsAnalysisRepository {
     return Number(this.db.prepare("DELETE FROM pcs_profile_bindings WHERE metheory_user_id=?").run(userId).changes ?? 0) > 0;
   }
 
-  saveRun(userId: string, snapshot: unknown, result: PcsAnalysisResult): PcsAnalysisRun {
-    const typedSnapshot = snapshot as ContextAnalysisSnapshotV2;
+  saveRun(userId: string, snapshot: ContextAnalysisSnapshotV2 | PcsAnalysisSnapshotV3, result: PcsAnalysisResult): PcsAnalysisRun {
+    const typedSnapshot = snapshot;
     const existing = this.getRunBySnapshot(userId, typedSnapshot.snapshotId);
     const resultSummary = resultSummaryFrom(result);
     if (existing) {

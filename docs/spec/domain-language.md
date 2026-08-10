@@ -9,17 +9,12 @@ SQLite, TypeScript, and AI contracts must use the same lower-snake-case values.
 stateDiagram-v2
     [*] --> proposed
     proposed --> tracking
-    tracking --> supported
-    tracking --> challenged
-    tracking --> inconclusive
-    supported --> tracking: new evidence
-    challenged --> tracking: new evidence
-    inconclusive --> tracking: enough data
+    tracking --> paused
+    paused --> tracking
     proposed --> archived
     tracking --> archived
-    supported --> archived
-    challenged --> archived
-    inconclusive --> archived
+    paused --> archived
+    archived --> [*]
 ```
 
 `proven` and `diagnosed` are intentionally not valid states. Management state
@@ -28,6 +23,18 @@ evaluation result (`insufficient_data`, `supports`, `challenges`,
 `inconclusive`). An evaluation is a comparison of multiple observation
 episodes under a versioned rule, not a fact about the person.
 
+## Evaluation results are separate from management state
+
+| Result | Meaning |
+| --- | --- |
+| insufficient_data | Quality or sample requirements are not met. |
+| supports | The expected directional effect passes evidence and significance gates. |
+| challenges | The opposite directional effect passes evidence and significance gates. |
+| inconclusive | Data is sufficient, but the effect or significance gate is not met. |
+
+The diagram contains management states only. A new evaluation updates the latest
+result separately and may return a paused hypothesis to tracking; paused is not
+an evaluation result.
 ## Core vocabulary
 
 | Concept | Type | Responsibility | Source of truth |

@@ -1,3 +1,8 @@
+import { EVIDENCE_POLICY } from "./evidencePolicy.ts";
+import { exactBinomialPValue } from "./significance.ts";
+export { EVIDENCE_POLICY } from "./evidencePolicy.ts";
+export * from "./significance.ts";
+
 export const HYPOTHESIS_STATUSES = [
   "proposed",
   "tracking",
@@ -50,7 +55,7 @@ export interface Evaluation {
   ruleVersion: string;
 }
 
-export const RULE_VERSION = "evidence-v2";
+export const RULE_VERSION = "evidence-v3";
 
 export function transitionHypothesis(
   current: HypothesisStatus,
@@ -91,13 +96,17 @@ export function evaluateEvidence(observations: ObservationInput[], ruleVersion =
     if (direction === "challenges") challenges += 1;
     if (direction === "insufficient") insufficient += 1;
   }
-  const status = supports + challenges < 2
-    ? "inconclusive"
-    : supports > challenges
-      ? "supported"
-      : challenges > supports
-        ? "challenged"
-        : "inconclusive";
+  const missingRate = observations.length ? insufficient / observations.length : 1;
+  const qualitySufficient = missingRate <= EVIDENCE_POLICY.maximumMissingRate;
+  const supportPValue = exactBinomialPValue(supports, challenges);
+  const challengePValue = exactBinomialPValue(challenges, supports);
+  const significantSupport = supportPValue !== null && supportPValue.pValue <= EVIDENCE_POLICY.falsePositiveAlpha + 1e-12;
+  const significantChallenge = challengePValue !== null && challengePValue.pValue <= EVIDENCE_POLICY.falsePositiveAlpha + 1e-12;
+  const status = qualitySufficient && significantSupport && supports >= EVIDENCE_POLICY.minimumDirectionalObservations && supports - challenges >= EVIDENCE_POLICY.minimumDirectionalLead
+    ? "supported"
+    : qualitySufficient && significantChallenge && challenges >= EVIDENCE_POLICY.minimumDirectionalObservations && challenges - supports >= EVIDENCE_POLICY.minimumDirectionalLead
+      ? "challenged"
+      : "inconclusive";
   return { status, supports, challenges, insufficient, sampleSize: observations.length, ruleVersion };
 }
 
@@ -153,6 +162,8 @@ export function chooseNotificationMinute(input: NotificationPolicyInput): number
 export * from './sourceAdapters.ts';
 export * from './questionBudget.ts';
 export * from './experiments.ts';
+export * from './measurementRequirements.ts';
+export * from './measurementSufficiency.ts';
 export * from './provenance.ts';
 export * from './syntheticData.ts';
 export * from './replication.ts';

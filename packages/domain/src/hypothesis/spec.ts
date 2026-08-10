@@ -1,3 +1,5 @@
+import { EVIDENCE_POLICY, effectiveMinimumEffect } from "../evidencePolicy.ts";
+
 export const CONDITION_OPERATORS = [
   "equals", "not_equals", "less_than", "less_than_or_equal",
   "greater_than", "greater_than_or_equal", "in", "not_in",
@@ -23,7 +25,7 @@ export interface HypothesisSpec {
   unit: "response";
   scope: Condition[];
   cohorts: [Cohort, Cohort];
-  outcome: { field: string; metric: EvaluatorTemplate; positiveValues?: unknown[] };
+  outcome: { field: string; metric: EvaluatorTemplate; positiveValues?: unknown[]; minimumValue?: number; maximumValue?: number };
   expectation: { relation: "cohort_a_greater_than_b" | "cohort_a_less_than_b"; minimumEffect: number };
   evaluationPolicy: {
     captureModes: Array<"momentary_observation" | "retrospective_entry">;
@@ -33,6 +35,7 @@ export interface HypothesisSpec {
     windowDays: number;
     excludeLowCertainty: boolean;
     maximumMissingRate: number;
+    comparisonCount?: number;
   };
 }
 
@@ -54,14 +57,17 @@ export function validateHypothesisSpec(input: unknown): HypothesisSpec {
   validateConditions(value.scope, "scope", true);
   value.cohorts.forEach((cohort: any, index: number) => validateConditions(cohort.conditions, `cohort ${index}`));
   if (!value.outcome?.field || !["binary_rate_difference", "numeric_mean_difference"].includes(value.outcome.metric)) throw new Error("unsupported outcome metric or empty outcome field");
+  if (value.outcome.metric === "numeric_mean_difference" && (!Number.isFinite(value.outcome.minimumValue) || !Number.isFinite(value.outcome.maximumValue) || value.outcome.maximumValue <= value.outcome.minimumValue)) throw new Error("numeric outcome scale is required");
   if (value.outcome.metric === "binary_rate_difference" && !Array.isArray(value.outcome.positiveValues)) throw new Error("binary rate requires positiveValues");
   if (!value.expectation || !["cohort_a_greater_than_b", "cohort_a_less_than_b"].includes(value.expectation.relation)) throw new Error("unsupported expectation relation");
-  if (typeof value.expectation.minimumEffect !== "number" || value.expectation.minimumEffect < 0) throw new Error("minimumEffect must be non-negative");
+  const minimumEffect = value.expectation?.minimumEffect;
+  if (typeof minimumEffect !== "number" || !Number.isFinite(minimumEffect) || minimumEffect < effectiveMinimumEffect(value.outcome.metric, 0) || (value.outcome.metric === "binary_rate_difference" && minimumEffect > 1)) throw new Error("minimumEffect is outside the safe evaluation range");
   const policy = value.evaluationPolicy;
   if (!policy || !Array.isArray(policy.captureModes) || !Array.isArray(policy.acceptedSources)) throw new Error("evaluation policy is required");
-  if (!Number.isInteger(policy.minimumSamplesPerCohort) || policy.minimumSamplesPerCohort <= 0) throw new Error("minimumSamplesPerCohort must be positive");
-  if (typeof policy.maximumCohortRatio !== "number" || policy.maximumCohortRatio < 1) throw new Error("maximumCohortRatio must be at least 1");
-  if (typeof policy.maximumMissingRate !== "number" || policy.maximumMissingRate < 0 || policy.maximumMissingRate > 1) throw new Error("maximumMissingRate must be between 0 and 1");
-  if (!Number.isInteger(policy.windowDays) || policy.windowDays <= 0) throw new Error("windowDays must be positive");
+  if (!Number.isInteger(policy.minimumSamplesPerCohort) || policy.minimumSamplesPerCohort < EVIDENCE_POLICY.minimumSamplesPerCohort) throw new Error(`minimumSamplesPerCohort must be at least ${EVIDENCE_POLICY.minimumSamplesPerCohort}`);
+  if (typeof policy.maximumCohortRatio !== "number" || policy.maximumCohortRatio < 1 || policy.maximumCohortRatio > EVIDENCE_POLICY.maximumCohortRatio) throw new Error(`maximumCohortRatio must be between 1 and ${EVIDENCE_POLICY.maximumCohortRatio}`);
+  if (typeof policy.maximumMissingRate !== "number" || policy.maximumMissingRate < 0 || policy.maximumMissingRate > EVIDENCE_POLICY.maximumMissingRate) throw new Error(`maximumMissingRate must be between 0 and ${EVIDENCE_POLICY.maximumMissingRate}`);
+  if (!Number.isInteger(policy.windowDays) || policy.windowDays <= 0 || policy.windowDays > EVIDENCE_POLICY.maximumWindowDays) throw new Error(`windowDays must be between 1 and ${EVIDENCE_POLICY.maximumWindowDays}`);
+  if (policy.comparisonCount !== undefined && (!Number.isInteger(policy.comparisonCount) || policy.comparisonCount < 1 || policy.comparisonCount > 10000)) throw new Error("comparisonCount must be between 1 and 10000");
   return value as HypothesisSpec;
 }

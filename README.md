@@ -17,8 +17,9 @@ It is the source of truth for the Node.js, SQLite, mobile experiment client,
 and Personal Context Studio integration. Markdown authoring is editor-agnostic:
 VS Code, Cursor, Obsidian, or another editor may open the same PCS notes folder.
 MeTheory does not maintain an editor plugin or a second synchronized note copy.
-Older documents are retained as historical domain references or future
-architecture research and do not override the current specification.
+Current normative specifications live under docs/spec/; historical decisions live under docs/archive/; future architecture research remains explicitly labeled. The official PCS contract version is defined by personal-context-studio/integration-contracts.
+
+The MeTheory -> PCS template request flow is documented in [`docs/metheory-pcs-template-flow.md`](docs/metheory-pcs-template-flow.md). MeTheory resolves measurement requirements deterministically and PCS remains responsible for field matching, review, and activation.
 
 The product boundary is explicit: the user chooses the scope of collection,
 the system chooses when and what to collect, and AI may only propose bounded
@@ -27,15 +28,16 @@ notification timing, hypothesis status, or Self Model updates.
 
 ## Contents
 
-- `docs/design-spec.md`: core loop and safety position.
-- `docs/domain-language.md`: canonical entities and hypothesis lifecycle.
-- `docs/hypothesis-evaluation.md`: versioned comparison evaluation and audit model.
-- `docs/collection-responsibility.md`: collection ownership and three-layer presentation model.
+- `docs/archive/design-spec.md`: core loop and safety position.
+- `docs/spec/domain-language.md`: canonical entities and hypothesis lifecycle.
+- `docs/spec/hypothesis-evaluation.md`: versioned comparison evaluation and audit model.
+- `docs/evidence-thresholds.md`: shared numerical floors for evidence and analysis readiness.
+- `docs/spec/collection-responsibility.md`: collection ownership and three-layer presentation model.
 - `docs/architecture-research.md`: target architecture and migration plan.
 - `docs/integration-architecture.md`: Personal Context Studio, experiments, and analysis boundaries.
 - `docs/technical-architecture.md`: module boundaries and runtime flow.
 - `docs/privacy-retention.md`: retention, consent, erasure, and AI safety baseline.
-- `docs/implementation-roadmap.md`: phased implementation and beta criteria.
+- `docs/archive/implementation-roadmap.md`: phased implementation and beta criteria.
 - `docs/current-product-spec.md`: current product scope, boundaries, and implementation status.
 - `docs/self-understanding-practical-v1.md`: confirmed-value analysis and Self Model review flow.
 - `docs/self-understanding-construct-catalog.md`: allowlisted non-clinical constructs and semantic-role mapping.
@@ -46,7 +48,6 @@ notification timing, hypothesis status, or Self Model updates.
 - `schemas/domain-schema.json`: domain data contract.
 - `schemas/personal-context-candidate-v1.schema.json`: versioned, read-only export contract for the separate Personal Context Studio.
 - [Personal Context Studio](https://github.com/jinghaodao-tech/Personal-Context-Studio): the standalone local-first record, search, local-AI Review, and long-form template application that supplies confirmed analysis snapshots to MeTheory.
-- `db/mvp_schema.sql`: Python reference SQLite schema.
 - `db/ts_mvp_schema.sql`: TypeScript runtime SQLite schema with Observation and Evidence.
 - `packages/domain/src/index.ts`: TypeScript pure rules for evidence, transitions, notification policy, and AI candidate validation.
 - `packages/domain/src/hypothesis/`: typed HypothesisSpec, episode construction, conditions, and deterministic evaluators.
@@ -54,7 +55,6 @@ notification timing, hypothesis status, or Self Model updates.
  - `docs/openapi-ai.yaml`: read-only AI HTTP contract.
  - `docs/mcp-tools.md`: read-only MCP tool boundary.
 - `apps/api/src/server.ts`: TypeScript Node MVP API.
-- `backend/core.py`: Python reference implementation kept during migration.
 
 ## Commands
 
@@ -114,11 +114,6 @@ Full-text Markdown search is a PCS responsibility. MeTheory never receives
 Markdown bodies through the analysis bridge; it receives only the reviewed,
 shareable values needed for a selected analysis period.
 
-Run the Python compatibility tests:
-
-```powershell
-python -m unittest tools.test_mvp -v
-```
 
 ## Smartphone MVP
 
@@ -305,6 +300,8 @@ compatible semantic merge. See
 
 From the workspace CLI, use
 `self-understanding analyze --from=2026-07-01T00:00:00.000Z --to=2026-07-28T00:00:00.000Z`.
+
+実際のPCS Markdown由来データを測定する場合は、PCSでReview済みの値を含むプロフィールを用意し、MeTheory APIを起動したあとに `npm.cmd run analyze:pcs -- --from=... --to=...` を実行します。`--json`も利用できます。MeTheoryはMarkdown本文やPCS SQLiteを直接読まず、PCSの分析Snapshotだけを受け取ります。
 
 ## Analysis integrity rules
 

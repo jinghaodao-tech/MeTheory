@@ -92,6 +92,27 @@ access, sends `profileId`, `from`, `to`, and `timezone`, and maps authorization,
 profile, validation, timeout, and unavailable failures to stable `pcs_*` error
 codes.
 
+## 実データの測定
+
+PCSのMarkdownをMeTheoryで分析するときは、MeTheoryからMarkdown本文やPCSのSQLiteを直接読みません。PCSでノートを登録し、テンプレート値をReviewで確認し、分析対象プロフィールと共有目的を設定したうえで、Integration API経由のSnapshotを分析します。
+
+MeTheoryリポジトリで次を実行すると、直近28日分を測定できます。
+
+```powershell
+$env:METHEORY_API_URL = "http://127.0.0.1:8100"
+$env:METHEORY_USER_ID = "local-user"
+$env:PCS_PROFILE_ID = "<PCSで作成したプロフィールID>"
+npm.cmd run analyze:pcs
+```
+
+期間を指定する場合は `--from` と `--to`、エージェント向けの安定した出力は `--json` を使います。
+
+```powershell
+npm.cmd run analyze:pcs -- --from=2026-07-01T00:00:00.000Z --to=2026-08-01T00:00:00.000Z --timezone=Asia/Tokyo --json
+```
+
+出力には記録数、利用可能な値数、除外理由、仮説、支持・反証件数だけを含め、Markdown本文や生の構造化値は含めません。記録数が0の場合は、対象期間、PCSのReview状態、プロフィールの共有目的、フィールドの分析ロールを確認してください。
+
 ## Live cross-repository verification
 
 Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File

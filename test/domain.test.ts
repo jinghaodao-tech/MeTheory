@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chooseNotificationMinute, chooseQuestion, evaluateEvidence, transitionHypothesis, validateAiCandidate } from "../packages/domain/src/index.ts";
+import { chooseNotificationMinute, chooseQuestion, correctedAlpha, evaluateEvidence, exactPermutationPValue, transitionHypothesis, validateAiCandidate } from "../packages/domain/src/index.ts";
 
 test("missing observations never become challenges", () => {
   const result = evaluateEvidence([
@@ -11,6 +11,42 @@ test("missing observations never become challenges", () => {
   assert.equal(result.insufficient, 1);
   assert.equal(result.status, "inconclusive");
 });
+
+test("directional evidence requires an exact binomial result at the five percent floor", () => {
+  const observation = (value: boolean) => ({ field: "outcome", value, certainty: "high" as const, source: "user_confirmed" as const });
+  assert.equal(evaluateEvidence([observation(true), observation(true)]).status, "inconclusive");
+  assert.equal(evaluateEvidence([observation(true), observation(true), observation(true)]).status, "inconclusive");
+  assert.equal(evaluateEvidence([observation(true), observation(true), observation(true), observation(false), observation(false)]).status, "inconclusive");
+  assert.equal(evaluateEvidence(Array.from({ length: 20 }, () => observation(true))).status, "supported");
+  assert.equal(evaluateEvidence(Array.from({ length: 20 }, () => observation(false))).status, "challenged");
+});
+test("directional evidence rejects excessive unknown values", () => {
+  const known = { field: "outcome", value: true, certainty: "high" as const, source: "user_confirmed" as const };
+  const unknown = { field: "outcome", value: null, certainty: "low" as const, source: "user_confirmed" as const, missing: true };
+  const mostlyUnknown = [
+    ...Array.from({ length: 3 }, () => ({ ...known })),
+    ...Array.from({ length: 4 }, () => ({ ...unknown }))
+  ];
+  assert.equal(evaluateEvidence(mostlyUnknown).status, "inconclusive");
+});
+
+test("exact significance uses a five percent family-wise floor", () => {
+  const result = exactPermutationPValue([1, 1, 1], [0, 0, 0], "a_greater");
+  assert.equal(result?.pValue, 0.05);
+  assert.equal(correctedAlpha(1), 0.05);
+  assert.equal(correctedAlpha(2), 0.025);
+});
+
+test("large numeric permutations use a deterministic Monte Carlo fallback", () => {
+  const groupA = Array.from({ length: 20 }, (_, index) => index + 1);
+  const groupB = Array.from({ length: 20 }, (_, index) => index + 21);
+  const first = exactPermutationPValue(groupA, groupB, "a_greater");
+  const second = exactPermutationPValue(groupA, groupB, "a_greater");
+  assert.equal(first?.method, "monte_carlo_permutation");
+  assert.deepEqual(first, second);
+  assert.ok(first !== null && first.pValue >= 0 && first.pValue <= 1);
+});
+
 
 test("hypothesis transitions reject evaluation from proposed", () => {
   assert.equal(transitionHypothesis("tracking", "supported"), "supported");

@@ -18,7 +18,7 @@ editor-specific synchronization is required.
 
 ## Snapshot handoff
 
-PCS exposes `pcs-analysis-snapshot-v1` for a selected period. Each value has a
+PCS exposes the canonical `pcs-analysis-snapshot-v2` contract with revision `pcs-analysis-snapshot-v2.1` for a selected period. The version and revision are defined by the official personal-context-studio/integration-contracts package; this document intentionally does not duplicate them. Each value has a
 field key, label, type, template ID, record timestamp, source document ID, and
 optional allowed values, numeric bounds, unit, and analysis role metadata.
 
