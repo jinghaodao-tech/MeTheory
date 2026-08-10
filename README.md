@@ -301,7 +301,7 @@ compatible semantic merge. See
 From the workspace CLI, use
 `self-understanding analyze --from=2026-07-01T00:00:00.000Z --to=2026-07-28T00:00:00.000Z`.
 
-実際のPCS Markdown由来データを測定する場合は、PCSでReview済みの値を含むプロフィールを用意し、MeTheory APIを起動したあとに `npm.cmd run analyze:pcs -- --from=... --to=...` を実行します。`--json`も利用できます。MeTheoryはMarkdown本文やPCS SQLiteを直接読まず、PCSの分析Snapshotだけを受け取ります。
+For Japanese documentation, see [`README_ja.md`](README_ja.md).
 
 ## Analysis integrity rules
 
