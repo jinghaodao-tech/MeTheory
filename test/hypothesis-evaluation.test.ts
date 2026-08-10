@@ -98,6 +98,8 @@ test("numeric mean difference is deterministic and history payload can be compar
   const first = evaluateHypothesis("h1", spec, buildEpisodes(input), evaluatedAt);
   const second = evaluateHypothesis("h1", spec, buildEpisodes(input), evaluatedAt);
   assert.equal(first.result, "supports"); assert.equal(first.observedEffect, 3); assert.deepEqual(first.cohortMetrics, second.cohortMetrics); assert.deepEqual(first.samples, second.samples);
+  assert.equal(first.sensitivitySummary.method, "continuous_value_flip");
+  assert.ok(first.sensitivitySummary.minimumChangesToCrossEffect !== null);
 });
 
 test("invalid hypothesis specs are rejected", () => {

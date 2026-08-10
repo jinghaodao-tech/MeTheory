@@ -3,7 +3,7 @@ import type { ObservationEpisode } from "./episodes.ts";
 import type { EvaluationResult, HypothesisSpec } from "./spec.ts";
 import { EVIDENCE_POLICY, effectiveConclusionMinimumEffect } from "../evidencePolicy.ts";
 import { correctedAlpha, exactPermutationPValue, type SignificanceMethod } from "../significance.ts";
-import { binaryRateSensitivity, type SensitivitySummary } from "../sensitivity.ts";
+import { binaryRateSensitivity, continuousValueSensitivity, type SensitivitySummary } from "../sensitivity.ts";
 
 export const HYPOTHESIS_EVALUATOR_VERSION = "comparison-v3";
 
@@ -104,13 +104,22 @@ export function evaluateHypothesis(hypothesisId: string, spec: HypothesisSpec, e
       minimumEffect: requiredEffect
     })
     : null;
+  const continuousSensitivity = spec.outcome.metric === "numeric_mean_difference"
+    ? continuousValueSensitivity({
+      groupAValues: numericValues[0],
+      groupBValues: numericValues[1],
+      minimumNormalizedEffect: EVIDENCE_POLICY.minimumConclusionNormalizedEffect,
+      relation: spec.expectation.relation === "cohort_a_greater_than_b" ? "a_greater_than_b" : "a_less_than_b"
+    })
+    : null;
+  const sensitivity = binarySensitivity ?? continuousSensitivity;
   const minimumAdditionalObservations = metrics.reduce(
     (sum, metric) => sum + Math.max(0, EVIDENCE_POLICY.minimumConclusionSamplesPerCohort - metric.eligibleSamples),
     0
   );
   const sensitivitySummary: SensitivitySummary = {
-    conclusionChangeConditions: binarySensitivity?.minimumChangesToCrossEffect !== null && binarySensitivity?.minimumChangesToCrossEffect !== undefined
-      ? [`${binarySensitivity.minimumChangesToCrossEffect} binary observation changes would move the effect below the configured floor`]
+    conclusionChangeConditions: sensitivity?.minimumChangesToCrossEffect !== null && sensitivity?.minimumChangesToCrossEffect !== undefined
+      ? [`${sensitivity.minimumChangesToCrossEffect} observation changes would move the normalized effect below the configured floor`]
       : ["Additional observations, missingness, or scale changes may alter the conclusion"],
     groupImbalanceWarnings: counts.length === 2 && Math.min(...counts) / Math.max(...counts, 1) < 0.5
       ? ["Cohort sizes are materially imbalanced"]
@@ -118,9 +127,9 @@ export function evaluateHypothesis(hypothesisId: string, spec: HypothesisSpec, e
     missingnessWarnings: totalMissing > 0 ? ["Some observations were excluded or missing"] : [],
     overlapWarnings: [],
     minimumAdditionalObservations: minimumAdditionalObservations || undefined,
-    minimumChangesToCrossEffect: binarySensitivity?.minimumChangesToCrossEffect ?? null,
-    changesByGroup: binarySensitivity?.changesByGroup,
-    method: binarySensitivity ? "binary_rate_flip" : "not_applicable",
+    minimumChangesToCrossEffect: sensitivity?.minimumChangesToCrossEffect ?? null,
+    changesByGroup: sensitivity?.changesByGroup,
+    method: binarySensitivity ? "binary_rate_flip" : continuousSensitivity ? "continuous_value_flip" : "not_applicable",
     explanation: "Sensitivity describes how close this comparison is to changing its conclusion; it is not a diagnosis or causal guarantee."
   };
   let result: EvaluationResult = "insufficient_data";

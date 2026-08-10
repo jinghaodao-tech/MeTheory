@@ -64,7 +64,8 @@ function normalizedDifference(groupAValues: number[], groupBValues: number[]) {
   const sumSquares = groupAValues.reduce((sum, value) => sum + (value - groupAMean) ** 2, 0)
     + groupBValues.reduce((sum, value) => sum + (value - groupBMean) ** 2, 0);
   const pooledStandardDeviation = Math.sqrt(sumSquares / pooledDegrees);
-  if (!Number.isFinite(pooledStandardDeviation) || pooledStandardDeviation === 0) return Math.abs(groupAMean - groupBMean) === 0 ? 0 : null;
+  if (!Number.isFinite(pooledStandardDeviation)) return null;
+  if (pooledStandardDeviation === 0) return Math.abs(groupAMean - groupBMean) === 0 ? 0 : Number.POSITIVE_INFINITY;
   return Math.abs(groupAMean - groupBMean) / pooledStandardDeviation;
 }
 
