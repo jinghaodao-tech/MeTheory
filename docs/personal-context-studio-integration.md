@@ -87,6 +87,21 @@ PCS_PROFILE_ID=<bound PCS profile id>
 PCS_TIMEZONE=Asia/Tokyo
 ```
 
+Before starting MeTheory, create a separate Integration Client in the PCS
+dashboard for this read path:
+
+1. Open PCS **Integration** and choose **Create Integration Client**.
+2. Give it a name such as `metheory-real-analysis`.
+3. Select **`read_snapshot`** only.
+4. Add the target PCS Profile ID to the allowed Profile IDs.
+5. Save the client and copy both the displayed Client ID and Token.
+
+The Token cannot be retrieved from the client list later. The Client ID and
+Token must be the matching pair from the same creation event. Keep the Token
+in a local environment variable or another secret store; never commit it.
+After changing these variables, restart the MeTheory API so the process picks
+up the new environment.
+
 The client refuses non-local URLs, requires all three credentials for snapshot
 access, sends `profileId`, `from`, `to`, and `timezone`, and maps authorization,
 profile, validation, timeout, and unavailable failures to stable `pcs_*` error

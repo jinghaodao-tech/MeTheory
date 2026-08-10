@@ -36,3 +36,20 @@ npm.cmd run analyze:pcs -- --from=... --to=...
 ```
 
 `--json`も利用できます。MeTheoryはMarkdown本文やPCS SQLiteを直接読まず、PCSの分析Snapshotだけを受け取ります。
+
+### Integration Clientの作成
+
+PCSの実データ分析には、PCS管理画面の「連携」からMeTheory用の
+Integration Clientを別途作成します。権限は **`read_snapshot` のみ**にし、
+分析対象のProfile IDを許可Profile IDに追加してください。
+
+作成直後に表示されるClient IDとTokenを、同じ作成時の組み合わせで次の環境変数に設定します。
+
+```powershell
+$env:PCS_CLIENT_ID = "作成したClient ID"
+$env:PCS_CLIENT_TOKEN = "作成時に表示されたToken"
+```
+
+TokenはClient一覧APIから再取得できません。作成時に表示されたTokenを安全な
+ローカル環境変数またはSecret Storeに保存し、Gitへコミットしないでください。
+環境変数を変更した場合は、MeTheory APIを再起動してから分析を実行します。
