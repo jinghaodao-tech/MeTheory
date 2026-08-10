@@ -1,0 +1,5 @@
+# ADR-010: 公式PCSパッケージを分析契約の正本とする
+
+インストールされた`personal-context-studio/integration-contracts`パッケージを、PCS分析Snapshotの形、スキーマバージョン、契約リビジョンの唯一の正本とする。MeTheoryはAPI境界と分析境界で、その実行時バリデーターとバージョン定数をimportする。
+
+旧`schemas/pcs-analysis-snapshot-v2.schema.json`はワイヤー契約の一部を重複定義し、公式パッケージとずれる可能性があった。ランタイムや検証スクリプトで使用していなかったため削除した。Fixtureには具体的なSnapshot例を残せるが、検証は第2のローカルスキーマではなく公式パッケージを通す。
