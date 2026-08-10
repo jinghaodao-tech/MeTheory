@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { generateSyntheticDataset } from "../packages/domain/src/syntheticData.ts";
 import { generateHypothesisCandidates } from "../packages/domain/src/hypothesis/candidates.ts";
-import { binaryRateSensitivity } from "../packages/domain/src/sensitivity.ts";
+import { binaryRateSensitivity, continuousValueSensitivity } from "../packages/domain/src/sensitivity.ts";
 import { evaluateExperiment } from "../packages/domain/src/experiments.ts";
 
 function parameters() {
@@ -22,6 +22,18 @@ function comparisonParameters(count: number) {
 test("binary sensitivity reports the first change that crosses the effect floor", () => {
   const result = binaryRateSensitivity({ groupAPositive: 3, groupATotal: 4, groupBPositive: 2, groupBTotal: 4, minimumEffect: 0.2 });
   assert.deepEqual(result, { minimumChangesToCrossEffect: 1, changesByGroup: { groupA: 1, groupB: 1 } });
+});
+
+test("continuous sensitivity reports a concrete value-change count", () => {
+  const result = continuousValueSensitivity({
+    groupAValues: [10, 11, 12, 13],
+    groupBValues: [1, 2, 3, 4],
+    minimumNormalizedEffect: 0.2,
+    relation: "a_greater_than_b"
+  });
+  assert.ok(result);
+  assert.ok((result.minimumChangesToCrossEffect ?? 0) > 0);
+  assert.equal(result.changesByGroup.groupA !== null || result.changesByGroup.groupB !== null, true);
 });
 
 test("null-effect synthetic data stays below the five percent candidate rate", () => {

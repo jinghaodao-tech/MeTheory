@@ -21,6 +21,8 @@ export type SafePcsAnalysisSummary = {
     supportingEvidenceCount: number;
     contradictingEvidenceCount: number;
     dataShortage: string[];
+    alternativeExplanations?: string[];
+    sensitivitySummary?: PcsAnalysisResult["hypotheses"][number]["sensitivitySummary"];
   }>;
 };
 
@@ -48,7 +50,9 @@ export function summarizePcsAnalysis(value: ApiPcsAnalysisResult): SafePcsAnalys
       confidence: hypothesis.confidence,
       supportingEvidenceCount: hypothesis.supportingEvidence.length,
       contradictingEvidenceCount: hypothesis.contradictingEvidence.length,
-      dataShortage: hypothesis.dataShortage
+      dataShortage: hypothesis.dataShortage,
+      alternativeExplanations: hypothesis.alternativeExplanations,
+      sensitivitySummary: hypothesis.sensitivitySummary
     }))
   };
 }
@@ -73,6 +77,8 @@ export function formatPcsAnalysis(summary: SafePcsAnalysisSummary): string {
   lines.push(`仮説: ${summary.hypotheses.length}件`);
   for (const [index, hypothesis] of summary.hypotheses.entries()) {
     lines.push(`${index + 1}. ${hypothesis.statement}`);
+    if (hypothesis.sensitivitySummary) lines.push(`   sensitivity: ${hypothesis.sensitivitySummary.method} / minimum changes: ${hypothesis.sensitivitySummary.minimumChangesToCrossEffect ?? "unknown"}`);
+    if (hypothesis.alternativeExplanations?.length) lines.push(`   alternatives: ${hypothesis.alternativeExplanations.join(", ")}`);
     lines.push(`   状態: ${hypothesis.status} / 確信度: ${hypothesis.confidence.toFixed(2)} / 支持: ${hypothesis.supportingEvidenceCount}件 / 反証: ${hypothesis.contradictingEvidenceCount}件`);
   }
   return lines.join("\n");

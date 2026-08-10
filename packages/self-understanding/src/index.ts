@@ -2,13 +2,14 @@ import {
   generateHypothesisCandidates,
   generateHypothesisCandidatesWithAudit,
   normalizeCandidateGenerationConfig,
+  DEFAULT_CANDIDATE_CONFIG,
   CANDIDATE_PAIR_ALLOWLIST_VERSION,
   type CandidateGenerationConfig,
   type CandidateObservation,
   type CandidateParameter,
   type HypothesisCandidate
 } from "../../domain/src/hypothesis/candidates.ts";
-import { binaryRateSensitivity, type SensitivitySummary } from "../../domain/src/sensitivity.ts";
+import { binaryRateSensitivity, continuousValueSensitivity, type SensitivitySummary } from "../../domain/src/sensitivity.ts";
 import {
   inferSemanticRole,
   isSelfUnderstandingSemanticRole,
@@ -62,7 +63,8 @@ export type UnderstandingRecord = {
       sourceId?: string;
       transformVersion?: string;
       privacyLevel?: string;
-      provenanceSource?: "user_input" | "reviewed_ai_extraction" | "manual_import";
+      provenanceSource?: "user_input" | "reviewed_ai_extraction" | "manual_import" | "system";
+      sourceTool?: string;
     }
   >;
   conditionValues: Record<string, unknown>;
@@ -97,7 +99,7 @@ export type SelfUnderstandingConfig = Pick<
   | "maximumCandidates"
   | "comparisonCount"
   | "pairAllowlistVersion"
-> & { stableMinimumSamples: number };
+> & { stableMinimumSamples: number; lookbackDays?: number };
 export const DEFAULT_SELF_UNDERSTANDING_CONFIG: SelfUnderstandingConfig = {
   minimumSamplesPerCohort: 3,
   minimumTotalSamples: 8,
@@ -513,9 +515,18 @@ function cohortKey(
     return String(value);
   }
   if (typeof value === "number" && parameter) {
+    const observed = parameter.observedValues?.filter(Number.isFinite).sort((left, right) => left - right) ?? [];
+    const observedMedian = observed.length
+      ? observed.length % 2 === 1
+        ? observed[Math.floor(observed.length / 2)]!
+        : (observed[observed.length / 2 - 1]! + observed[observed.length / 2]!) / 2
+      : undefined;
     const minimum = parameter.minimumValue ?? 0;
     const maximum = parameter.maximumValue ?? 100;
-    return value <= minimum + (maximum - minimum) / 2 ? "low" : "high";
+    const threshold = candidate.cohortThreshold ?? (candidate.cohortStrategy === "observed_median" && observedMedian !== undefined
+      ? observedMedian
+      : minimum + (maximum - minimum) / 2);
+    return value < threshold ? candidate.cohortA.key : candidate.cohortB.key;
   }
   return String(value);
 }
@@ -553,6 +564,50 @@ function numeric(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
 
+function inferredLookbackDays(input: { observations: CandidateObservation[]; records: UnderstandingRecord[]; now?: string }) {
+  const end = Date.parse(input.now ?? new Date().toISOString());
+  const dates = [...input.observations.map((item) => item.observedAt), ...input.records.map((item) => item.recordedAt)]
+    .map((value) => Date.parse(value))
+    .filter(Number.isFinite);
+  if (!dates.length || !Number.isFinite(end)) return DEFAULT_CANDIDATE_CONFIG.lookbackDays;
+  return Math.max(DEFAULT_CANDIDATE_CONFIG.lookbackDays, Math.ceil((end - Math.min(...dates)) / 86400000) + 1);
+}
+
+function addMeasurementDefinitionAlternative(
+  alternatives: string[],
+  records: UnderstandingRecord[],
+  conditionParameterId: string,
+  outcomeParameterId: string
+) {
+  const sourceTools = new Set<string>();
+  let machineMeasuredPairs = 0;
+  for (const record of records) {
+    const condition = record.provenanceByParameterId?.[conditionParameterId];
+    const outcome = record.provenanceByParameterId?.[outcomeParameterId];
+    if (!condition || !outcome || condition.provenanceSource !== "system" || outcome.provenanceSource !== "system") continue;
+    if (condition.sourceTool && outcome.sourceTool && condition.sourceTool === outcome.sourceTool) {
+      sourceTools.add(condition.sourceTool);
+      machineMeasuredPairs += 1;
+    }
+  }
+  if (!machineMeasuredPairs || sourceTools.size !== 1) return alternatives;
+  return [...alternatives, `同じ機械計測ソース（${[...sourceTools][0]}）から算出した値どうしのため、測定定義や共通ログに由来する相関の可能性があります。`];
+}
+
+function numericOutcomeGroups(records: UnderstandingRecord[], candidate: HypothesisCandidate, conditionParameter: CandidateParameter, outcomeParameter: CandidateParameter) {
+  const groupAValues: number[] = [];
+  const groupBValues: number[] = [];
+  for (const record of records) {
+    const condition = record.conditionValues[candidate.conditionParameterId];
+    const outcome = record.outcomeValues[candidate.outcomeParameterId];
+    if (typeof outcome !== "number" || !Number.isFinite(outcome) || condition === undefined || outcome === null) continue;
+    const group = cohortKey(condition, candidate, conditionParameter);
+    if (group === candidate.cohortA.key) groupAValues.push(outcome);
+    if (group === candidate.cohortB.key) groupBValues.push(outcome);
+  }
+  return { groupAValues, groupBValues };
+}
+
 function relationWord(input: SelfUnderstandingInterpretationInputV2) {
   return input.statistics.difference >= 0 ? "高い" : "低い";
 }
@@ -562,8 +617,11 @@ export function deterministicInterpretation(
 ): SelfUnderstandingInterpretation {
   const input = normalizeInput(rawInput);
   const contradicted = input.status === "contradicted";
+  const concreteStatement = `「${input.condition.label}」が「${input.condition.groupA}」の日は、「${input.outcome.label}」が「${input.condition.groupB}」の日より${relationWord(input)}傾向でした。`;
   const statementJa =
-    input.construct.key === "self_perception_gap"
+    input.construct.key === "uncategorized"
+      ? concreteStatement
+      : input.construct.key === "self_perception_gap"
       ? "自己評価と記録された行動に違いが見られる場合があります。"
       : contradicted
         ? `${input.construct.labelJa}について、現在は反する記録が多く、仮説を見直す必要があります。`
@@ -1052,7 +1110,7 @@ export function generateSelfUnderstanding(input: {
       ...config,
       pairAllowlistVersion: config.pairAllowlistVersion ?? (input.parameters.every((parameter) => Boolean(parameter.semanticRole)) ? CANDIDATE_PAIR_ALLOWLIST_VERSION : undefined),
       maximumCandidates: Math.max(config.maximumCandidates * 4, 20),
-      lookbackDays: 30
+      lookbackDays: Number.isInteger(input.config?.lookbackDays) ? input.config!.lookbackDays! : inferredLookbackDays(input)
     }
   });
   const candidates = candidateGeneration.candidates;
@@ -1110,8 +1168,11 @@ export function generateSelfUnderstanding(input: {
       current: currentHistory,
       history: input.history ?? []
     });
-    const alternativeExplanations = alternativeExplanationsFor(
-      constructDefinition.key
+    const alternativeExplanations = addMeasurementDefinitionAlternative(
+      alternativeExplanationsFor(constructDefinition.key),
+      input.records,
+      candidate.conditionParameterId,
+      candidate.outcomeParameterId
     );
     const interpretationInput: SelfUnderstandingInterpretationInputV2 = {
       version: 2,
@@ -1175,6 +1236,22 @@ export function generateSelfUnderstanding(input: {
       method: binarySensitivity ? "binary_rate_flip" : "not_applicable",
       explanation: "現在の記録数、効果量、欠損率、期間を基にした感度情報です。因果関係や将来の結果を保証しません"
     };
+    const continuousSensitivity = !binarySensitivity && ["number", "integer", "duration_minutes", "scale"].includes(outcomeParameter.valueType)
+      ? continuousValueSensitivity({
+        ...numericOutcomeGroups(input.records, candidate, conditionParameter, outcomeParameter),
+        minimumNormalizedEffect: config.minimumNormalizedEffect,
+        relation: candidate.relation
+      })
+      : null;
+    if (continuousSensitivity) {
+      sensitivitySummary.minimumChangesToCrossEffect = continuousSensitivity.minimumChangesToCrossEffect;
+      sensitivitySummary.changesByGroup = continuousSensitivity.changesByGroup;
+      sensitivitySummary.method = "continuous_value_flip";
+      sensitivitySummary.conclusionChangeConditions = continuousSensitivity.minimumChangesToCrossEffect === null
+        ? ["実測値の変更幅が不明なため、効果量の閾値 crossing を確認できません。"]
+        : [`${continuousSensitivity.minimumChangesToCrossEffect}件分の連続量を反対方向へ変えると、効果量が閾値未満になります。`];
+      sensitivitySummary.explanation = "各グループの実測値を中央値へ近づける変更を仮定し、効果量が閾値未満になる最小件数を計算しています。";
+    }
     const dataShortage: string[] = [];
     if (candidate.missingConditionCount) {
       dataShortage.push(`条件値の欠損: ${candidate.missingConditionCount}件`);

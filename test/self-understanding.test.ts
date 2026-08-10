@@ -90,6 +90,37 @@ const interpretationInput: SelfUnderstandingInterpretationInput = {
   contradictingEntries: []
 };
 
+test("uncategorized interpretation states the compared fields", () => {
+  const output = deterministicInterpretation({ ...interpretationInput, construct: { key: "uncategorized", labelJa: "未分類", descriptionJa: "比較候補" } });
+  assert.equal(output.statementJa.includes(interpretationInput.condition.label), true);
+  assert.equal(output.statementJa.includes(interpretationInput.outcome.label), true);
+});
+
+test("machine-measured comparisons disclose shared measurement definitions", () => {
+  const records = Array.from({ length: 8 }, (_, index) => ({
+    id: `machine-${index}`,
+    recordedAt: `2026-08-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`,
+    title: "machine record",
+    conditionValues: { condition: index < 4 ? 0 : 1 },
+    outcomeValues: { outcome: index < 4 ? 10 : 1 },
+    provenanceByParameterId: {
+      condition: { source: "user_entry" as const, labelJa: "machine", provenanceSource: "system" as const, sourceTool: "dev-pace" },
+      outcome: { source: "user_entry" as const, labelJa: "machine", provenanceSource: "system" as const, sourceTool: "dev-pace" }
+    }
+  }));
+  const result = generateSelfUnderstanding({
+    parameters: [
+      { id: "condition", fieldKey: "condition", templateId: "t", templateVersionId: "v", semanticRole: "active_duration", semanticMergeAllowed: true, scaleFingerprint: "binary", sourceKind: "entry", nameJa: "作業時間", valueType: "number", minimumValue: 0, maximumValue: 1, usableAsCondition: true, usableAsOutcome: false, allowedConditionRoles: [], allowedOutcomeRoles: [], cohortStrategy: "fixed_threshold", cohortThreshold: 0.5 },
+      { id: "outcome", fieldKey: "outcome", templateId: "t", templateVersionId: "v", semanticRole: "focus", semanticMergeAllowed: true, scaleFingerprint: "number", sourceKind: "entry", nameJa: "集中時間", valueType: "number", minimumValue: 0, maximumValue: 100, usableAsCondition: false, usableAsOutcome: true, allowedConditionRoles: [], allowedOutcomeRoles: [] }
+    ],
+    observations: records.flatMap((record) => Object.entries(record.conditionValues).concat(Object.entries(record.outcomeValues)).map(([parameterId, value]) => ({ episodeId: record.id, episodeKind: "pcs_record" as const, parameterId, value, isMissing: false, observedAt: record.recordedAt }))),
+    records,
+    now: "2026-08-08T00:00:00.000Z",
+    config: { lookbackDays: 30, minimumTotalSamples: 8, minimumSamplesPerCohort: 3, maximumCandidates: 5, pairAllowlistVersion: "candidate-pair-v2" }
+  });
+  assert.ok(result.some((item) => item.alternativeExplanations.some((text) => text.includes("dev-pace"))));
+});
+
 test("eight paired records generate evidence while unknown temporal stability stays emerging", () => {
   const input = pairedInput(8, (condition) => (condition ? 80 : 30));
   const result = generateSelfUnderstanding({

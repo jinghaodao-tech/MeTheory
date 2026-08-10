@@ -34,7 +34,7 @@ function flag(args: string[], name: string): string | undefined {
 
 function analysisPeriod(args: string[]) {
   const endAt = flag(args, "--to") ?? new Date().toISOString();
-  const startAt = flag(args, "--from") ?? new Date(Date.parse(endAt) - 28 * 86400000).toISOString();
+  const startAt = flag(args, "--from") ?? new Date(Date.parse(endAt) - 365 * 86400000).toISOString();
   if (Number.isNaN(Date.parse(startAt)) || Number.isNaN(Date.parse(endAt)) || Date.parse(startAt) >= Date.parse(endAt)) throw new Error("analysis_period_invalid");
   return { startAt, endAt };
 }
