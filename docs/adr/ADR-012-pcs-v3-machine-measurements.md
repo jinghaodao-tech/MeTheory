@@ -6,10 +6,10 @@ Accepted, adapter implemented.
 
 ## Decision
 
-MeTheory accepts PCS V2 and V3 snapshots at the binding boundary. V3 requires measurement metadata for `machine_measured` values and maps their source to `system`; `user_confirmed` remains `user_confirmed`.
+MeTheory accepts PCS V2 and V3 snapshots at the analysis boundary. V3 requires measurement metadata for `machine_measured` values and maps their provenance to `system`; `user_confirmed` remains `user_confirmed`.
 
-The existing V2 analysis engine remains unchanged until the canonical PCS contract package is upgraded in the dependency lock. V3 validation is therefore available first at ingestion, while V3-to-analysis conversion is an explicit follow-up rather than an implicit downgrade.
+The V3 adapter in `packages/self-understanding/src/pcsSnapshotAnalysis.ts` explicitly converts validated V3 values into the internal analysis record shape. It preserves the mapped provenance and `sourceTool`, so the analysis engine can distinguish machine measurements from user-confirmed values and disclose shared measurement-definition confounding. V2 remains supported for compatibility; V3 is not silently downgraded at ingestion.
 
 ## Rationale
 
-Confirmation mode is evidence provenance, not merely a boolean review flag. Silently converting machine measurements into user-confirmed V2 values would misrepresent the source.
+Confirmation mode is evidence provenance, not merely a boolean review flag. The explicit V3 adapter prevents machine measurements from being represented as user-confirmed values while allowing the existing candidate engine to analyze both snapshot versions.
