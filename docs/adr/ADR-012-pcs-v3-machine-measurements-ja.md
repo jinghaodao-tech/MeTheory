@@ -1,13 +1,23 @@
 # ADR-012: PCS V3機械計測境界
 
-## 状態
-
-承認済み、アダプター実装済み。
+## 背景
+PCSは確認モードと計測メタデータを持つ機械計測値を提供する。MeTheoryは、それらをユーザー確認値として表現せずに受け取る必要がある。
 
 ## 決定
-MeTheoryはPCS V2とV3 Snapshotを分析境界で受け付ける。V3の`machine_measured`値には計測メタデータを必須とし、Provenanceを`system`へ対応付ける。`user_confirmed`は`user_confirmed`のまま保持する。
+MeTheoryはPCS V2とV3 Snapshotを分析境界で受け付ける。V3の`machine_measured`値にはメタデータを必須とし、Provenanceを`system`へ対応付ける。`user_confirmed`はそのまま保持する。
 
-`packages/self-understanding/src/pcsSnapshotAnalysis.ts`のV3アダプターは、検証済みV3値を内部分析レコードへ明示的に変換する。Provenanceと`sourceTool`を保持するため、機械計測とユーザー確認値を区別でき、共通の測定定義に由来する交絡も表示できる。V2は互換性のため継続対応し、V3を取り込み時に暗黙のV2へ降格しない。
+`packages/self-understanding/src/pcsSnapshotAnalysis.ts`のアダプターは、検証済みV3値を内部分析レコードへ明示的に変換し、Provenanceと`sourceTool`を保持する。V2は互換性のため継続対応し、V3を暗黙にV2へ降格しない。
 
-## 理由
-確認モードは単なるレビュー済みフラグではなくEvidenceのProvenanceである。明示的なV3アダプターによって、機械計測値をユーザー確認値として誤表現せず、既存の候補エンジンで両方のSnapshotを分析できる。
+## 代替案
+
+- すべてのV3値をユーザー確認済みのV2値として扱う。
+- 取り込みだけV3対応し、分析対応を先送りする。
+- 別の分析エンジンができるまで機械計測値を拒否する。
+
+最初の案はProvenanceを誤表現し、後2案は明示的アダプターと既存Evidenceルールで安全に扱える実データ経路を不必要に止めるため採用しない。
+
+## 影響
+既存候補エンジンで両バージョンを分析しつつ、ユーザー値と機械値を区別できる。同一ソースの機械計測比較では測定定義由来の交絡を表示できる。競合時のソース優先順位はADR-008に従う。
+
+## 撤回方法
+新しいバージョン付きSnapshotアダプターと移行ポリシーを導入する。Provenanceメタデータを削除したり、過去のV3分析を再解釈したりしてはならない。
