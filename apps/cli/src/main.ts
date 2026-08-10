@@ -6,7 +6,7 @@ import { formatPcsAnalysis, summarizePcsAnalysis } from "./personalContextOutput
 
 const root = process.cwd();
 const api = process.env.METHEORY_API_URL ?? "http://127.0.0.1:8100";
-const userId = process.env.METHEORY_USER_ID ?? "local-user";
+let userId = process.env.METHEORY_USER_ID ?? "local-user";
 const databasePath = process.env.METHEORY_DB ?? join(root, "data", "metheory.sqlite3");
 
 async function request(path: string, init?: RequestInit) {
@@ -14,6 +14,17 @@ async function request(path: string, init?: RequestInit) {
   const payload = await response.json() as any;
   if (!response.ok) throw new Error(payload.error ?? `api_${response.status}`);
   return payload;
+}
+
+async function ensureDefaultUser() {
+  if (process.env.METHEORY_USER_ID) return;
+  const result = await request("/v1/users", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ authSubject: "local-user" })
+  }) as { id?: unknown };
+  if (typeof result.id !== "string" || !result.id) throw new Error("local_user_creation_failed");
+  userId = result.id;
 }
 
 function print(value: unknown) { console.log(JSON.stringify(value, null, 2)); }
@@ -41,6 +52,7 @@ function analysisPeriod(args: string[]) {
 
 async function personalContext(command: string, args: string[]) {
   if (command !== "analyze") throw new Error("personal_context_command_invalid");
+  await ensureDefaultUser();
   const period = analysisPeriod(args);
   const result = await request("/v1/self-understanding/analyze-personal-context", {
     method: "POST",
@@ -59,7 +71,7 @@ async function personalContext(command: string, args: string[]) {
 }
 
 async function selfUnderstanding(command: string, args: string[]) {
-  if (command === "analyze") { const startAt = args.find((item) => item.startsWith("--from="))?.slice(7); const endAt = args.find((item) => item.startsWith("--to="))?.slice(5); return print(await request("/v1/self-understanding/analyze", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, startAt, endAt, minimumEntryCount: 8 }) })); }
+  if (command === "analyze") { await ensureDefaultUser(); const startAt = args.find((item) => item.startsWith("--from="))?.slice(7); const endAt = args.find((item) => item.startsWith("--to="))?.slice(5); return print(await request("/v1/self-understanding/analyze", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, startAt, endAt, minimumEntryCount: 8 }) })); }
   if (command === "review" && args[0] && args[1]) return print(await request("/v1/self-understanding/reviews", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, candidateId: args[0], rating: args[1], statement: args.slice(2).join(" ") }) }));
   if (command === "self-model") return print(await request(`/v1/self-understanding/self-model-candidates?userId=${encodeURIComponent(userId)}`));
   if (command === "self-model-review" && args[0] && args[1]) return print(await request("/v1/self-understanding/self-model-candidates/review", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, candidateId: args[0], status: args[1] }) }));

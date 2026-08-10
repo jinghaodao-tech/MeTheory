@@ -52,7 +52,7 @@
         ,"test:measurement": "node --experimental-strip-types --test test/measurement-requirements.test.ts test/measurement-sufficiency.test.ts"
         ,"test:measurement-requirements": "npm run test:measurement"
         ,"analyze:pcs": "node --experimental-strip-types apps/cli/src/main.ts personal-context analyze"
-        ,"analyze:real": "node --experimental-strip-types apps/cli/src/main.ts self-understanding analyze --from=2026-05-24T00:00:00.000Z --to=2026-08-09T23:59:59.999Z"
+        ,"analyze:real": "node --experimental-strip-types apps/cli/src/main.ts personal-context analyze --from=2026-05-24T00:00:00.000Z --to=2026-08-09T23:59:59.999Z --timezone=Asia/Tokyo --json"
         ,"verify:all": "npm run verify && npm run analyze:real"
     },
     "engines": {
