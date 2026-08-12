@@ -39,7 +39,7 @@ async function ensureDemoIdentity() {
   }
   const binding = await api(`/v1/pcs/profile-binding?userId=${encodeURIComponent(state.userId)}`);
   if (!binding.binding || binding.binding.pcsProfileId !== state.profileId) {
-    await api("/v1/pcs/profile-binding", { method: "POST", body: JSON.stringify({ userId: state.userId, pcsProfileId: state.profileId }) });
+    await api("/v1/pcs/profile-binding", { method: "POST", body: JSON.stringify({ userId: state.userId, profileId: state.profileId }) });
   }
 }
 
