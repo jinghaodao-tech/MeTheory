@@ -25,7 +25,7 @@ import { PcsSnapshotContentMismatchError } from "./pcsAnalysisRepository.ts";
 import { createPcsAnalysisStore } from "./pcsAnalysisStore.ts";
 import { analyzePcsAnalysisSnapshot } from "../../../packages/self-understanding/src/pcsSnapshotAnalysis.ts";
 import { CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION, validateContextAnalysisSnapshot, type ContextAnalysisSnapshotV2 } from "personal-context-studio/integration-contracts";
-import { validateBoundPcsSnapshot } from "./services/pcsAnalysisService.ts";
+import { analyzeBoundPcsSnapshot, validateBoundPcsSnapshot } from "./services/pcsAnalysisService.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.METHEORY_DB ?? resolve(root, "data", "metheory.sqlite3");
@@ -555,6 +555,22 @@ const server = createServer(async (request, response) => {
       if (!Number.isInteger(limit) || !Number.isInteger(offset) || limit < 1 || limit > 200 || offset < 0) return json(response, 400, { error: "analysis_runs_pagination_invalid" });
       const page = await pcsAnalysisRepository.listRuns(userId, { limit, offset });
       return json(response, 200, { ...page, nextOffset: offset + page.items.length < page.total ? offset + page.items.length : null });
+    }
+    if (request.method === "POST" && parts.join("/") === "v1/pcs/analyze") {
+      const input = await body(request);
+      const userId = optionalString(input.userId) ?? "";
+      if (!userExists(userId)) return json(response, 404, { error: "user_not_found" });
+      const candidate = validateBoundPcsSnapshot(input.snapshot, await pcsAnalysisRepository.getBinding(userId));
+      if (!candidate.ok) return json(response, candidate.status, { error: candidate.error, details: candidate.details });
+      const result = analyzeBoundPcsSnapshot(candidate.value, {
+        minimumTotalSamples: Number(input.minimumTotalSamples ?? 8),
+        maximumCandidates: Number(input.maximumCandidates ?? 5)
+      });
+      let run;
+      try { run = await pcsAnalysisRepository.saveRun(userId, candidate.value, result); }
+      catch (error) { if (error instanceof PcsSnapshotContentMismatchError) return json(response, 409, { error: "snapshot_id_content_mismatch" }); throw error; }
+      selfUnderstandingRepository.savePcsResult(userId, result);
+      return json(response, 200, { ...result, analysisId: run.id, analysisRunId: run.id, run });
     }
     if (request.method === "GET" && parts.length === 4 && parts[0] === "v1" && parts[1] === "pcs" && parts[2] === "analysis-runs") {
       const userId = requestUrl.searchParams.get("userId") ?? "";
@@ -1179,4 +1195,3 @@ const server = createServer(async (request, response) => {
 
 const port = Number(process.env.PORT ?? 8100);
 server.listen(port, "127.0.0.1", () => console.log(`MeTheory TypeScript API listening on http://127.0.0.1:${port}`));
-

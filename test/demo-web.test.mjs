@@ -12,10 +12,14 @@ test("demo web entrypoint is valid and uses the local API", () => {
   const index = readFileSync(indexPath, "utf8");
   assert.match(server, /127\.0\.0\.1/);
   assert.match(server, /pcs-analysis-snapshot-v2\.json/);
-  assert.match(index, /Fixture/);
+  assert.match(index, /固定データ/);
+  assert.match(index, /読み込み中/);
   assert.match(index, /Self Model/);
   assert.match(index, /data-draft/);
   assert.match(index, /data-checkin/);
+  assert.match(index, /比較可能な記録/);
+  assert.match(index, /parameterLabel/);
+  assert.doesNotMatch(index, /Condition: \$\{esc\(candidate\.candidate\.conditionParameterId\)\}/);
 });
 
 test("demo does not expose a cloud AI dependency", () => {

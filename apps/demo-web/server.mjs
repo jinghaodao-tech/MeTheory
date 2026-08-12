@@ -39,7 +39,7 @@ async function ensureDemoIdentity() {
   }
   const binding = await api(`/v1/pcs/profile-binding?userId=${encodeURIComponent(state.userId)}`);
   if (!binding.binding || binding.binding.pcsProfileId !== state.profileId) {
-    await api("/v1/pcs/profile-binding", { method: "POST", body: JSON.stringify({ userId: state.userId, pcsProfileId: state.profileId }) });
+    await api("/v1/pcs/profile-binding", { method: "POST", body: JSON.stringify({ userId: state.userId, profileId: state.profileId }) });
   }
 }
 
@@ -70,7 +70,7 @@ const server = createServer(async (request, response) => {
     if (url.pathname === "/" || url.pathname === "/index.html") return send(response, 200, indexHtml, "text/html; charset=utf-8");
     if (url.pathname === "/api/demo/state") {
       await ensureDemoIdentity();
-      const history = await api(`/v1/pcs/analysis-history?userId=${encodeURIComponent(state.userId)}`);
+      const history = await api(`/v1/pcs/analysis-runs?userId=${encodeURIComponent(state.userId)}`);
       const experiments = await api(`/v1/experiments?userId=${encodeURIComponent(state.userId)}`);
       const selfModel = await api(`/v1/self-understanding/self-model-candidates?userId=${encodeURIComponent(state.userId)}`);
       return send(response, 200, { mode: state.mode, userId: state.userId, profileId: state.profileId, analysisId: state.analysisId, run: state.run ?? history.items?.[0] ?? null, history: history.items ?? [], experiments: experiments.items ?? [], selfModel: selfModel.items ?? [], notes: ["Fixture mode is deterministic and local.", "Mobile is experimental; this web flow is the portfolio path."] });

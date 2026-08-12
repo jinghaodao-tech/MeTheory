@@ -83,6 +83,10 @@ const runtimeColumns: Array<[string, string, string]> = [
 export type MigrationOptions = { failAfterTable?: string };
 
 export function migrateDatabase(db: DatabaseSync, root: string, options: MigrationOptions = {}) {
+  const observationColumns = db.prepare("PRAGMA table_info(experiment_observations)").all() as Array<{ name: string }>;
+  if (observationColumns.length && !observationColumns.some((column) => column.name === "idempotency_key")) {
+    db.exec("ALTER TABLE experiment_observations ADD COLUMN idempotency_key TEXT NOT NULL DEFAULT ''");
+  }
   db.exec(readFileSync(resolve(root, "db", "ts_mvp_schema.sql"), "utf8"));
   db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL) STRICT");
   const migrations: Migration[] = [
