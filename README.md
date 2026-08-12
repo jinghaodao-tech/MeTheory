@@ -26,6 +26,8 @@ the system chooses when and what to collect, and AI may only propose bounded
 interpretations or candidates. AI never decides facts, evidence strength,
 notification timing, hypothesis status, or Self Model updates.
 
+![MeTheory portfolio demo](docs/screenshots/portfolio-demo.jpg)
+
 ## Contents
 
 - `docs/archive/design-spec.md`: core loop and safety position.

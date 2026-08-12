@@ -6,7 +6,7 @@ import { pcsSnapshotContractHash, pcsSourceFingerprint, type PcsAnalysisRun, typ
 
 function resultSummaryFrom(result: PcsAnalysisResult): PcsAnalysisResultSummary {
   const evidence = new Map(result.candidateEvidence.map((item) => [item.candidateId, item]));
-  return { status: result.status, dataQuality: result.dataQuality, excludedFields: result.excludedFields, candidateAudit: result.candidateAudit, candidateIds: result.hypotheses.map((item) => item.id), candidates: result.hypotheses.map((item) => { const itemEvidence = evidence.get(item.id); return { id: item.id, statement: item.statement, construct: item.construct, tendencyScope: item.tendencyScope, period: item.period, candidate: item.candidate, interpretationInput: item.interpretationInput, supportingEvidenceCount: itemEvidence?.supporting.length ?? 0, contradictingEvidenceCount: itemEvidence?.contradicting.length ?? 0 }; }) };
+  return { status: result.status, dataQuality: result.dataQuality, practicalThresholds: result.practicalThresholds, excludedFields: result.excludedFields, candidateAudit: result.candidateAudit, robustness: result.robustness, candidateIds: result.hypotheses.map((item) => item.id), candidates: result.hypotheses.map((item) => { const itemEvidence = evidence.get(item.id); return { id: item.id, statement: item.statement, construct: item.construct, tendencyScope: item.tendencyScope, period: item.period, candidate: item.candidate, interpretationInput: item.interpretationInput, supportingPatternDayCount: itemEvidence?.supporting.length ?? 0, contradictingPatternDayCount: itemEvidence?.contradicting.length ?? 0 }; }) };
 }
 
 export type PostgresPcsAnalysisRepositoryConfig = { connectionString: string; max?: number };

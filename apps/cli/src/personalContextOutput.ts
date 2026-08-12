@@ -9,7 +9,9 @@ export type SafePcsAnalysisSummary = {
   analysisRunId?: string;
   period: PcsAnalysisResult["period"];
   dataQuality: PcsAnalysisResult["dataQuality"];
+  practicalThresholds?: PcsAnalysisResult["practicalThresholds"];
   candidateAudit?: PcsAnalysisResult["candidateAudit"];
+  robustness?: PcsAnalysisResult["robustness"];
   excludedFields: Array<{ templateId: string; templateVersionId: string; fieldKey: string; reason: string }>;
   hypotheses: Array<{
     id: string;
@@ -17,9 +19,9 @@ export type SafePcsAnalysisSummary = {
     construct: string;
     tendencyScope: string;
     status: string;
-    confidence: number;
-    supportingEvidenceCount: number;
-    contradictingEvidenceCount: number;
+    displayPriority: number;
+    supportingPatternDayCount: number;
+    contradictingPatternDayCount: number;
     dataShortage: string[];
     alternativeExplanations?: string[];
     sensitivitySummary?: PcsAnalysisResult["hypotheses"][number]["sensitivitySummary"];
@@ -34,7 +36,9 @@ export function summarizePcsAnalysis(value: ApiPcsAnalysisResult): SafePcsAnalys
     ...(value.analysisRunId ? { analysisRunId: value.analysisRunId } : {}),
     period: value.period,
     dataQuality: value.dataQuality,
+    practicalThresholds: value.practicalThresholds,
     candidateAudit: value.candidateAudit,
+    robustness: value.robustness,
     excludedFields: value.excludedFields.map((field) => ({
       templateId: field.templateId,
       templateVersionId: field.templateVersionId,
@@ -47,9 +51,9 @@ export function summarizePcsAnalysis(value: ApiPcsAnalysisResult): SafePcsAnalys
       construct: hypothesis.construct,
       tendencyScope: hypothesis.tendencyScope,
       status: hypothesis.status,
-      confidence: hypothesis.confidence,
-      supportingEvidenceCount: hypothesis.supportingEvidence.length,
-      contradictingEvidenceCount: hypothesis.contradictingEvidence.length,
+      displayPriority: hypothesis.displayPriority,
+      supportingPatternDayCount: hypothesis.supportingEvidence.length,
+      contradictingPatternDayCount: hypothesis.contradictingEvidence.length,
       dataShortage: hypothesis.dataShortage,
       alternativeExplanations: hypothesis.alternativeExplanations,
       sensitivitySummary: hypothesis.sensitivitySummary
@@ -59,27 +63,30 @@ export function summarizePcsAnalysis(value: ApiPcsAnalysisResult): SafePcsAnalys
 
 export function formatPcsAnalysis(summary: SafePcsAnalysisSummary): string {
   const lines = [
-    "PCS実データ分析",
-    `期間: ${summary.period.startAt} ～ ${summary.period.endAt}`,
-    `状態: ${summary.status === "ready" ? "分析可能" : "データ不足"}`,
-    `記録数: ${summary.dataQuality.recordCount}`,
-    `分析に使える値: ${summary.dataQuality.usableValueCount}`,
-    `除外フィールド: ${summary.dataQuality.excludedFieldCount}`,
-    `除外値: ${summary.dataQuality.excludedValueCount}`
+    "PCS analysis",
+    `period: ${summary.period.startAt} - ${summary.period.endAt}`,
+    `status: ${summary.status}`,
+    `records: ${summary.dataQuality.recordCount}`,
+    `usable values: ${summary.dataQuality.usableValueCount}`,
+    `excluded fields: ${summary.dataQuality.excludedFieldCount}`,
+    `excluded values: ${summary.dataQuality.excludedValueCount}`
   ];
+  const coverage = summary.dataQuality.coverage;
+  if (coverage) lines.push(`record coverage: ${coverage.observedRecordDays}/${coverage.calendarSpanDays} days; missing ${coverage.missingRecordDays}`);
+  if (summary.practicalThresholds?.length) lines.push(`practical thresholds: ${summary.practicalThresholds.map((item) => `${item.fieldKey} >= ${item.minimumDifference}${item.unit ? ` ${item.unit}` : ""}`).join(", ")}`);
+  if ((summary.candidateAudit?.suppressedByDisplayLimit ?? 0) > 0) lines.push(`suppressed by display limit: ${summary.candidateAudit?.suppressedByDisplayLimit}`);
   if (!summary.hypotheses.length) {
-    lines.push("仮説: なし");
-    lines.push(summary.dataQuality.recordCount === 0
-      ? "案内: PCSでMarkdownを登録し、テンプレートの値を確認してから再実行してください。"
-      : "案内: 対象期間、Review済み値、分析ロール、サンプル数を確認してください。");
+    lines.push("hypotheses: none");
+    lines.push(summary.dataQuality.recordCount === 0 ? "reason: no records in the selected period" : "reason: verify confirmed values, roles, and sample size");
     return lines.join("\n");
   }
-  lines.push(`仮説: ${summary.hypotheses.length}件`);
+  lines.push(`hypotheses: ${summary.hypotheses.length}`);
   for (const [index, hypothesis] of summary.hypotheses.entries()) {
     lines.push(`${index + 1}. ${hypothesis.statement}`);
+    lines.push(`   status: ${hypothesis.status} / display priority: ${hypothesis.displayPriority.toFixed(2)}`);
+    lines.push(`   pattern-aligned days: ${hypothesis.supportingPatternDayCount} / pattern-divergent days: ${hypothesis.contradictingPatternDayCount}`);
     if (hypothesis.sensitivitySummary) lines.push(`   sensitivity: ${hypothesis.sensitivitySummary.method} / minimum changes: ${hypothesis.sensitivitySummary.minimumChangesToCrossEffect ?? "unknown"}`);
     if (hypothesis.alternativeExplanations?.length) lines.push(`   alternatives: ${hypothesis.alternativeExplanations.join(", ")}`);
-    lines.push(`   状態: ${hypothesis.status} / 確信度: ${hypothesis.confidence.toFixed(2)} / 支持: ${hypothesis.supportingEvidenceCount}件 / 反証: ${hypothesis.contradictingEvidenceCount}件`);
   }
   return lines.join("\n");
 }
