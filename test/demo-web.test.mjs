@@ -16,6 +16,9 @@ test("demo web entrypoint is valid and uses the local API", () => {
   assert.match(index, /Self Model/);
   assert.match(index, /data-draft/);
   assert.match(index, /data-checkin/);
+  assert.match(index, /比較可能な記録/);
+  assert.match(index, /parameterLabel/);
+  assert.doesNotMatch(index, /Condition: \$\{esc\(candidate\.candidate\.conditionParameterId\)\}/);
 });
 
 test("demo does not expose a cloud AI dependency", () => {
