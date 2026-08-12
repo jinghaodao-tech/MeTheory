@@ -1,5 +1,6 @@
 {
   "schemaVersion": "pcs-analysis-snapshot-v2",
+  "contractRevision": "pcs-analysis-snapshot-v2.1",
   "snapshotId": "snapshot_fixture_v2_20260713",
   "profileId": "profile_fixture",
   "generatedAt": "2026-07-13T00:00:00.000Z",
