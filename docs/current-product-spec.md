@@ -10,6 +10,8 @@ MeTheory analyzes user-confirmed structured records from Personal Context Studio
 
 The first practical version is complete when a user can record and review context in Personal Context Studio, analyze one to four weeks of confirmed records in MeTheory, inspect supporting and contradicting records, rate a hypothesis as fits/does not fit/on hold, and review a proposed Self Model change before accepting it. The flow must remain usable with no cloud AI and must preserve Markdown when local AI is unavailable.
 
+The itemized v1 / v1.1 / v1.2 scope decision, including what is explicitly excluded, is [docs/spec/v1-scope.md](spec/v1-scope.md).
+
 ## Local-first policy
 
 Personal Context Studio owns Markdown and its local SQLite store for documents, templates, structured field values, review state, search, local-AI execution, and all consent for sending record content to an external AI. MeTheory owns its separate local SQLite store for experiment observations, hypotheses, evidence, experiment-specific privacy decisions, and Self Model changes. The two services exchange versioned localhost JSON only; no cloud sync is required.
