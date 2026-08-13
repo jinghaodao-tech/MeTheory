@@ -58,11 +58,10 @@ implementation currently in the repository suggests.
 
 - **Expo mobile client (`apps/mobile`).** Archived: excluded from the root
   `package.json`, lockfile, and CI per `docs/mobile-archive.md` and
-  `docs/operations-status.md`. `docs/current-product-spec.md` still lists it
-  as "Experimental" and one line still describes it as "a compatible local
-  experiment client," and `README.md` still documents mobile commands as
-  active — both descriptions are stale and should be corrected separately
-  from this scope decision, not used to justify re-including it here.
+  `docs/operations-status.md`. `docs/current-product-spec.md` and
+  `README.md` both state this explicitly ("Supported clients" /
+  "Excluded client scope"), so this scope decision is consistent with the
+  rest of the documentation as of 2026-08-13.
 
 ## Release rule
 
