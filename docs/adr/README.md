@@ -18,3 +18,4 @@
 | 012 | [PCS V3 machine measurements](ADR-012-pcs-v3-machine-measurements.md) | [PCS V3機械計測境界](ADR-012-pcs-v3-machine-measurements-ja.md) |
 | 013 | [Reproducibility before evaluator change](ADR-013-reproducibility-before-evaluator-change.md) | [評価器変更より再現性を優先](ADR-013-reproducibility-before-evaluator-change-ja.md) |
 | 014 | [Exact independence check](ADR-014-exact-independence-check.md) | [期間の独立性チェックは厳密なまま保つ](ADR-014-exact-independence-check-ja.md) |
+| 015 | [Semantic role confidence naming](ADR-015-semantic-role-confidence-naming.md) | [推論確信度の命名とDB列命名の切り分け](ADR-015-semantic-role-confidence-naming-ja.md) |

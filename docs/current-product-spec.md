@@ -63,7 +63,7 @@ Medical or psychological diagnosis, fixed personality labels, cloud sync, a gene
 ## Status labels for older documents
 
 - `architecture-research.md`, `technical-architecture.md`, and `mcp-tools.md` are **future architecture research** where they describe cloud, MCP, or scale-out designs.
-- docs/spec/domain-language.md, docs/spec/hypothesis-evaluation.md, and docs/spec/collection-responsibility.md are current normative domain specifications.
+- docs/spec/domain-language.md, docs/spec/hypothesis-evaluation.md, docs/spec/collection-responsibility.md, and docs/spec/v1-scope.md are current normative domain specifications. docs/spec/analysis-limitations.md documents disclosed limitations of the current evaluation method (binarization, confounding, researcher degrees of freedom, serial correlation, time trends).
 - docs/archive/design-spec.md and docs/archive/implementation-roadmap.md are historical documents. docs/architecture-research.md, docs/technical-architecture.md, and docs/mcp-tools.md are future architecture research.
 
 ## Closed-loop experiment slice

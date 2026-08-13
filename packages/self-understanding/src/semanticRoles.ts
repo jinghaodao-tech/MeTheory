@@ -37,10 +37,28 @@ export type SemanticRoleSource =
   | "template_rule"
   | "ai_suggestion"
   | "legacy_inference";
+export type SemanticRoleInferenceMethod = "pattern_match" | "fallback" | "none";
+export type SemanticRoleConfidence = number & {
+  readonly __brand: "SemanticRoleConfidence";
+};
+export function semanticRoleConfidence(value: number): SemanticRoleConfidence {
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error("semantic_role_confidence_invalid");
+  }
+  return value as SemanticRoleConfidence;
+}
 export type SemanticRoleSuggestion = {
   fieldKey: string;
   semanticRole: SelfUnderstandingSemanticRole;
-  confidence: number;
+  /**
+   * How sure the rule-based inference is that this role assignment is
+   * correct. This is a heuristic weight (0.9 for a matched pattern, 0.4 for
+   * the no-match fallback), not a statistical or model-derived probability.
+   * It must never be presented to a user as "N% likely correct."
+   */
+  inferenceConfidence: SemanticRoleConfidence;
+  /** How inferenceConfidence was derived. See ADR-015. */
+  inferenceMethod: SemanticRoleInferenceMethod;
   reasonJa: string;
 };
 export type ResolvedSemanticRole =
@@ -111,7 +129,8 @@ export function inferSemanticRole(input: {
   return {
     fieldKey: input.fieldKey,
     semanticRole: match?.role ?? "other",
-    confidence: match ? 0.9 : 0.4,
+    inferenceConfidence: semanticRoleConfidence(match ? 0.9 : 0.4),
+    inferenceMethod: match ? "pattern_match" : "fallback",
     reasonJa: match
       ? "フィールド名、ラベル、説明に一致する定義済みルール"
       : "定義済みルールでは意味役割を特定できない"
@@ -128,10 +147,13 @@ export function validateSemanticRoleSuggestion(
   if (
     typeof suggestion.fieldKey !== "string" ||
     !isSelfUnderstandingSemanticRole(suggestion.semanticRole) ||
-    typeof suggestion.confidence !== "number" ||
-    !Number.isFinite(suggestion.confidence) ||
-    suggestion.confidence < 0 ||
-    suggestion.confidence > 1 ||
+    typeof suggestion.inferenceConfidence !== "number" ||
+    !Number.isFinite(suggestion.inferenceConfidence) ||
+    suggestion.inferenceConfidence < 0 ||
+    suggestion.inferenceConfidence > 1 ||
+    (suggestion.inferenceMethod !== "pattern_match" &&
+      suggestion.inferenceMethod !== "fallback" &&
+      suggestion.inferenceMethod !== "none") ||
     typeof suggestion.reasonJa !== "string" ||
     !suggestion.reasonJa.trim()
   ) {
@@ -146,7 +168,7 @@ export function semanticRoleNeedsConfirmation(input: {
   currentRole?: SelfUnderstandingSemanticRole;
 }): boolean {
   return (
-    input.suggestion.confidence < 0.85 ||
+    input.suggestion.inferenceConfidence < 0.85 ||
     sensitiveReviewRoles.has(input.suggestion.semanticRole) ||
     input.sensitivity === "sensitive" ||
     input.sensitivity === "highly_sensitive" ||
