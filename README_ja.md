@@ -1,6 +1,6 @@
 # MeTheory
 
-MeTheoryは、Personal Context Studio（PCS）から受け取った確認済みデータを分析し、根拠付きの自己理解仮説を検証するローカルファーストのシステムです。
+MeTheoryは、PCSの確認済みデータから非臨床的な自己理解仮説を検証するローカルファーストのエンジンです。
 
 ## 役割
 
@@ -26,3 +26,13 @@ npm run verify
 ```
 
 詳細は [README.md](README.md) と [docs/personal-context-studio-integration.md](docs/personal-context-studio-integration.md) を参照してください。
+
+## PCS実データの分析
+
+実際のPCS Markdown由来データを分析する場合は、PCSでReview済みの値を含むプロフィールを用意し、MeTheory APIを起動したあとに次のコマンドを実行します。
+
+```powershell
+npm.cmd run analyze:pcs -- --from=... --to=...
+```
+
+`--json`も利用できます。MeTheoryはMarkdown本文やPCS SQLiteを直接読まず、PCSの分析Snapshotだけを受け取ります。
