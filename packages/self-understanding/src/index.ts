@@ -65,6 +65,7 @@ export type UnderstandingRecord = {
       privacyLevel?: string;
       provenanceSource?: "user_input" | "reviewed_ai_extraction" | "manual_import" | "system";
       sourceTool?: string;
+      measurementDefinitionVersion?: string;
     }
   >;
   conditionValues: Record<string, unknown>;
@@ -231,7 +232,7 @@ export type SelfUnderstandingHypothesis = {
   dataShortage: string[];
   alternativeExplanations: string[];
   mergedCandidateIds: string[];
-  confidence: number;
+  displayPriority: number;
   userReview: "pending" | "fits" | "does_not_fit" | "on_hold";
   nextAction: string;
   selfModelCandidate: string;
@@ -1283,7 +1284,7 @@ export function generateSelfUnderstanding(input: {
       dataShortage,
       alternativeExplanations,
       mergedCandidateIds: [],
-      confidence: Math.round(candidate.candidateScore * 100) / 100,
+      displayPriority: Math.round(candidate.candidateScore * 100) / 100,
       userReview: "pending" as const,
       nextAction: interpretation.nextExperiment.action,
       selfModelCandidate: interpretation.selfModelCandidateJa,

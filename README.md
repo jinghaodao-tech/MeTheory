@@ -27,6 +27,8 @@ the system chooses when and what to collect, and AI may only propose bounded
 interpretations or candidates. AI never decides facts, evidence strength,
 notification timing, hypothesis status, or Self Model updates.
 
+![MeTheory portfolio demo](docs/screenshots/portfolio-demo.jpg)
+
 ## Contents
 
 - `docs/archive/design-spec.md`: core loop and safety position.
@@ -44,6 +46,21 @@ notification timing, hypothesis status, or Self Model updates.
 - `docs/self-understanding-construct-catalog.md`: allowlisted non-clinical constructs and semantic-role mapping.
 - `docs/external-assets.md`: local structured output, ActivityWatch, baseline self-perception, question quality, fixed charts, and provenance.
 - `docs/personal-context-studio-integration.md`: the current Personal Context Studio record, search, Review, and MeTheory analysis boundary.
+
+### PCS Integration Client setup
+
+PCS analysis requires a separate profile-scoped Integration Client. In the PCS
+dashboard, create a client with **`read_snapshot`** permission only and add the
+target Profile ID to its allowed profiles. Copy the Client ID and Token shown
+after creation and set them as `PCS_CLIENT_ID` and `PCS_CLIENT_TOKEN` alongside
+`PCS_API_URL`, `PCS_PROFILE_ID`, and `PCS_TIMEZONE`.
+
+The Token is shown only when the client is created and cannot be retrieved from
+the client list. Use the matching Client ID and Token from the same creation
+event, keep the Token local, and restart the MeTheory API after changing these
+environment variables. Do not commit credentials. See
+[`docs/personal-context-studio-integration.md`](docs/personal-context-studio-integration.md)
+for the complete setup.
 - `docs/notification-policy.md`: notification constraints and user controls.
 - `prompts/ai-templates.json`: versioned AI templates.
 - `schemas/domain-schema.json`: domain data contract.

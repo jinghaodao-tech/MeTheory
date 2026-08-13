@@ -40,6 +40,8 @@ export type PcsCandidateEvidence = EvidenceView & {
     sourceId: string;
     transformVersion: string;
     privacyLevel: string;
+    sourceTool?: string;
+    measurementDefinitionVersion?: string;
   }>;
 };
 
@@ -55,7 +57,15 @@ export type PcsAnalysisResult = {
     usableValueCount: number;
     excludedFieldCount: number;
     excludedValueCount: number;
+    coverage?: {
+      calendarSpanDays: number;
+      observedRecordDays: number;
+      missingRecordDays: number;
+      missingRecordRate: number;
+      recordPresencePolicy: "records_present_only";
+    };
   };
+  practicalThresholds: Array<{ fieldKey: string; minimumDifference: number; unit?: string; rationale: string }>;
   excludedFields: PcsExcludedField[];
   candidateAudit: CandidateGenerationAudit;
   hypotheses: ReturnType<typeof generateSelfUnderstanding>;
@@ -64,6 +74,27 @@ export type PcsAnalysisResult = {
     supporting: PcsCandidateEvidence[];
     contradicting: PcsCandidateEvidence[];
   }>;
+  robustness: {
+    totalObservedDefinition: "active_minutes + idle_minutes + away_minutes";
+    totalObservedMedian: number | null;
+    continuousAssociations: Array<{
+      condition: "ai_conversation_ratio";
+      outcome: "deep_thinking_ratio";
+      method: "pearson_correlation";
+      scope: "all" | "short_total_observed" | "long_total_observed";
+      recordCount: number;
+      pearsonR: number | null;
+      slope: number | null;
+    }>;
+    ratioComparison: Array<{
+      scope: "all" | "short_total_observed" | "long_total_observed";
+      recordCount: number;
+      conditionMedian: number | null;
+      lowConditionOutcomeRatio: number | null;
+      highConditionOutcomeRatio: number | null;
+      effectLowMinusHigh: number | null;
+    }>;
+  };
 };
 
 type FieldGroup = {
@@ -136,7 +167,9 @@ function evidenceFor(input: {
       source: item.provenanceSource ?? item.source,
       sourceId: item.sourceId ?? item.observationIds?.[0] ?? record.id,
       transformVersion: item.transformVersion ?? "pcs-analysis-snapshot-v2",
-      privacyLevel: item.privacyLevel ?? "normal"
+      privacyLevel: item.privacyLevel ?? "normal",
+      ...(item.sourceTool ? { sourceTool: item.sourceTool } : {}),
+      ...(item.measurementDefinitionVersion ? { measurementDefinitionVersion: item.measurementDefinitionVersion } : {})
     })) : [];
   return { ...input.evidence, conditionValue, outcomeValue, provenance };
 }
@@ -149,13 +182,13 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
   const excludedFields: PcsExcludedField[] = [];
   const groups = new Map<string, FieldGroup>();
   const valuesByRecord = new Map<string, Map<string, unknown>>();
-  const provenanceByRecord = new Map<string, Map<string, { source: "user_entry"; labelJa: string; observationIds: string[]; sourceId: string; transformVersion: string; privacyLevel: string; provenanceSource: string; sourceTool?: string }>>();
+  const provenanceByRecord = new Map<string, Map<string, { source: "user_entry"; labelJa: string; observationIds: string[]; sourceId: string; transformVersion: string; privacyLevel: string; provenanceSource: string; sourceTool?: string; measurementDefinitionVersion?: string }>>();
   let usableValueCount = 0;
   let excludedValueCount = snapshot.excluded.unconfirmed + snapshot.excluded.nonShareable + snapshot.excluded.highlySensitive + snapshot.excluded.invalid;
 
   for (const record of snapshot.records) {
     const values = new Map<string, unknown>();
-    const provenance = new Map<string, { source: "user_entry"; labelJa: string; observationIds: string[]; sourceId: string; transformVersion: string; privacyLevel: string; provenanceSource: string; sourceTool?: string }>();
+    const provenance = new Map<string, { source: "user_entry"; labelJa: string; observationIds: string[]; sourceId: string; transformVersion: string; privacyLevel: string; provenanceSource: string; sourceTool?: string; measurementDefinitionVersion?: string }>();
     for (const value of record.values) {
       if ((value as ContextAnalysisValueV2 & { applicability?: unknown[] }).applicability?.length) { excludedFields.push(excludedField(value, "applicability_unresolved")); excludedValueCount += 1; continue; }
       if (!value.analysisRoleConfirmed) { excludedFields.push(excludedField(value, "analysis_role_unconfirmed")); excludedValueCount += 1; continue; }
@@ -183,7 +216,7 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
         numericMapping: value.numericMapping
       });
       values.set(id, value.value);
-      provenance.set(id, { source: "user_entry", labelJa: sourceLabel(value.provenance.source), observationIds: [value.provenance.sourceId], sourceId: value.provenance.sourceId, transformVersion: value.provenance.transformVersion, privacyLevel: value.provenance.privacyLevel, provenanceSource: value.provenance.source, sourceTool: (value as any).measurement?.sourceTool });
+      provenance.set(id, { source: "user_entry", labelJa: sourceLabel(value.provenance.source), observationIds: [value.provenance.sourceId], sourceId: value.provenance.sourceId, transformVersion: value.provenance.transformVersion, privacyLevel: value.provenance.privacyLevel, provenanceSource: value.provenance.source, sourceTool: (value as any).measurement?.sourceTool, measurementDefinitionVersion: (value as any).measurement?.definitionVersion });
       usableValueCount += 1;
     }
     const hourly = record.values.find((item) => item.fieldKey === "hourly_active_minutes");
@@ -195,7 +228,7 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
             const id = `hourly:${hour}`;
             if (!groups.has(id)) groups.set(id, { id, fieldKey: `hourly_active_minutes_${String(hour).padStart(2, "0")}`, label: `${String(hour).padStart(2, "0")}時の活動時間`, templateId: hourly.templateId, templateVersionId: hourly.templateVersionId, role: "time_of_day", usage: "condition", valueType: "number", minimum: 0, maximum: 1440, unit: "minutes", scaleFingerprint: "derived-hourly|0|1440|minutes", });
             values.set(id, item);
-            provenance.set(id, { source: "user_entry", labelJa: "PCS machine measurement", observationIds: [String(hourly.provenance.sourceId)], sourceId: String(hourly.provenance.sourceId), transformVersion: "pcs-hourly-v1", privacyLevel: hourly.provenance.privacyLevel, provenanceSource: hourly.provenance.source, sourceTool: (hourly as any).measurement?.sourceTool });
+            provenance.set(id, { source: "user_entry", labelJa: "PCS machine measurement", observationIds: [String(hourly.provenance.sourceId)], sourceId: String(hourly.provenance.sourceId), transformVersion: "pcs-hourly-v1", privacyLevel: hourly.provenance.privacyLevel, provenanceSource: hourly.provenance.source, sourceTool: (hourly as any).measurement?.sourceTool, measurementDefinitionVersion: (hourly as any).measurement?.definitionVersion });
           }
         }
       } catch { /* malformed hourly vectors remain excluded */ }
@@ -218,6 +251,7 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
     valueType: group.valueType,
     minimumValue: group.minimum,
     maximumValue: group.maximum,
+    ...(group.fieldKey === "deep_thinking_minutes" ? { minimumMeaningfulDifference: 30 } : {}),
     usableAsCondition: group.usage === "condition" || group.usage === "both",
     usableAsOutcome: group.usage === "outcome" || group.usage === "both",
     allowedConditionRoles: [],
@@ -228,6 +262,103 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
     cohortStrategy: group.scaleFingerprint.startsWith("scale-") ? "range_midpoint" : "observed_median",
     observedValues: snapshot.records.flatMap((record) => { const value = valuesByRecord.get(record.id)?.get(group.id); return typeof value === "number" && Number.isFinite(value) ? [value] : []; })
   }));
+
+  // Derive duration-normalized values and a total-duration stratum without replacing
+  // the original measurements. This makes duration confounding testable in the same run.
+  const sourceByRole = (role: SelfUnderstandingSemanticRole) => [...groups.values()].find((group) => group.role === role);
+  const activeGroup = sourceByRole("active_duration");
+  const aiGroup = sourceByRole("ai_conversation_intensity");
+  const focusGroup = sourceByRole("focus");
+  const idleGroup = [...groups.values()].find((group) => group.fieldKey === "idle_minutes");
+  const awayGroup = [...groups.values()].find((group) => group.fieldKey === "away_minutes");
+  const numberFor = (recordId: string, group?: FieldGroup) => {
+    const value = group ? valuesByRecord.get(recordId)?.get(group.id) : undefined;
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  };
+  const rawNumberFor = (record: ContextAnalysisSnapshotV2["records"][number], fieldKey: string) => {
+    const value = record.values.find((item) => item.fieldKey === fieldKey)?.value;
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  };
+  const totals = snapshot.records.map((record) => {
+    const values = [rawNumberFor(record, "active_minutes"), rawNumberFor(record, "idle_minutes"), rawNumberFor(record, "away_minutes")];
+    return { recordId: record.id, total: values.every((value) => value !== null) ? values.reduce((sum, value) => sum + (value ?? 0), 0) : null };
+  }).filter((item): item is { recordId: string; total: number } => item.total !== null && item.total > 0);
+  const sortedTotals = totals.map((item) => item.total).sort((left, right) => left - right);
+  const totalMedian = sortedTotals.length ? sortedTotals.length % 2 ? sortedTotals[(sortedTotals.length - 1) / 2] : (sortedTotals[sortedTotals.length / 2 - 1] + sortedTotals[sortedTotals.length / 2]) / 2 : null;
+  const derivedGroups: Array<{ id: string; fieldKey: string; label: string; role: SelfUnderstandingSemanticRole; usage: "condition" | "outcome"; valueType: CandidateParameter["valueType"]; minimum?: number; maximum?: number; unit?: string; scaleFingerprint: string; allowedValues?: Array<{ valueKey: string; labelJa: string }> }> = [];
+  let robustness: PcsAnalysisResult["robustness"] = {
+    totalObservedDefinition: "active_minutes + idle_minutes + away_minutes",
+    totalObservedMedian: totalMedian,
+    continuousAssociations: [],
+    ratioComparison: []
+  };
+  if (aiGroup && focusGroup && totalMedian !== null) {
+    derivedGroups.push({ id: "derived:ai_conversation_ratio", fieldKey: "ai_conversation_ratio", label: "AI conversation ratio", role: "ai_conversation_intensity", usage: "condition", valueType: "number", minimum: 0, maximum: 1, unit: "ratio", scaleFingerprint: "derived-ratio-v1" });
+    derivedGroups.push({ id: "derived:deep_thinking_ratio", fieldKey: "deep_thinking_ratio", label: "Deep thinking ratio", role: "focus", usage: "outcome", valueType: "number", minimum: 0, maximum: 1, unit: "ratio", scaleFingerprint: "derived-ratio-v1" });
+    derivedGroups.push({ id: "derived:total_observed_stratum", fieldKey: "total_observed_stratum", label: "Total observed duration stratum", role: "active_duration", usage: "condition", valueType: "single_choice", scaleFingerprint: "derived-duration-stratum-v1", allowedValues: [{ valueKey: "short", labelJa: "短時間" }, { valueKey: "long", labelJa: "長時間" }] });
+    for (const record of snapshot.records) {
+      const total = totals.find((item) => item.recordId === record.id)?.total;
+      const ai = numberFor(record.id, aiGroup);
+      const focus = numberFor(record.id, focusGroup);
+      const provenance = provenanceByRecord.get(record.id);
+      const base = provenance?.get(aiGroup.id) ?? provenance?.get(focusGroup.id);
+      if (total === undefined || total === null || !base) continue;
+      const derived = valuesByRecord.get(record.id)!;
+      if (ai !== null) derived.set("derived:ai_conversation_ratio", ai / total);
+      if (focus !== null) derived.set("derived:deep_thinking_ratio", focus / total);
+      derived.set("derived:total_observed_stratum", total < totalMedian ? "short" : "long");
+      provenance?.set("derived:ai_conversation_ratio", { ...base, transformVersion: "dev-pace-ratio-v1", measurementDefinitionVersion: "dev-pace-ratio-v1" });
+      provenance?.set("derived:deep_thinking_ratio", { ...base, transformVersion: "dev-pace-ratio-v1", measurementDefinitionVersion: "dev-pace-ratio-v1" });
+      provenance?.set("derived:total_observed_stratum", { ...base, transformVersion: "dev-pace-duration-stratum-v1", measurementDefinitionVersion: "dev-pace-duration-stratum-v1" });
+    }
+    for (const group of derivedGroups) parameters.push({ id: group.id, fieldKey: group.fieldKey, templateId: "derived-dev-pace", templateVersionId: "v1", semanticRole: group.role, semanticMergeAllowed: false, scaleFingerprint: group.scaleFingerprint, unit: group.unit, sourceKind: "entry", nameJa: group.label, valueType: group.valueType, minimumValue: group.minimum, maximumValue: group.maximum, usableAsCondition: group.usage === "condition", usableAsOutcome: group.usage === "outcome", allowedConditionRoles: [], allowedOutcomeRoles: [], cohortStrategy: group.valueType === "number" ? "observed_median" : undefined, observedValues: group.valueType === "number" ? snapshot.records.flatMap((record) => { const value = valuesByRecord.get(record.id)?.get(group.id); return typeof value === "number" && Number.isFinite(value) ? [value] : []; }) : undefined });
+
+    const median = (values: number[]) => {
+      const sorted = [...values].sort((left, right) => left - right);
+      if (!sorted.length) return null;
+      return sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+    };
+    const ratioRows = snapshot.records.flatMap((record) => {
+      const total = totals.find((item) => item.recordId === record.id)?.total;
+      const ai = valuesByRecord.get(record.id)?.get("derived:ai_conversation_ratio");
+      const focus = valuesByRecord.get(record.id)?.get("derived:deep_thinking_ratio");
+      return typeof total === "number" && typeof ai === "number" && typeof focus === "number"
+        ? [{ total, condition: ai, outcome: focus }]
+        : [];
+    });
+    const association = (scope: "all" | "short_total_observed" | "long_total_observed", rows: typeof ratioRows) => {
+      if (rows.length < 3) return { condition: "ai_conversation_ratio" as const, outcome: "deep_thinking_ratio" as const, method: "pearson_correlation" as const, scope, recordCount: rows.length, pearsonR: null, slope: null };
+      const meanX = rows.reduce((sum, row) => sum + row.condition, 0) / rows.length;
+      const meanY = rows.reduce((sum, row) => sum + row.outcome, 0) / rows.length;
+      const covariance = rows.reduce((sum, row) => sum + (row.condition - meanX) * (row.outcome - meanY), 0);
+      const varianceX = rows.reduce((sum, row) => sum + (row.condition - meanX) ** 2, 0);
+      const varianceY = rows.reduce((sum, row) => sum + (row.outcome - meanY) ** 2, 0);
+      return { condition: "ai_conversation_ratio" as const, outcome: "deep_thinking_ratio" as const, method: "pearson_correlation" as const, scope, recordCount: rows.length, pearsonR: varianceX > 0 && varianceY > 0 ? covariance / Math.sqrt(varianceX * varianceY) : null, slope: varianceX > 0 ? covariance / varianceX : null };
+    };
+    const summarize = (scope: "all" | "short_total_observed" | "long_total_observed", rows: typeof ratioRows) => {
+      const conditionMedian = median(rows.map((row) => row.condition));
+      if (conditionMedian === null) return { scope, recordCount: rows.length, conditionMedian: null, lowConditionOutcomeRatio: null, highConditionOutcomeRatio: null, effectLowMinusHigh: null };
+      const low = rows.filter((row) => row.condition < conditionMedian).map((row) => row.outcome);
+      const high = rows.filter((row) => row.condition >= conditionMedian).map((row) => row.outcome);
+      const lowMedian = median(low);
+      const highMedian = median(high);
+      return { scope, recordCount: rows.length, conditionMedian, lowConditionOutcomeRatio: lowMedian, highConditionOutcomeRatio: highMedian, effectLowMinusHigh: lowMedian !== null && highMedian !== null ? lowMedian - highMedian : null };
+    };
+    robustness = {
+      totalObservedDefinition: "active_minutes + idle_minutes + away_minutes",
+      totalObservedMedian: totalMedian,
+      continuousAssociations: [
+        association("all", ratioRows),
+        association("short_total_observed", ratioRows.filter((row) => row.total < totalMedian)),
+        association("long_total_observed", ratioRows.filter((row) => row.total >= totalMedian))
+      ],
+      ratioComparison: [
+        summarize("all", ratioRows),
+        summarize("short_total_observed", ratioRows.filter((row) => row.total < totalMedian)),
+        summarize("long_total_observed", ratioRows.filter((row) => row.total >= totalMedian))
+      ]
+    };
+  }
 
   const records = new Map<string, UnderstandingRecord>();
   const observations: CandidateObservation[] = [];
@@ -268,7 +399,7 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
     parameters,
     observations,
     records: [...records.values()],
-    allowedValues: Object.fromEntries([...groups.values()].map((group) => [group.id, group.allowedValues ?? []])),
+    allowedValues: Object.fromEntries([...groups.values(), ...derivedGroups.map((group) => ({ ...group, allowedValues: group.allowedValues }))].map((group) => [group.id, group.allowedValues ?? []])),
     now: snapshot.period.endAt,
     config: {
       minimumTotalSamples,
@@ -284,6 +415,13 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
     supporting: candidate.supportingEvidence.map((evidence) => evidenceFor({ evidence, candidate, records, groups })),
     contradicting: candidate.contradictingEvidence.map((evidence) => evidenceFor({ evidence, candidate, records, groups }))
   }));
+  const recordDates = snapshot.records.map((record) => record.recordedAt.slice(0, 10)).filter(Boolean);
+  const uniqueRecordDates = [...new Set(recordDates)].sort();
+  const firstRecordDate = uniqueRecordDates[0] ? Date.parse(`${uniqueRecordDates[0]}T00:00:00.000Z`) : NaN;
+  const lastRecordDate = uniqueRecordDates.at(-1) ? Date.parse(`${uniqueRecordDates.at(-1)}T00:00:00.000Z`) : NaN;
+  const calendarSpanDays = Number.isFinite(firstRecordDate) && Number.isFinite(lastRecordDate) ? Math.floor((lastRecordDate - firstRecordDate) / 86400000) + 1 : 0;
+  const missingRecordDays = Math.max(0, calendarSpanDays - uniqueRecordDates.length);
+  const practicalThresholds = [...groups.values()].filter((group) => group.fieldKey === "deep_thinking_minutes").map((group) => ({ fieldKey: group.fieldKey, minimumDifference: 30, unit: group.unit, rationale: "30分未満の差は行動上の意味が未定義のため候補として報告しない" }));
   return {
     status: hypotheses.length ? "ready" : "insufficient",
     schemaVersion: snapshot.schemaVersion,
@@ -291,10 +429,12 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
     profileId: snapshot.profileId,
     generatedAt: snapshot.generatedAt,
     period: snapshot.period,
-    dataQuality: { recordCount: snapshot.records.length, usableValueCount, excludedFieldCount: excludedFields.length, excludedValueCount },
+    dataQuality: { recordCount: snapshot.records.length, usableValueCount, excludedFieldCount: excludedFields.length, excludedValueCount, coverage: { calendarSpanDays, observedRecordDays: uniqueRecordDates.length, missingRecordDays, missingRecordRate: calendarSpanDays ? missingRecordDays / calendarSpanDays : 0, recordPresencePolicy: "records_present_only" } },
+    practicalThresholds,
     excludedFields,
-    candidateAudit: (hypotheses as typeof hypotheses & { candidateAudit?: CandidateGenerationAudit }).candidateAudit ?? { comparisonCount: 0, preSignificanceCandidates: 0, significanceRejectedCandidates: 0, acceptedCandidatesBeforeLimit: 0, rejectedBySampleSize: 0, rejectedByEffect: 0, rejectedByBalance: 0, rejectedByMissingRate: 0 },
+    candidateAudit: (hypotheses as typeof hypotheses & { candidateAudit?: CandidateGenerationAudit }).candidateAudit ?? { comparisonCount: 0, preSignificanceCandidates: 0, significanceRejectedCandidates: 0, acceptedCandidatesBeforeLimit: 0, suppressedByDisplayLimit: 0, rejectedBySampleSize: 0, rejectedByEffect: 0, rejectedByBalance: 0, rejectedByMissingRate: 0 },
     hypotheses,
-    candidateEvidence
+    candidateEvidence,
+    robustness
   };
 }

@@ -10,6 +10,8 @@ MeTheory analyzes user-confirmed structured records from Personal Context Studio
 
 The first practical version is complete when a user can record and review context in Personal Context Studio, analyze one to four weeks of confirmed records in MeTheory, inspect supporting and contradicting records, rate a hypothesis as fits/does not fit/on hold, and review a proposed Self Model change before accepting it. The flow must remain usable with no cloud AI and must preserve Markdown when local AI is unavailable.
 
+The itemized v1 / v1.1 / v1.2 scope decision, including what is explicitly excluded, is [docs/spec/v1-scope.md](spec/v1-scope.md).
+
 ## Local-first policy
 
 Personal Context Studio owns Markdown and its local SQLite store for documents, templates, structured field values, review state, search, local-AI execution, and all consent for sending record content to an external AI. MeTheory owns its separate local SQLite store for experiment observations, hypotheses, evidence, experiment-specific privacy decisions, and Self Model changes. The two services exchange versioned localhost JSON only; no cloud sync is required.
@@ -61,7 +63,7 @@ Medical or psychological diagnosis, fixed personality labels, cloud sync, a gene
 ## Status labels for older documents
 
 - `architecture-research.md`, `technical-architecture.md`, and `mcp-tools.md` are **future architecture research** where they describe cloud, MCP, or scale-out designs.
-- docs/spec/domain-language.md, docs/spec/hypothesis-evaluation.md, and docs/spec/collection-responsibility.md are current normative domain specifications.
+- docs/spec/domain-language.md, docs/spec/hypothesis-evaluation.md, docs/spec/collection-responsibility.md, and docs/spec/v1-scope.md are current normative domain specifications. docs/spec/analysis-limitations.md documents disclosed limitations of the current evaluation method (binarization, confounding, researcher degrees of freedom, serial correlation, time trends).
 - docs/archive/design-spec.md and docs/archive/implementation-roadmap.md are historical documents. docs/architecture-research.md, docs/technical-architecture.md, and docs/mcp-tools.md are future architecture research.
 
 ## Closed-loop experiment slice

@@ -22,6 +22,8 @@ export type PcsClientConfig = {
 export type PcsClientErrorCode =
   | "pcs_client_not_configured"
   | "pcs_unauthorized"
+  | "pcs_permission_forbidden"
+  | "pcs_profile_scope_required"
   | "pcs_profile_forbidden"
   | "pcs_profile_mismatch"
   | "pcs_url_invalid"
@@ -36,11 +38,21 @@ export class PcsClientError extends Error {
   readonly status?: number;
 
   constructor(code: PcsClientErrorCode, status?: number) {
-    super(code === "pcs_remote_endpoint_prohibited" ? "pcs_localhost_required" : code);
+    super(errorMessage(code));
     this.name = "PcsClientError";
     this.code = code;
     this.status = status;
   }
+}
+
+function errorMessage(code: PcsClientErrorCode) {
+  if (code === "pcs_remote_endpoint_prohibited") return "pcs_localhost_required";
+  if (code === "pcs_client_not_configured") return "pcs_client_not_configured: set PCS_CLIENT_ID, PCS_CLIENT_TOKEN, and PCS_PROFILE_ID";
+  if (code === "pcs_unauthorized") return "pcs_unauthorized: verify the matching active Client ID and Token, then restart the MeTheory API";
+  if (code === "pcs_permission_forbidden") return "pcs_permission_forbidden: the Client needs read_snapshot permission";
+  if (code === "pcs_profile_scope_required") return "pcs_profile_scope_required: allow the requested PCS Profile ID for this Client";
+  if (code === "pcs_profile_forbidden") return "pcs_profile_forbidden: the Client is not allowed to read this PCS Profile";
+  return code;
 }
 
 function baseUrl(config: PcsClientConfig = {}): URL {
@@ -56,6 +68,8 @@ function clientConfig(): PcsClientConfig {
 
 function mapError(status: number, error?: string): PcsClientErrorCode {
   if (status === 401) return "pcs_unauthorized";
+  if (error === "integration_permission_forbidden") return "pcs_permission_forbidden";
+  if (error === "integration_profile_scope_required") return "pcs_profile_scope_required";
   if (status === 403) return "pcs_profile_forbidden";
   if (status === 409 && error === "pcs_profile_mismatch") return "pcs_profile_mismatch";
   if (error === "pcs_contract_revision_unsupported") return "pcs_contract_revision_unsupported";

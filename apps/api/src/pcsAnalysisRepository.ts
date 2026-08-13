@@ -19,15 +19,17 @@ export type PcsAnalysisCandidateSummary = {
   period: { startAt: string; endAt: string };
   candidate: PcsAnalysisResult["hypotheses"][number]["candidate"];
   interpretationInput: PcsAnalysisResult["hypotheses"][number]["interpretationInput"];
-  supportingEvidenceCount: number;
-  contradictingEvidenceCount: number;
+  supportingPatternDayCount: number;
+  contradictingPatternDayCount: number;
 };
 
 export type PcsAnalysisResultSummary = {
   status: PcsAnalysisResult["status"];
   dataQuality: PcsAnalysisResult["dataQuality"];
+  practicalThresholds: PcsAnalysisResult["practicalThresholds"];
   excludedFields: PcsAnalysisResult["excludedFields"];
   candidateAudit: PcsAnalysisResult["candidateAudit"];
+  robustness: PcsAnalysisResult["robustness"];
   candidateIds: string[];
   candidates: PcsAnalysisCandidateSummary[];
 };
@@ -77,8 +79,10 @@ function resultSummaryFrom(result: PcsAnalysisResult): PcsAnalysisResultSummary 
   return {
     status: result.status,
     dataQuality: result.dataQuality,
+    practicalThresholds: result.practicalThresholds,
     excludedFields: result.excludedFields,
     candidateAudit: result.candidateAudit,
+    robustness: result.robustness,
     candidateIds: result.hypotheses.map((item) => item.id),
     candidates: result.hypotheses.map((item) => {
       const evidence = candidateEvidence.get(item.id);
@@ -90,8 +94,8 @@ function resultSummaryFrom(result: PcsAnalysisResult): PcsAnalysisResultSummary 
         period: item.period,
         candidate: item.candidate,
         interpretationInput: item.interpretationInput,
-        supportingEvidenceCount: evidence?.supporting.length ?? 0,
-        contradictingEvidenceCount: evidence?.contradicting.length ?? 0
+        supportingPatternDayCount: evidence?.supporting.length ?? 0,
+        contradictingPatternDayCount: evidence?.contradicting.length ?? 0
       };
     })
   };

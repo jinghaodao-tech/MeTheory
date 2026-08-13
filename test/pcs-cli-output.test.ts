@@ -18,17 +18,17 @@ test("PCS CLI summarizes analysis without raw values", () => {
       construct: "task_initiation",
       tendencyScope: "state_dependent",
       status: "emerging",
-      confidence: 0.75,
+      displayPriority: 0.75,
       dataShortage: [],
       supportingEvidence: [{ episodeId: "entry-1" }],
       contradictingEvidence: []
     }]
   } as never);
-  assert.equal(summary.hypotheses[0]?.supportingEvidenceCount, 1);
+  assert.equal(summary.hypotheses[0]?.supportingPatternDayCount, 1);
   assert.deepEqual(summary.candidateAudit, { comparisonCount: 3, preSignificanceCandidates: 1, significanceRejectedCandidates: 1, acceptedCandidatesBeforeLimit: 0 });
   assert.equal(JSON.stringify(summary).includes("conditionValue"), false);
-  assert.match(formatPcsAnalysis(summary), /PCS実データ分析/);
-  assert.match(formatPcsAnalysis(summary), /記録数: 12/);
+  assert.match(formatPcsAnalysis(summary), /PCS analysis/);
+  assert.match(formatPcsAnalysis(summary), /records: 12/);
 });
 
 test("PCS CLI explains an empty real-data period", () => {
@@ -41,5 +41,5 @@ test("PCS CLI explains an empty real-data period", () => {
     excludedFields: [],
     hypotheses: []
   });
-  assert.match(output, /Markdownを登録/);
+  assert.match(output, /no records in the selected period/);
 });
