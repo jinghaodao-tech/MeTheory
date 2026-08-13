@@ -13,8 +13,9 @@ deterministic hypothesis system when a user wants to test a self-belief.
 The current product specification is [`docs/current-product-spec.md`](docs/current-product-spec.md).
 For the practical self-understanding flow and its non-clinical analysis boundary,
 see [`docs/self-understanding-practical-v1.md`](docs/self-understanding-practical-v1.md).
-It is the source of truth for the Node.js, SQLite, mobile experiment client,
-and Personal Context Studio integration. Markdown authoring is editor-agnostic:
+It is the source of truth for the Node.js, SQLite, and Personal Context Studio
+integration. The mobile client is excluded from the current product scope.
+Markdown authoring is editor-agnostic:
 VS Code, Cursor, Obsidian, or another editor may open the same PCS notes folder.
 MeTheory does not maintain an editor plugin or a second synchronized note copy.
 Current normative specifications live under docs/spec/; historical decisions live under docs/archive/; future architecture research remains explicitly labeled. The official PCS contract version is defined by personal-context-studio/integration-contracts.
@@ -115,137 +116,17 @@ Markdown bodies through the analysis bridge; it receives only the reviewed,
 shareable values needed for a selected analysis period.
 
 
-## Smartphone MVP
+## Excluded client scope
 
-The MeTheory smartphone app lives at `apps/mobile`. It keeps Self Beliefs,
-Hypotheses, Check-ins, Observations, evaluation history, and notification
-settings in the device's `metheory.sqlite` database. Onboarding creates a
-separate Self Belief and a `time_of_day_productivity` HypothesisSpec for
-day-versus-night observations. The MVP selects one of two fixed templates;
-the hypothesis evaluator uses completed rate only. Started rate may be shown
-as reference information, but never affects Supported or Challenged.
-
-The app chooses notification times inside the user's enabled window, quiet
-periods, daily limit, and minimum interval. It reserves the day's eligible
-notifications together with their Check-ins; this MVP tracks all scheduled
-notifications as `hypothesis` Check-ins.
-
-```powershell
-npm install
-npm run dev:mobile
-npm run typecheck:root
-npm run typecheck:mobile
-npm run typecheck
-npm run test:mobile
-npm run verify
-npm --workspace apps/mobile run build:preview
-```
-
-Expo Go can exercise onboarding, local SQLite, check-ins, deterministic
-evaluation, Evidence, and Self Model. Notification permission and scheduled
-delivery require a physical device; notification behavior can require an Expo
-development build depending on the SDK and platform. API authentication,
-cloud sync, and store distribution are outside this MVP. The local API has an
-allowlisted, aggregate-only AI read surface; production authentication and
-deployment remain separate concerns. To reset local
-development data, remove the app's `metheory.sqlite` database from the Expo
-SQLite storage and relaunch the app; production migration paths do not delete
-existing data.
-
-The mobile app now keeps a rolling thirty-day local notification schedule. The
-Settings screen can share a JSON export or delete all local user data after
-confirmation. Store builds use `apps/mobile/eas.json`; configure the EAS project
-and platform credentials before running the production build or submit command.
-
-The implemented mobile flow is onboarding -> local Self Belief and tracking
-hypothesis -> home -> candidate review/adoption -> dynamic check-in questions
--> deterministic evaluation -> Evidence -> user-reviewed Self Model. Candidate
-cards are suggestions only; adopting one creates a normal tracking hypothesis.
-Generated questions are attached to the check-in and their typed answers are
-stored in `parameter_values` in the same response transaction. The existing
-fixed activity check-in remains the fallback when no dynamic question is ready.
-
-## Parameter dictionary and dynamic questions
-
-The mobile database uses an EAV model for observations. Parameters are
-definition records rather than SQLite columns, so adding a parameter does not
-require changing the table schema. `observation_episodes` groups one check-in
-or activity, while `parameter_values` stores typed values and distinguishes
-missing values from `false`.
-
-Definitions are divided into `base`, `hypothesis_dependent`, and `sensitive`
-layers. Source definitions, question metadata, AI access policy, and per-user
-collection settings are separate records. A saved hypothesis creates parameter
-requirements from its scope, cohorts, and outcome; missing askable parameters
-can then produce deterministic questions at runtime. Questions are validated
-against the parameter type and allowed values before being stored.
-
-Legacy `observations` are migrated idempotently into the EAV tables by schema
-migration 6. Existing tables remain available during the compatibility period.
-The migration records its completion and uses deterministic IDs, so rerunning
-startup does not duplicate values. See `docs/parameter-eav.md` for table
-responsibilities, source adapters, AI access controls, and extension guidance.
-
-Closed-loop experiment migrations also verify `PRAGMA foreign_key_check`. Legacy
-experiment tables created before FK support are rebuilt transactionally with
-the canonical foreign keys while preserving common columns and rows; a
-violation aborts the migration instead of silently dropping data. The
-`migrations-integrity` test covers reruns and row preservation.
-
-Source Adapter implementations and the local AI read-only Snapshot boundary
-are documented in `docs/source-adapters.md`. The initial providers are
-`system_clock`, `test_fixture`, and `manual_import`; external OAuth/API
-integrations remain out of scope.
-
-Candidate discovery is local and deterministic. Recent typed parameter values
-are grouped by boolean, choice, or numeric cohort rules, compared against
-eligible outcome parameters, scored for effect and data quality, and stored in
-`hypothesis_candidates`. A user may dismiss or adopt a candidate. Adoption
-creates a tracking hypothesis and requirements; question targets are selected
-from shortages and cooldown rules, then generated from parameter metadata.
-
-## Completion engineering
-
-Candidate evaluation uses non-overlapping numeric cohorts, explicit
-positiveValues for binary and choice outcomes, and a first-half/second-half
-temporal stability check. Discovery, validation, and replication remain
-separate periods so discovery observations are not silently counted as
-validation evidence.
-
-Question selection applies daily, hourly, per-hypothesis, cooldown, quiet-hour,
-and consecutive-skip budgets. A blocked budget returns a reason code instead
-of creating a notification or question.
-
-OpenAiProvider is optional. It receives structured input only, uses an
-in-memory TTL cache, and returns usage metadata. API keys are runtime-only and
-are never written to SQLite. Invalid output is rejected and can fall back to
-the deterministic provider. The Node API exposes read-only /v1/ai routes with
-an allowlisted client ID, user scoping, aggregate-only responses, and audit
-logs. It does not expose raw records or SQL. Without an external authentication
-middleware, this API is development-only; set METHEORY_API_AUTH_MODE=production
-and provide x-metheory-authenticated-user-id through a trusted gateway before
-exposing it outside localhost. Self Model text is denied by default.
-
-The Node AI routes now use `apps/api/src/aiQueryService.ts`. Its parameter list,
-single-parameter response, and aggregate query read only EAV definitions,
-`parameter_values`, policy rows, governance status, and per-user settings.
-`observations` remains only for the legacy write/evaluation compatibility API.
-The allowed `groupBy` values are `time_period`, `day_of_week`, `day_type`,
-`activity_category`, and `is_alone`; arbitrary SQL or arbitrary fields are
-rejected. `FixtureProviderBridge` and `CalendarAdapter` provide the testable
-provider boundary. An Expo calendar SDK bridge is planned because the current
-mobile MVP does not ship an external calendar permission integration.
-
-Implementation status: local SQLite/EAV, deterministic candidate generation,
-dynamic questions, aggregate AI policy checks, fixture adapters, notification
-budgeting, privacy deletion, and verification are implemented. OpenAI network
-calls, cloud sync, authentication middleware, Expo calendar permissions, and
-store distribution are development-only or planned; they are not production
-integrations.
+The Expo/mobile client and its device-local notification, EAV, and dynamic
+question flows are excluded from the current MeTheory product. They are not
+maintained, tested, or published as part of the supported product path. The
+supported flow is the local Node API, SQLite analysis engine, PCS snapshot
+boundary, CLI, and Demo Web.
 
 ## Benchmark and verification
 
-The verification suite includes domain, mobile, API acceptance, migration,
+The verification suite includes domain, API acceptance, migration,
 synthetic, OpenAPI contract, and benchmark smoke tests.
 
 Commands: npm.cmd run verify, npm.cmd run benchmark:small,

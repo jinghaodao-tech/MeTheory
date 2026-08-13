@@ -28,7 +28,7 @@ PCS may suggest templates and structured values. Before record content goes to a
 
 ## Supported clients
 
-Personal Context Studio watches a configured Markdown folder and provides local search, template, Review, and local-AI workflows. It also exposes bounded read-only MCP tools for Codex and Claude Code. MeTheory provides the experiment and analysis workflow. The mobile app remains a compatible local experiment client; it is not the primary free-record authoring workflow.
+Personal Context Studio watches a configured Markdown folder and provides local search, template, Review, and local-AI workflows. It also exposes bounded read-only MCP tools for Codex and Claude Code. MeTheory provides the experiment and analysis workflow. The Expo/mobile client is excluded from the current product scope and is not a supported client.
 
 ## Implemented now
 
@@ -39,7 +39,7 @@ Personal Context Studio watches a configured Markdown folder and provides local 
 - Self-understanding: confirmed-value-only analysis, eight-record quality gate, semantic-role-to-construct mapping, candidate history and deduplication, emerging/state-dependent/relatively-stable scopes, deterministic Japanese explanations, optional validated localhost-AI wording, evidence links, ratings, and editable user-confirmed Self Model additions.
 - External-asset safety: versioned `SelfUnderstandingInterpretationV3` validation with deterministic fallback, localhost-only ActivityWatch preview/import with normalized provenance, separate original IPIP-inspired self-perception responses, deterministic question-quality checks, and fixed non-AI chart data models.
 - Analysis responses include data quality and excluded fields. Unconfirmed roles, unsupported field types, and unknown semantic roles are visible to the user and do not become hypotheses.
-- Deterministic hypothesis evaluation, candidate generation primitives, evidence inspection, dynamic question support in the mobile experiment client, and `npm run verify`.
+- Deterministic hypothesis evaluation, candidate generation primitives, evidence inspection, and `npm run verify`.
 
 ## Next implementation
 
@@ -95,7 +95,7 @@ The Demo Web is intentionally local and fixture-first. It has loading, empty, er
 ## Implementation status
 
 - **Implemented:** PCS snapshot v2.1 validation, profile binding, immutable analysis history, pair allowlist, provenance-aware evidence, versioned SQLite migration runner, closed-loop experiment APIs, local deterministic fixture Demo Web, and targeted tests.
-- **Experimental:** Expo mobile client, Obsidian adapter, ActivityWatch adapter, and optional localhost AI wording.
+- **Experimental:** Obsidian adapter, ActivityWatch adapter, and optional localhost AI wording.
 - **Planned:** deeper route/service split, richer desktop field-level Review UI, integration SDK contract tests, encrypted backups, and broader longitudinal stability analysis.
 - **Removed from the product path:** cloud sync, automatic merge, diagnostic inference, cloud AI dependency, and the AI review/Codex loop as a runtime requirement. Review Bridge files may remain as isolated development tooling.
 
