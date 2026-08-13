@@ -1,4 +1,4 @@
-{
+﻿{
     "name": "metheory",
     "private": true,
     "type": "module",
@@ -15,7 +15,7 @@
         "test:source-adapters": "node --experimental-strip-types --test test/source-adapters.test.ts",
         "test:completion": "node --experimental-strip-types --test test/completion-engine.test.ts",
         "test:benchmark": "node --experimental-strip-types --test test/performance-benchmark.test.ts",
-        "test:api": "node --experimental-strip-types --test test/api-ai.test.ts",
+        "test:api": "node --experimental-strip-types --test test/api-ai.test.ts test/review-approval-api.test.ts",
         "test:self-understanding": "node --experimental-strip-types --test test/self-understanding.test.ts",
         "test:external-assets": "node --experimental-strip-types --test test/external-assets.test.ts",
         "test:ai-service": "node --experimental-strip-types --test test/ai-query-service.test.ts",
@@ -63,3 +63,4 @@
         "pg": "^8.22.0"
     }
 }
+
