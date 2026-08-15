@@ -266,11 +266,8 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
   // Derive duration-normalized values and a total-duration stratum without replacing
   // the original measurements. This makes duration confounding testable in the same run.
   const sourceByRole = (role: SelfUnderstandingSemanticRole) => [...groups.values()].find((group) => group.role === role);
-  const activeGroup = sourceByRole("active_duration");
   const aiGroup = sourceByRole("ai_conversation_intensity");
   const focusGroup = sourceByRole("focus");
-  const idleGroup = [...groups.values()].find((group) => group.fieldKey === "idle_minutes");
-  const awayGroup = [...groups.values()].find((group) => group.fieldKey === "away_minutes");
   const numberFor = (recordId: string, group?: FieldGroup) => {
     const value = group ? valuesByRecord.get(recordId)?.get(group.id) : undefined;
     return typeof value === "number" && Number.isFinite(value) ? value : null;

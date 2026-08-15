@@ -33,7 +33,7 @@
         "test:synthetic": "npm run seed:synthetic && node --experimental-strip-types tools/synthetic-scenarios.ts test",
         "reset:synthetic": "node --experimental-strip-types tools/synthetic-scenarios.ts reset",
         "test": "npm run test:domain && npm run test:hypothesis && npm run test:candidates && npm run test:false-positive && npm run test:source-adapters && npm run test:completion && npm run test:benchmark && npm run test:ai-service && npm run test:api && npm run test:self-understanding && npm run test:hypothesis-review && npm run test:self-model-review && npm run test:semantic-roles && npm run test:pcs-client && npm run test:pcs-cross-repository && npm run test:pcs-snapshot && npm run test:pcs-cli-output && npm run test:demo-web && npm run test:experiments && npm run test:external-assets && npm run test:measurement",
-        "test": "npm run test:domain && npm run test:hypothesis && npm run test:candidates && npm run test:false-positive && npm run test:source-adapters && npm run test:completion && npm run test:benchmark && npm run test:ai-service && npm run test:api && npm run test:self-understanding && npm run test:hypothesis-review && npm run test:self-model-review && npm run test:semantic-roles && npm run test:pcs-client && npm run test:pcs-cross-repository && npm run test:pcs-snapshot && npm run test:pcs-cli-output && npm run test:demo-web && npm run test:experiments && npm run test:external-assets && npm run test:measurement",
+
         "typecheck:root": "tsc --project tsconfig.json",
         "typecheck": "npm run typecheck:root",
         "build:cli": "tsc --project apps/cli/tsconfig.json",
