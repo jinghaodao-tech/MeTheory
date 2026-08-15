@@ -75,7 +75,7 @@ export type PcsAnalysisResult = {
     contradicting: PcsCandidateEvidence[];
   }>;
   robustness: {
-    totalObservedDefinition: "active_minutes + idle_minutes + away_minutes";
+    totalObservedDefinition: "active_minutes + ai_conversation_minutes + deep_thinking_minutes + idle_minutes + away_minutes";
     totalObservedMedian: number | null;
     continuousAssociations: Array<{
       condition: "ai_conversation_ratio";
@@ -280,14 +280,21 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
     return typeof value === "number" && Number.isFinite(value) ? value : null;
   };
   const totals = snapshot.records.map((record) => {
-    const values = [rawNumberFor(record, "active_minutes"), rawNumberFor(record, "idle_minutes"), rawNumberFor(record, "away_minutes")];
+    // ADR-016: total_observed must cover all five dev-pace states. Summing only
+    // active/idle/away (the previous formula) excludes exactly the two fields
+    // used as ratio numerators below, so a day that is mostly deep-thinking or
+    // AI-conversation time got an artificially small (or zero) denominator and
+    // could be silently dropped by the `total > 0` filter -- the days most
+    // relevant to what this analysis measures were the ones most likely to be
+    // excluded from it.
+    const values = [rawNumberFor(record, "active_minutes"), rawNumberFor(record, "ai_conversation_minutes"), rawNumberFor(record, "deep_thinking_minutes"), rawNumberFor(record, "idle_minutes"), rawNumberFor(record, "away_minutes")];
     return { recordId: record.id, total: values.every((value) => value !== null) ? values.reduce((sum, value) => sum + (value ?? 0), 0) : null };
   }).filter((item): item is { recordId: string; total: number } => item.total !== null && item.total > 0);
   const sortedTotals = totals.map((item) => item.total).sort((left, right) => left - right);
   const totalMedian = sortedTotals.length ? sortedTotals.length % 2 ? sortedTotals[(sortedTotals.length - 1) / 2] : (sortedTotals[sortedTotals.length / 2 - 1] + sortedTotals[sortedTotals.length / 2]) / 2 : null;
   const derivedGroups: Array<{ id: string; fieldKey: string; label: string; role: SelfUnderstandingSemanticRole; usage: "condition" | "outcome"; valueType: CandidateParameter["valueType"]; minimum?: number; maximum?: number; unit?: string; scaleFingerprint: string; allowedValues?: Array<{ valueKey: string; labelJa: string }> }> = [];
   let robustness: PcsAnalysisResult["robustness"] = {
-    totalObservedDefinition: "active_minutes + idle_minutes + away_minutes",
+    totalObservedDefinition: "active_minutes + ai_conversation_minutes + deep_thinking_minutes + idle_minutes + away_minutes",
     totalObservedMedian: totalMedian,
     continuousAssociations: [],
     ratioComparison: []
@@ -345,7 +352,7 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
       return { scope, recordCount: rows.length, conditionMedian, lowConditionOutcomeRatio: lowMedian, highConditionOutcomeRatio: highMedian, effectLowMinusHigh: lowMedian !== null && highMedian !== null ? lowMedian - highMedian : null };
     };
     robustness = {
-      totalObservedDefinition: "active_minutes + idle_minutes + away_minutes",
+      totalObservedDefinition: "active_minutes + ai_conversation_minutes + deep_thinking_minutes + idle_minutes + away_minutes",
       totalObservedMedian: totalMedian,
       continuousAssociations: [
         association("all", ratioRows),
