@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jinghaodao-tech/Personal-Context-Studio
-          ref: dfaf73f1e9d23ed5fa1d20c1fa089d08ac3db519
+          ref: 13d0e0f231af90f5f1aed2c8dcf5ff2aff4b0e3b
           path: Personal-Context-Studio
       - uses: actions/setup-node@v4
         with:

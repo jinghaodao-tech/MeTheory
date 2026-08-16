@@ -29,7 +29,7 @@ test("real PCS to MeTheory snapshot flow", { skip: !pcsRoot ? "set PCS_REPO_PATH
     ] });
     await request(pcs, `/v1/context-templates/${template.item.id}/activate`, "POST", {});
     const purpose = await request(pcs, "/v1/sharing-purposes", "POST", { name: "live_e2e" });
-    const periodStart = "2026-07-01T00:00:00.000Z"; const periodEnd = "2026-08-15T00:00:00.000Z";
+    const periodStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(); const periodEnd = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     for (let index = 0; index < 20; index += 1) { const entry = await request(pcs, "/v1/context-entries", "POST", { templateId: template.item.id, values: { clarity: index < 10 ? 2 : 4, delay: index < 10 ? 40 : 10 } }); for (const fieldKey of ["clarity", "delay"]) await request(pcs, `/v1/context-entries/${entry.id}/values/${fieldKey}/purposes`, "PUT", { purposeIds: [purpose.id] }); }
     const profile = await request(pcs, "/v1/context-profiles", "POST", { name: "Live profile", target: "metheory", purposeId: purpose.id, includedFields: [{ templateId: template.item.id, fieldKey: "clarity" }, { templateId: template.item.id, fieldKey: "delay" }] });
     const client = await request(pcs, "/v1/integration-clients", "POST", { name: "MeTheory", permissions: ["read_snapshot", "submit_template_request"], allowedProfileIds: [profile.id] });
@@ -38,6 +38,8 @@ test("real PCS to MeTheory snapshot flow", { skip: !pcsRoot ? "set PCS_REPO_PATH
     start(process.cwd(), { PORT: String(mtPort), METHEORY_DB: mtDb, PCS_API_URL: pcs, PCS_CLIENT_ID: client.id, PCS_CLIENT_TOKEN: client.token, PCS_PROFILE_ID: profile.id });
     await wait(`http://127.0.0.1:${mtPort}/healthz`);
     const db = new DatabaseSync(mtDb); db.prepare("INSERT INTO users(id,auth_subject,locale,timezone,created_at) VALUES(?,?,?,?,?)").run("live-user", "live-user-subject", "ja-JP", "Asia/Tokyo", "2026-07-01T00:00:00.000Z"); db.close();
+    const binding = await request(`http://127.0.0.1:${mtPort}`, "/v1/pcs/profile-binding", "POST", { userId: "live-user", profileId: profile.id });
+    assert.equal(binding.binding.pcsProfileId, profile.id);
     const createdHypothesis = await request(`http://127.0.0.1:${mtPort}`, "/v1/hypotheses", "POST", { userId: "live-user", statement: "明確さと開始までの時間の関係を確認する", spec: { schemaVersion: "1", unit: "response", scope: [], cohorts: [{ key: "clear", conditions: [{ field: "task_clarity", operator: "greater_than_or_equal", value: 4 }] }, { key: "unclear", conditions: [{ field: "task_clarity", operator: "less_than_or_equal", value: 2 }] }], outcome: { field: "start_delay", metric: "numeric_mean_difference", minimumValue: 0, maximumValue: 120 }, expectation: { relation: "cohort_a_less_than_b", minimumEffect: 5 }, evaluationPolicy: { captureModes: ["momentary_observation"], acceptedSources: ["user_confirmed"], minimumSamplesPerCohort: 10, maximumCohortRatio: 2, windowDays: 45, excludeLowCertainty: false, maximumMissingRate: 0.2 } } });
     const templateRequest = await request(`http://127.0.0.1:${mtPort}`, `/v1/hypotheses/${createdHypothesis.id}/pcs-template-request`, "POST", { userId: "live-user", purpose: "self_understanding", send: true });
     assert.equal(templateRequest.request.status, "pending_user_review");
