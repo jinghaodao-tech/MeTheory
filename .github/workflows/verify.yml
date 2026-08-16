@@ -40,7 +40,7 @@ jobs:
         env:
           PCS_REPO_PATH: ${{ github.workspace }}/Personal-Context-Studio
       - name: PostgreSQL analysis smoke test
-        if: ${{ secrets.METHEORY_POSTGRES_URL != '' }}
+        if: ${{ env.METHEORY_POSTGRES_URL != '' }}
         run: npm run db:migrate:postgres && npm run test -- test/postgres-live.test.ts
         working-directory: MeTheory
         env:
