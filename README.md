@@ -29,6 +29,13 @@ notification timing, hypothesis status, or Self Model updates.
 
 ![MeTheory portfolio demo](docs/screenshots/portfolio-demo.jpg)
 
+### Hypothesis review flow
+
+![MeTheory hypothesis review](docs/screenshots/metheory-hypothesis-review-flow.gif)
+
+The flow shows deterministic analysis, a hypothesis candidate, and the
+explicit human approval step before any Self Model change.
+
 ## Contents
 
 - `docs/archive/design-spec.md`: core loop and safety position.
