@@ -171,10 +171,7 @@ replacement exists.
 
 ## Consequences
 
-- Nothing here is implemented. Decided: port the interpretation layer to
-  v3; use the named studies and JESMA as cited reference material, not
-  embedded data; personalize check-in question text; delete the dead v1
-  functions only after the port lands.
+- The v3 interpretation adapter and hypothesis-aware check-in wording are implemented. The retired v1 helpers have now been removed after confirming the live v3 path is independent.
 - License/access terms for all four sensing datasets have now been checked
   (see Alternatives Considered): StudentLife, GLOBEM, and Tesserae are
   gated behind data use agreements and cannot be adopted as bundled data;
