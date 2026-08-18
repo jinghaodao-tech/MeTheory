@@ -412,9 +412,11 @@ function createCheckin(userId: string, kind: string, hypothesisId: string | null
   const requiredFields = spec
     ? [...new Set([...spec.scope.map((condition) => condition.field), ...spec.cohorts.flatMap((cohort) => cohort.conditions.map((condition) => condition.field)), spec.outcome.field])]
     : undefined;
+  const conditionField = spec?.scope[0]?.field ?? spec?.cohorts[0]?.conditions[0]?.field;
+  const outcomeField = spec?.outcome.field;
   const question = kind === "random"
     ? { text: "What are you doing right now?", type: "single_choice", field: "activity_type", options: ["work", "rest", "move", "eat", "other"] }
-    : { text: "What was the outcome of this activity?", type: "single_choice", field: "outcome", options: ["completed", "interrupted", "not_applicable"], ...(requiredFields ? { requiredFields } : {}) };
+    : { text: conditionField && outcomeField ? `「${conditionField}」の条件で「${outcomeField}」はどうでしたか？` : "この活動の結果はどうでしたか？", type: "single_choice", field: outcomeField ?? "outcome", options: ["completed", "interrupted", "not_applicable"], ...(requiredFields ? { requiredFields } : {}) };
   db.prepare("INSERT INTO checkins(id, user_id, hypothesis_id, kind, question_json, scheduled_at, expires_at, policy_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
     .run(checkinId, userId, hypothesisId, kind, JSON.stringify(question), now(), new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(), RULE_VERSION);
   return { id: checkinId, userId, hypothesisId, kind, question, responseStatus: "pending", policyVersion: RULE_VERSION };
