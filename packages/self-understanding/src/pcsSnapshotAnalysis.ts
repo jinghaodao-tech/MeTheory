@@ -410,7 +410,7 @@ export function analyzePcsAnalysisSnapshot(input: unknown, options: { minimumTot
       minimumSamplesPerCohort: Math.max(3, Math.floor(minimumTotalSamples / 2)),
       maximumCandidates,
       ...(lookbackDays === undefined ? {} : { lookbackDays }),
-      pairAllowlistVersion: PCS_CANDIDATE_PAIR_ALLOWLIST_VERSION
+      pairAllowlistVersion: PCS_CANDIDATE_PAIR_ALLOWLIST_VERSION, selectionCorrectionFactor: 1
     }
   });
 

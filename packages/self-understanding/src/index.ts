@@ -100,6 +100,7 @@ export type SelfUnderstandingConfig = Pick<
   | "maximumCandidates"
   | "comparisonCount"
   | "pairAllowlistVersion"
+  | "selectionCorrectionFactor"
 > & { stableMinimumSamples: number; lookbackDays?: number };
 export const DEFAULT_SELF_UNDERSTANDING_CONFIG: SelfUnderstandingConfig = {
   minimumSamplesPerCohort: 3,
@@ -1092,7 +1093,7 @@ export function generateSelfUnderstanding(input: {
   now?: string;
   config?: Partial<SelfUnderstandingConfig>;
 }): SelfUnderstandingHypothesis[] {
-  const candidateConfig = normalizeCandidateGenerationConfig({ ...DEFAULT_SELF_UNDERSTANDING_CONFIG, ...input.config });
+  const candidateConfig = normalizeCandidateGenerationConfig({ selectionCorrectionFactor: 1, ...DEFAULT_SELF_UNDERSTANDING_CONFIG, ...input.config });
   const config: SelfUnderstandingConfig = {
     ...candidateConfig,
     minimumTotalSamples: Math.max(DEFAULT_SELF_UNDERSTANDING_CONFIG.minimumTotalSamples, candidateConfig.minimumTotalSamples),
