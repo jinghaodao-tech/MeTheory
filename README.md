@@ -59,8 +59,10 @@ explicit human approval step before any Self Model change.
 ### PCS Integration Client setup
 
 PCS analysis requires a separate profile-scoped Integration Client. In the PCS
-dashboard, create a client with **`read_snapshot`** permission only and add the
-target Profile ID to its allowed profiles. Copy the Client ID and Token shown
+dashboard, create an analysis client with **`read_snapshot`** permission only and add the
+target Profile ID to its allowed profiles. If the template-request flow is
+enabled, use a separately scoped client with `submit_template_request` as well;
+MeTheory never requires `submit_import`. Copy the Client ID and Token shown
 after creation and set them as `PCS_CLIENT_ID` and `PCS_CLIENT_TOKEN` alongside
 `PCS_API_URL`, `PCS_PROFILE_ID`, and `PCS_TIMEZONE`.
 
