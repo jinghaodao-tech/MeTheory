@@ -22,6 +22,8 @@ Current normative specifications live under docs/spec/; historical decisions liv
 
 The MeTheory -> PCS template request flow is documented in [`docs/metheory-pcs-template-flow.md`](docs/metheory-pcs-template-flow.md). MeTheory resolves measurement requirements deterministically and PCS remains responsible for field matching, review, and activation.
 
+The versioned PCS Connector Manifest used by the integration doctor is [`docs/metheory-pcs-connector.manifest.json`](docs/metheory-pcs-connector.manifest.json). It declares the actual local transport, profile-scoped authentication, `read_snapshot` and `submit_template_request` permissions, and explicitly does not claim `submit_import`.
+
 The product boundary is explicit: the user chooses the scope of collection,
 the system chooses when and what to collect, and AI may only propose bounded
 interpretations or candidates. AI never decides facts, evidence strength,

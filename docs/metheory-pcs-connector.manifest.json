@@ -1,0 +1,34 @@
+{
+  "manifestVersion": "pcs-connector-manifest-v1",
+  "connectorId": "metheory",
+  "displayName": "MeTheory",
+  "sourceSystem": "metheory",
+  "pcsContract": {
+    "minimumRevision": "pcs-analysis-snapshot-v2.1",
+    "maximumRevision": "pcs-analysis-snapshot-v3.x"
+  },
+  "transport": {
+    "protocol": "http",
+    "baseUrl": "http://127.0.0.1:8300",
+    "localhostOnly": true
+  },
+  "auth": {
+    "mode": "integration-client",
+    "headers": ["x-pcs-client-id", "authorization"],
+    "profileScoped": true
+  },
+  "permissions": {
+    "required": ["read_snapshot", "submit_template_request"],
+    "optional": []
+  },
+  "capabilities": {
+    "readSnapshot": true,
+    "submitImport": false,
+    "submitTemplateRequest": true
+  },
+  "endpoints": {
+    "readSnapshot": "GET /v1/context/analysis-snapshot-v3",
+    "submitTemplateRequest": "POST /v1/integration-template-requests"
+  },
+  "notes": "MeTheory does not submit PCS imports. User confirmation remains required in PCS before values enter an analysis snapshot."
+}
